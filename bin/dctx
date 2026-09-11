@@ -1,0 +1,236 @@
+#!/usr/bin/env sh
+# dctx — per-project docker context helper, shareable
+# POSIX sh, no deps
+set -eu
+
+DCTX_HOME="${DCTX_HOME:-$HOME/.config/dctx}"
+CONFIG="$DCTX_HOME/config.toml"
+VERSION="0.1.0"
+
+real_docker() {
+  # find first real docker not our shim
+  for p in $(printf "%s" "$PATH" | tr ':' ' '); do
+    if [ -x "$p/docker" ] && [ ! -L "$p/docker" ]; then
+      # check if it's our shim by content
+      if grep -q "dctx shim" "$p/docker" 2>/dev/null; then continue; fi
+      printf "%s" "$p/docker"
+      return
+    fi
+    if [ -L "$p/docker" ]; then
+      tgt=$(readlink "$p/docker" 2>/dev/null || true)
+      case "$tgt" in *dctx*|*docker-shim*) continue;; esac
+      if [ -x "$p/docker" ]; then
+        if grep -q "dctx shim" "$p/docker" 2>/dev/null; then continue; fi
+        printf "%s" "$p/docker"
+        return
+      fi
+    fi
+  done
+  # fallback: check common locations
+  for c in /opt/homebrew/bin/docker /usr/local/bin/docker "$HOME/.orbstack/bin/docker" /usr/bin/docker; do
+    if [ -x "$c" ]; then printf "%s" "$c"; return; fi
+  done
+  printf "docker"
+}
+
+find_ctx_file() {
+  dir="${1:-$PWD}"
+  while [ "$dir" != "/" ] && [ "$dir" != "$HOME" ]; do
+    if [ -f "$dir/.docker-context" ]; then
+      # trim whitespace
+      tr -d ' \t\n\r' < "$dir/.docker-context" 2>/dev/null || true
+      return 0
+    fi
+    dir=$(dirname "$dir")
+  done
+  return 1
+}
+
+ensure_config() {
+  mkdir -p "$DCTX_HOME"
+  if [ ! -f "$CONFIG" ]; then
+    cat > "$CONFIG" <<'TOML'
+# dctx config — shareable
+default = "orbstack"
+
+[projects]
+# "/Users/webong/Workspace/Projects/AllAccess/allfans" = "orbstack"
+# "/Users/webong/Workspace/playground/desktop-test" = "desktop-linux"
+TOML
+  fi
+}
+
+cmd_status() {
+  ctx_file=$(find_ctx_file "$PWD" 2>/dev/null || true)
+  if [ -n "${ctx_file:-}" ]; then
+    printf "pwd: %s\nvia: .docker-context -> %s\n" "$PWD" "$ctx_file"
+    return
+  fi
+  if [ -n "${DOCKER_CONTEXT:-}" ]; then
+    printf "pwd: %s\nvia: env DOCKER_CONTEXT=%s\n" "$PWD" "$DOCKER_CONTEXT"
+    return
+  fi
+  # probe
+  orbstack_ok=0; desktop_ok=0
+  rd=$(real_docker)
+  if [ -S "$HOME/.orbstack/run/docker.sock" ] && "$rd" --context orbstack info >/dev/null 2>&1; then orbstack_ok=1; fi
+  if [ -S "$HOME/.docker/run/docker.sock" ] && "$rd" --context desktop-linux info >/dev/null 2>&1; then desktop_ok=1; fi
+  if [ "$orbstack_ok" = 1 ] && [ "$desktop_ok" = 0 ]; then printf "pwd: %s\nvia: probe -> orbstack (only orbstack up)\n" "$PWD"
+  elif [ "$desktop_ok" = 1 ] && [ "$orbstack_ok" = 0 ]; then printf "pwd: %s\nvia: probe -> desktop-linux (only desktop up)\n" "$PWD"
+  elif [ "$orbstack_ok" = 1 ] && [ "$desktop_ok" = 1 ]; then
+    orb_mtime=$(stat -f %m "$HOME/.orbstack/run/docker.sock" 2>/dev/null || stat -c %Y "$HOME/.orbstack/run/docker.sock" 2>/dev/null || echo 0)
+    desk_mtime=$(stat -f %m "$HOME/.docker/run/docker.sock" 2>/dev/null || stat -c %Y "$HOME/.docker/run/docker.sock" 2>/dev/null || echo 0)
+    if [ "${desk_mtime:-0}" -gt "${orb_mtime:-0}" ]; then printf "pwd: %s\nvia: probe -> desktop-linux (both up, desktop newer)\n" "$PWD"
+    else printf "pwd: %s\nvia: probe -> orbstack (both up, orbstack newer)\n" "$PWD"; fi
+  else
+    printf "pwd: %s\nvia: fallback -> currentContext (%s)\n" "$PWD" "$(grep currentContext ~/.docker/config.json 2>/dev/null | sed -E 's/.*: "(.*)".*/\1/' || echo unknown)"
+  fi
+}
+
+cmd_ls() {
+  rd=$(real_docker)
+  "$rd" context ls 2>&1 || true
+  printf "\n[dctx projects]\n"
+  if [ -f "$CONFIG" ]; then cat "$CONFIG"; else printf "(no %s)\n" "$CONFIG"; fi
+  printf "\n[dctx status] "; cmd_status
+}
+
+cmd_set() {
+  ctx="${1:-}"
+  scope="${2:-}"
+  if [ -z "$ctx" ] || [ "$ctx" = "--help" ] || [ "$ctx" = "-h" ]; then
+    printf "usage: dctx set <orbstack|desktop-linux|default> [--global|--clear]\n"
+    printf "  without --global: writes ./.docker-context in current dir (per-project, commit to git)\n"
+    printf "  --global: sets default in %s\n" "$CONFIG"
+    printf "  --clear: removes ./.docker-context\n"
+    return 0
+  fi
+  if [ "$scope" = "--clear" ]; then
+    rm -f .docker-context
+    unset DOCKER_CONTEXT 2>/dev/null || true
+    printf "cleared %s/.docker-context\n" "$PWD"
+    return
+  fi
+  if [ "$scope" = "--global" ]; then
+    ensure_config
+    # naive toml edit: replace default line
+    if grep -q '^default' "$CONFIG" 2>/dev/null; then
+      # use ed/sed portable
+      tmp=$(mktemp)
+      sed "s/^default.*/default = \"$ctx\"/" "$CONFIG" > "$tmp" && mv "$tmp" "$CONFIG"
+    else
+      printf 'default = "%s"\n' "$ctx" >> "$CONFIG"
+    fi
+    printf "global default -> %s in %s\n" "$ctx" "$CONFIG"
+    return
+  fi
+  # per-project
+  case "$ctx" in orbstack|desktop-linux|default) ;; *) printf "invalid ctx %s (use orbstack|desktop-linux|default)\n" "$ctx" >&2; return 1;; esac
+  printf "%s" "$ctx" > .docker-context
+  export DOCKER_CONTEXT="$ctx" 2>/dev/null || true
+  printf "set %s/.docker-context -> %s\n" "$PWD" "$ctx"
+}
+
+cmd_hook() {
+  sh="${1:-zsh}"
+  case "$sh" in
+    zsh) cat <<'ZSH'
+# dctx hook — auto-export DOCKER_CONTEXT on cd (complements shim)
+__dctx_chpwd() {
+  local dir="$PWD" ctx=""
+  while [[ "$dir" != "/" && "$dir" != "$HOME" ]]; do
+    if [[ -f "$dir/.docker-context" ]]; then
+      ctx=$(tr -d ' \t\n\r' < "$dir/.docker-context" 2>/dev/null)
+      if [[ "$ctx" == "orbstack" || "$ctx" == "desktop-linux" || "$ctx" == "default" ]]; then
+        export DOCKER_CONTEXT="$ctx"; return
+      fi
+    fi
+    # also check config.toml projects map (ignore commented lines)
+    if [[ -f "$HOME/.config/dctx/config.toml" ]]; then
+      local hit=$(grep -F "\"$dir\" =" "$HOME/.config/dctx/config.toml" 2>/dev/null | grep -v '^[[:space:]]*#' | sed -E 's/.*= "(.*)".*/\1/')
+      if [[ -n "$hit" ]]; then export DOCKER_CONTEXT="$hit"; return; fi
+    fi
+    dir="${dir:h}"
+  done
+  unset DOCKER_CONTEXT
+}
+autoload -U add-zsh-hook 2>/dev/null && add-zsh-hook chpwd __dctx_chpwd
+__dctx_chpwd
+ZSH
+      ;;
+    bash) cat <<'BASH'
+# dctx hook bash
+__dctx_chpwd() {
+  local dir="$PWD" ctx=""
+  while [[ "$dir" != "/" && "$dir" != "$HOME" ]]; do
+    if [[ -f "$dir/.docker-context" ]]; then
+      ctx=$(tr -d ' \t\n\r' < "$dir/.docker-context" 2>/dev/null)
+      case "$ctx" in orbstack|desktop-linux|default) export DOCKER_CONTEXT="$ctx"; return;; esac
+    fi
+    dir=$(dirname "$dir")
+  done
+  unset DOCKER_CONTEXT
+}
+# bash chpwd via PROMPT_COMMAND
+if [[ "$PROMPT_COMMAND" != *"__dctx_chpwd"* ]]; then PROMPT_COMMAND="__dctx_chpwd; $PROMPT_COMMAND"; fi
+__dctx_chpwd
+BASH
+      ;;
+    fish) cat <<'FISH'
+# dctx hook fish
+function __dctx_chpwd --on-variable PWD
+  set -l dir $PWD
+  while test "$dir" != "/" -a "$dir" != "$HOME"
+    if test -f "$dir/.docker-context"
+      set -l ctx (tr -d ' \t\n\r' < "$dir/.docker-context" 2>/dev/null)
+      if contains -- $ctx orbstack desktop-linux default
+        set -gx DOCKER_CONTEXT $ctx; return
+      end
+    end
+    set dir (dirname $dir)
+  end
+  set -e DOCKER_CONTEXT
+end
+__dctx_chpwd
+FISH
+      ;;
+    *) printf "unknown shell %s (use zsh|bash|fish)\n" "$sh" >&2; return 1;;
+  esac
+}
+
+cmd_init() {
+  ensure_config
+  printf "dctx %s init\n" "$VERSION"
+  # copy shim if not already
+  if [ ! -f "$HOME/.local/bin/dctx" ]; then
+    mkdir -p "$HOME/.local/bin"
+    cp "$0" "$HOME/.local/bin/dctx" 2>/dev/null || true
+    chmod +x "$HOME/.local/bin/dctx"
+  fi
+  # shim install is done by install.sh; just ensure hook
+  printf "add to shell rc:\n"
+  printf '  zsh:  echo '\''eval "$(dctx hook zsh)"'\'' >> ~/.zshrc' && printf "\n"
+  printf '  bash: echo '\''eval "$(dctx hook bash)"'\'' >> ~/.bashrc' && printf "\n"
+  printf '  fish: echo '\''dctx hook fish | source'\'' >> ~/.config/fish/config.fish' && printf "\n"
+}
+
+case "${1:-}" in
+  ""|help|--help|-h) cat <<HELP
+dctx $VERSION — per-project docker context
+usage: dctx <cmd> [args]
+  ls                docker context ls + project map
+  status            show resolved ctx for \$PWD
+  set <ctx> [--global|--clear]  set ./.docker-context
+  hook <zsh|bash|fish>          print shell hook
+  init              ensure config
+  version           show version
+HELP
+    ;;
+  ls) cmd_ls ;;
+  status) cmd_status ;;
+  set) shift; cmd_set "$@" ;;
+  hook) shift; cmd_hook "$@" ;;
+  init) cmd_init ;;
+  version|--version|-v) printf "dctx %s\n" "$VERSION" ;;
+  *) printf "unknown cmd %s\n" "$1" >&2; exit 1;;
+esac
