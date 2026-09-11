@@ -100,7 +100,7 @@ cmd_set() {
   scope="${2:-}"
   if [ -z "$ctx" ] || [ "$ctx" = "--help" ] || [ "$ctx" = "-h" ]; then
     printf "usage: dctx set <orbstack|desktop-linux|default> [--global|--clear]\n"
-    printf "  without --global: writes ./.docker-context in current dir (per-project, commit to git)\n"
+    printf "  without --global: writes ./.docker-context in current dir (per-project, gitignored local)\n"
     printf "  --global: sets default in %s\n" "$CONFIG"
     printf "  --clear: removes ./.docker-context\n"
     return 0
@@ -124,11 +124,19 @@ cmd_set() {
     printf "global default -> %s in %s\n" "$ctx" "$CONFIG"
     return
   fi
-  # per-project
+  # per-project (local, gitignored)
   case "$ctx" in orbstack|desktop-linux|default) ;; *) printf "invalid ctx %s (use orbstack|desktop-linux|default)\n" "$ctx" >&2; return 1;; esac
   printf "%s" "$ctx" > .docker-context
+  # ensure gitignored (local only)
+  if [ -d .git ] || git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    if [ -f .gitignore ]; then
+      grep -q "^\.docker-context$" .gitignore 2>/dev/null || echo ".docker-context" >> .gitignore
+    else
+      echo ".docker-context" > .gitignore
+    fi
+  fi
   export DOCKER_CONTEXT="$ctx" 2>/dev/null || true
-  printf "set %s/.docker-context -> %s\n" "$PWD" "$ctx"
+  printf "set %s/.docker-context -> %s (gitignored)\n" "$PWD" "$ctx"
 }
 
 cmd_hook() {

@@ -62,16 +62,22 @@ Priority per `docker` invocation (`bin/docker` shim):
 
 Shell hook (`shell/hook.zsh`) only exports `DOCKER_CONTEXT` for prompt/plugins; shim is the source of truth so GUI apps work too.
 
-## Share across team
+## Share across team (local-only)
 
-Commit `.docker-context` to repo:
+`.docker-context` is **gitignored** — local per-dev, not committed. `dctx set` auto-adds it to `.gitignore`:
 
 ```bash
-echo "orbstack" > .docker-context
-git add .docker-context
+echo "orbstack" > .docker-context   # local only, ignored
+# already in .gitignore: .docker-context
 ```
 
-Teammate with only Docker Desktop: `dctx` falls back to `desktop-linux` if `orbstack` socket not found (or override locally with `dctx set desktop-linux`).
+Share the *tool* not the choice:
+
+```bash
+git clone https://github.com/<you>/dctx ~/.local/share/dctx && ~/.local/share/dctx/install.sh
+```
+
+Teammate picks their own: `dctx set desktop-linux` (or `orbstack`) locally. Fallback still probes sockets if no file.
 
 ## Uninstall
 
