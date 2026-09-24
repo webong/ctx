@@ -4,23 +4,23 @@ set -eu
 
 CTX_HOME=${CTX_HOME:-$HOME/.config/ctx}
 CONFIG="$CTX_HOME/config.toml"
-VERSION=0.4.0
+VERSION=0.5.0
 VOLUME_IMAGE=${CTX_VOLUME_IMAGE:-alpine:3.21}
 
 usage() {
   cat <<'HELP'
 ctx — project-local container connections
 usage:
-  ctx status [docker|podman]
-  ctx ls <docker|podman>
-  ctx set <docker|podman> <name> [--global]
-  ctx clear [docker|podman]
-  ctx build --cache-ref <registry-ref> [--] <buildx build arguments>
+  ctx status [docker|podman|nerdctl]
+  ctx ls <docker|podman|nerdctl>
+  ctx set <docker|podman|nerdctl> <name> [--global]
+  ctx clear [docker|podman|nerdctl]
+  ctx build [docker|podman|nerdctl] --cache-ref <registry-ref> [--] <build arguments>
   ctx image sync [--tar] <source-context> <target-context> <image>...
-  ctx image copy <docker:context|podman:connection> <target> <image>...
+  ctx image copy <engine:endpoint> <engine:endpoint> <image>...
   ctx volume export <source-context> <volume> > volume.tar
   ctx volume import <target-context> <new-volume> < volume.tar
-  ctx volume copy <docker:context|podman:connection> <target> <source-volume> [target-volume]
+  ctx volume copy <engine:endpoint> <engine:endpoint> <source-volume> [target-volume]
   ctx version
 
 Project choices are stored in .ctx. --global writes a fallback to config.toml.
@@ -28,7 +28,7 @@ HELP
 }
 
 check_tool() {
-  case "$1" in docker|podman) ;; *) printf 'ctx: use docker or podman\n' >&2; exit 2;; esac
+  case "$1" in docker|podman|nerdctl) ;; *) printf 'ctx: use docker, podman, or nerdctl\n' >&2; exit 2;; esac
 }
 
 find_real() {
@@ -151,6 +151,9 @@ status_one() {
       if [ -n "${CONTAINER_CONNECTION:-}" ]; then printf 'podman: %s (CONTAINER_CONNECTION)\n' "$CONTAINER_CONNECTION"; return; fi
       if [ -n "${CONTAINER_HOST:-}" ]; then printf 'podman: %s (CONTAINER_HOST)\n' "$CONTAINER_HOST"; return; fi
       ;;
+    nerdctl)
+      if [ -n "${CONTAINERD_NAMESPACE:-}" ]; then printf 'nerdctl: %s (CONTAINERD_NAMESPACE)\n' "$CONTAINERD_NAMESPACE"; return; fi
+      ;;
   esac
   resolve "$tool"
   if [ -n "$RESOLVED" ]; then printf '%s: %s (%s)\n' "$tool" "$RESOLVED" "$VIA"
@@ -160,12 +163,15 @@ status_one() {
 validate_choice() {
   tool="$1"
   name="$2"
-  real=$(find_real "$tool")
-  if [ "$tool" = docker ]; then
-    "$real" context inspect "$name" >/dev/null 2>&1
-  else
-    "$real" system connection list --format '{{.Name}}' | grep -Fxq "$name"
-  fi
+  if [ "$tool" = apple ]; then real=$(find_real container)
+  else real=$(find_real "$tool"); fi
+  case "$tool" in
+    docker) "$real" context inspect "$name" >/dev/null 2>&1 ;;
+    podman) "$real" system connection list --format '{{.Name}}' | grep -Fxq "$name" ;;
+    nerdctl) "$real" namespace ls --quiet | grep -Fxq "$name" ;;
+    apple) [ "$name" = local ] && "$real" system version >/dev/null 2>&1 ;;
+    *) return 1 ;;
+  esac
 }
 
 docker_exec() {
@@ -177,6 +183,34 @@ docker_exec() {
   resolve docker
   if [ -n "$RESOLVED" ]; then
     "$real" --context "$RESOLVED" "$@"
+  else
+    "$real" "$@"
+  fi
+}
+
+podman_exec() {
+  real=$(find_real podman)
+  if [ -n "${CONTAINER_CONNECTION:-}" ] || [ -n "${CONTAINER_HOST:-}" ]; then
+    "$real" "$@"
+    return
+  fi
+  resolve podman
+  if [ -n "$RESOLVED" ]; then
+    "$real" --connection "$RESOLVED" "$@"
+  else
+    "$real" "$@"
+  fi
+}
+
+nerdctl_exec() {
+  real=$(find_real nerdctl)
+  if [ -n "${CONTAINERD_NAMESPACE:-}" ] || [ -n "${CONTAINERD_ADDRESS:-}" ]; then
+    "$real" "$@"
+    return
+  fi
+  resolve nerdctl
+  if [ -n "$RESOLVED" ]; then
+    "$real" --namespace "$RESOLVED" "$@"
   else
     "$real" "$@"
   fi
@@ -198,8 +232,10 @@ parse_endpoint() {
   case "$endpoint" in
     docker:*) ENDPOINT_TOOL=docker; ENDPOINT_NAME=${endpoint#docker:} ;;
     podman:*) ENDPOINT_TOOL=podman; ENDPOINT_NAME=${endpoint#podman:} ;;
+    nerdctl:*) ENDPOINT_TOOL=nerdctl; ENDPOINT_NAME=${endpoint#nerdctl:} ;;
+    apple:*) ENDPOINT_TOOL=apple; ENDPOINT_NAME=${endpoint#apple:} ;;
     *)
-      printf 'ctx: endpoint must be docker:<context> or podman:<connection>\n' >&2
+      printf 'ctx: endpoint must be docker:<context>, podman:<connection>, nerdctl:<namespace>, or apple:local\n' >&2
       exit 2
       ;;
   esac
@@ -217,12 +253,64 @@ endpoint_exec() {
     printf 'ctx: unknown %s endpoint %s\n' "$ENDPOINT_TOOL" "$ENDPOINT_NAME" >&2
     exit 1
   fi
-  real=$(find_real "$ENDPOINT_TOOL")
-  if [ "$ENDPOINT_TOOL" = docker ]; then
-    "$real" --context "$ENDPOINT_NAME" "$@"
-  else
-    "$real" --connection "$ENDPOINT_NAME" "$@"
-  fi
+  case "$ENDPOINT_TOOL" in
+    docker)
+      real=$(find_real docker)
+      "$real" --context "$ENDPOINT_NAME" "$@"
+      ;;
+    podman)
+      real=$(find_real podman)
+      "$real" --connection "$ENDPOINT_NAME" "$@"
+      ;;
+    nerdctl)
+      real=$(find_real nerdctl)
+      "$real" --namespace "$ENDPOINT_NAME" "$@"
+      ;;
+    apple)
+      real=$(find_real container)
+      "$real" "$@"
+      ;;
+  esac
+}
+
+apple_image_load_is_safe() {
+  real=$(find_real container)
+  version=$("$real" --version 2>/dev/null | sed -n 's/.*version \([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' | head -n 1)
+  [ -n "$version" ] || return 1
+  awk -F. -v version="$version" 'BEGIN {
+    split(version, part, ".")
+    if (part[1] > 1 || (part[1] == 1 && (part[2] > 3 || (part[2] == 3 && part[3] > 0)))) exit 0
+    exit 1
+  }'
+}
+
+endpoint_image_save() {
+  endpoint=$1
+  archive=$2
+  image=$3
+  parse_endpoint "$endpoint"
+  case "$ENDPOINT_TOOL" in
+    nerdctl) endpoint_exec "$endpoint" save -o "$archive" "$image" ;;
+    apple) endpoint_exec "$endpoint" image save --output "$archive" "$image" ;;
+    *) endpoint_exec "$endpoint" image save -o "$archive" "$image" ;;
+  esac
+}
+
+endpoint_image_load() {
+  endpoint=$1
+  archive=$2
+  parse_endpoint "$endpoint"
+  case "$ENDPOINT_TOOL" in
+    nerdctl) endpoint_exec "$endpoint" load -i "$archive" ;;
+    apple)
+      if ! apple_image_load_is_safe; then
+        printf 'ctx: Apple Container image import requires container newer than 1.3.0; update it before loading archives\n' >&2
+        exit 1
+      fi
+      endpoint_exec "$endpoint" image load --input "$archive"
+      ;;
+    *) endpoint_exec "$endpoint" image load -i "$archive" ;;
+  esac
 }
 
 endpoint_volume_export() {
@@ -238,6 +326,10 @@ endpoint_volume_import() {
 }
 
 build() {
+  engine=docker
+  case "${1:-}" in
+    docker|podman|nerdctl) engine=$1; shift ;;
+  esac
   cache_ref=
   while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -258,11 +350,24 @@ build() {
     esac
   done
   [ -n "$cache_ref" ] || { printf 'ctx: build requires --cache-ref <registry-ref>\n' >&2; exit 2; }
-  [ "$#" -gt 0 ] || { printf 'ctx: build needs Docker buildx build arguments\n' >&2; exit 2; }
-  docker_exec buildx build \
-    --cache-from "type=registry,ref=$cache_ref" \
-    --cache-to "type=registry,ref=$cache_ref,mode=max" \
-    "$@"
+  [ "$#" -gt 0 ] || { printf 'ctx: build needs build arguments\n' >&2; exit 2; }
+  case "$engine" in
+    docker)
+      docker_exec buildx build \
+        --cache-from "type=registry,ref=$cache_ref" \
+        --cache-to "type=registry,ref=$cache_ref,mode=max" \
+        "$@"
+      ;;
+    podman)
+      podman_exec build --layers --cache-from "$cache_ref" --cache-to "$cache_ref" "$@"
+      ;;
+    nerdctl)
+      nerdctl_exec build \
+        --cache-from "type=registry,ref=$cache_ref" \
+        --cache-to "type=registry,ref=$cache_ref,mode=max" \
+        "$@"
+      ;;
+  esac
 }
 
 image_sync() {
@@ -295,8 +400,8 @@ image_copy() {
   for image in "$@"; do
     archive=$(mktemp "${TMPDIR:-/tmp}/ctx-image.XXXXXX")
     trap 'rm -f "$archive"' EXIT HUP INT TERM
-    endpoint_exec "$source_endpoint" image save -o "$archive" "$image"
-    endpoint_exec "$target_endpoint" image load -i "$archive"
+    endpoint_image_save "$source_endpoint" "$archive" "$image"
+    endpoint_image_load "$target_endpoint" "$archive"
     rm -f "$archive"
     trap - EXIT HUP INT TERM
   done
@@ -390,7 +495,7 @@ clear_choice() {
   check_tool "$tool"
   tmp=$(mktemp)
   awk -v key="$tool" '$0 !~ "^[[:space:]]*" key "[[:space:]]*="' .ctx > "$tmp"
-  if grep -Eq '^[[:space:]]*(docker|podman)[[:space:]]*=' "$tmp"; then
+  if grep -Eq '^[[:space:]]*(docker|podman|nerdctl)[[:space:]]*=' "$tmp"; then
     mv "$tmp" .ctx
   else
     rm .ctx "$tmp"
@@ -411,13 +516,16 @@ case "${1:-}" in
     ;;
   status)
     if [ -n "${2:-}" ]; then check_tool "$2"; status_one "$2"
-    else status_one docker; status_one podman; fi
+    else status_one docker; status_one podman; status_one nerdctl; fi
     ;;
   ls)
     check_tool "${2:-}"
     real=$(find_real "$2")
-    if [ "$2" = docker ]; then "$real" context ls
-    else "$real" system connection list; fi
+    case "$2" in
+      docker) "$real" context ls ;;
+      podman) "$real" system connection list ;;
+      nerdctl) "$real" namespace ls ;;
+    esac
     ;;
   set)
     check_tool "${2:-}"

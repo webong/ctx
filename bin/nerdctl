@@ -1,0 +1,23 @@
+#!/usr/bin/env sh
+# ctx wrapper for nerdctl
+set -eu
+
+BIN_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+CTX="$BIN_DIR/ctx"
+REAL=$("$CTX" real nerdctl)
+
+if [ -n "${CONTAINERD_NAMESPACE:-}" ] || [ -n "${CONTAINERD_ADDRESS:-}" ]; then
+  exec "$REAL" "$@"
+fi
+if [ "${1:-}" = namespace ]; then
+  exec "$REAL" "$@"
+fi
+for arg in "$@"; do
+  case "$arg" in
+    --namespace|--namespace=*|-n|-n?*|--address|--address=*|-a|-a?*) exec "$REAL" "$@" ;;
+  esac
+done
+
+CHOICE=$("$CTX" resolve nerdctl)
+if [ -n "$CHOICE" ]; then exec "$REAL" --namespace "$CHOICE" "$@"; fi
+exec "$REAL" "$@"

@@ -1,0 +1,14 @@
+#!/usr/bin/env sh
+set -eu
+
+if [ "${1:-}" = namespace ] && [ "${2:-}" = ls ]; then
+  printf 'default\nk8s.io\n'
+  exit 0
+fi
+
+if [ "${1:-}" = --namespace ] && [ "${3:-}" = volume ] && [ "${4:-}" = inspect ]; then
+  [ "${5:-}" = exists ] && exit 0
+  exit 1
+fi
+
+printf '%s\n' "$*"
