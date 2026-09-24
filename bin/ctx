@@ -4,7 +4,8 @@ set -eu
 
 CTX_HOME=${CTX_HOME:-$HOME/.config/ctx}
 CONFIG="$CTX_HOME/config.toml"
-VERSION=0.2.0
+VERSION=0.4.0
+VOLUME_IMAGE=${CTX_VOLUME_IMAGE:-alpine:3.21}
 
 usage() {
   cat <<'HELP'
@@ -14,6 +15,12 @@ usage:
   ctx ls <docker|podman>
   ctx set <docker|podman> <name> [--global]
   ctx clear [docker|podman]
+  ctx build --cache-ref <registry-ref> [--] <buildx build arguments>
+  ctx image sync [--tar] <source-context> <target-context> <image>...
+  ctx image copy <docker:context|podman:connection> <target> <image>...
+  ctx volume export <source-context> <volume> > volume.tar
+  ctx volume import <target-context> <new-volume> < volume.tar
+  ctx volume copy <docker:context|podman:connection> <target> <source-volume> [target-volume]
   ctx version
 
 Project choices are stored in .ctx. --global writes a fallback to config.toml.
@@ -161,6 +168,178 @@ validate_choice() {
   fi
 }
 
+docker_exec() {
+  real=$(find_real docker)
+  if [ -n "${DOCKER_CONTEXT:-}" ] || [ -n "${DOCKER_HOST:-}" ]; then
+    "$real" "$@"
+    return
+  fi
+  resolve docker
+  if [ -n "$RESOLVED" ]; then
+    "$real" --context "$RESOLVED" "$@"
+  else
+    "$real" "$@"
+  fi
+}
+
+docker_context_exec() {
+  context=$1
+  shift
+  if ! validate_choice docker "$context"; then
+    printf 'ctx: unknown Docker context %s\n' "$context" >&2
+    exit 1
+  fi
+  real=$(find_real docker)
+  "$real" --context "$context" "$@"
+}
+
+parse_endpoint() {
+  endpoint=$1
+  case "$endpoint" in
+    docker:*) ENDPOINT_TOOL=docker; ENDPOINT_NAME=${endpoint#docker:} ;;
+    podman:*) ENDPOINT_TOOL=podman; ENDPOINT_NAME=${endpoint#podman:} ;;
+    *)
+      printf 'ctx: endpoint must be docker:<context> or podman:<connection>\n' >&2
+      exit 2
+      ;;
+  esac
+  [ -n "$ENDPOINT_NAME" ] || {
+    printf 'ctx: endpoint name cannot be empty\n' >&2
+    exit 2
+  }
+}
+
+endpoint_exec() {
+  endpoint=$1
+  shift
+  parse_endpoint "$endpoint"
+  if ! validate_choice "$ENDPOINT_TOOL" "$ENDPOINT_NAME"; then
+    printf 'ctx: unknown %s endpoint %s\n' "$ENDPOINT_TOOL" "$ENDPOINT_NAME" >&2
+    exit 1
+  fi
+  real=$(find_real "$ENDPOINT_TOOL")
+  if [ "$ENDPOINT_TOOL" = docker ]; then
+    "$real" --context "$ENDPOINT_NAME" "$@"
+  else
+    "$real" --connection "$ENDPOINT_NAME" "$@"
+  fi
+}
+
+endpoint_volume_export() {
+  endpoint=$1
+  volume=$2
+  endpoint_exec "$endpoint" run --rm -v "$volume:/volume:ro" "$VOLUME_IMAGE" tar -C /volume -cf - .
+}
+
+endpoint_volume_import() {
+  endpoint=$1
+  volume=$2
+  endpoint_exec "$endpoint" run --rm -i -v "$volume:/volume" "$VOLUME_IMAGE" tar -C /volume -xf -
+}
+
+build() {
+  cache_ref=
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --cache-ref)
+        [ "$#" -ge 2 ] || { printf 'ctx: --cache-ref needs a registry reference\n' >&2; exit 2; }
+        cache_ref=$2
+        shift 2
+        ;;
+      --cache-ref=*)
+        cache_ref=${1#--cache-ref=}
+        shift
+        ;;
+      --)
+        shift
+        break
+        ;;
+      *) break ;;
+    esac
+  done
+  [ -n "$cache_ref" ] || { printf 'ctx: build requires --cache-ref <registry-ref>\n' >&2; exit 2; }
+  [ "$#" -gt 0 ] || { printf 'ctx: build needs Docker buildx build arguments\n' >&2; exit 2; }
+  docker_exec buildx build \
+    --cache-from "type=registry,ref=$cache_ref" \
+    --cache-to "type=registry,ref=$cache_ref,mode=max" \
+    "$@"
+}
+
+image_sync() {
+  mode=registry
+  if [ "${1:-}" = --tar ]; then mode=tar; shift; fi
+  [ "$#" -ge 3 ] || { printf 'ctx: image sync needs source context, target context, and image names\n' >&2; exit 2; }
+  source_context=$1
+  target_context=$2
+  shift 2
+  if [ "$mode" = tar ]; then
+    archive=$(mktemp "${TMPDIR:-/tmp}/ctx-image.XXXXXX")
+    trap 'rm -f "$archive"' EXIT HUP INT TERM
+    docker_context_exec "$source_context" image save -o "$archive" "$@"
+    docker_context_exec "$target_context" image load -i "$archive"
+    rm -f "$archive"
+    trap - EXIT HUP INT TERM
+  else
+    for image in "$@"; do
+      docker_context_exec "$source_context" image push "$image"
+      docker_context_exec "$target_context" image pull "$image"
+    done
+  fi
+}
+
+image_copy() {
+  [ "$#" -ge 3 ] || { printf 'ctx: image copy needs source endpoint, target endpoint, and image names\n' >&2; exit 2; }
+  source_endpoint=$1
+  target_endpoint=$2
+  shift 2
+  for image in "$@"; do
+    archive=$(mktemp "${TMPDIR:-/tmp}/ctx-image.XXXXXX")
+    trap 'rm -f "$archive"' EXIT HUP INT TERM
+    endpoint_exec "$source_endpoint" image save -o "$archive" "$image"
+    endpoint_exec "$target_endpoint" image load -i "$archive"
+    rm -f "$archive"
+    trap - EXIT HUP INT TERM
+  done
+}
+
+volume_export() {
+  [ "$#" -eq 2 ] || { printf 'ctx: volume export needs a source context and volume name\n' >&2; exit 2; }
+  printf 'ctx: export is only crash-consistent; stop or quiesce databases first\n' >&2
+  docker_context_exec "$1" run --rm -v "$2:/volume:ro" "$VOLUME_IMAGE" tar -C /volume -cf - .
+}
+
+volume_import() {
+  [ "$#" -eq 2 ] || { printf 'ctx: volume import needs a target context and new volume name\n' >&2; exit 2; }
+  target_context=$1
+  volume=$2
+  if docker_context_exec "$target_context" volume inspect "$volume" >/dev/null 2>&1; then
+    printf 'ctx: target volume %s already exists; refusing to merge data\n' "$volume" >&2
+    exit 1
+  fi
+  docker_context_exec "$target_context" volume create "$volume"
+  docker_context_exec "$target_context" run --rm -i -v "$volume:/volume" "$VOLUME_IMAGE" tar -C /volume -xf -
+}
+
+volume_copy() {
+  [ "$#" -ge 3 ] && [ "$#" -le 4 ] || { printf 'ctx: volume copy needs source endpoint, target endpoint, source volume, and optional target volume\n' >&2; exit 2; }
+  source_endpoint=$1
+  target_endpoint=$2
+  source_volume=$3
+  target_volume=${4:-$source_volume}
+  printf 'ctx: copy is only crash-consistent; stop or quiesce databases first\n' >&2
+  if endpoint_exec "$target_endpoint" volume inspect "$target_volume" >/dev/null 2>&1; then
+    printf 'ctx: target volume %s already exists; refusing to merge data\n' "$target_volume" >&2
+    exit 1
+  fi
+  archive=$(mktemp "${TMPDIR:-/tmp}/ctx-volume.XXXXXX")
+  trap 'rm -f "$archive"' EXIT HUP INT TERM
+  endpoint_volume_export "$source_endpoint" "$source_volume" > "$archive"
+  endpoint_exec "$target_endpoint" volume create "$target_volume"
+  endpoint_volume_import "$target_endpoint" "$target_volume" < "$archive"
+  rm -f "$archive"
+  trap - EXIT HUP INT TERM
+}
+
 write_choice() {
   key="$1"
   name="$2"
@@ -261,6 +440,25 @@ case "${1:-}" in
   clear)
     clear_choice "${2:-}"
     printf 'cleared %s/.ctx\n' "$PWD"
+    ;;
+  build)
+    shift
+    build "$@"
+    ;;
+  image)
+    case "${2:-}" in
+      sync) shift 2; image_sync "$@" ;;
+      copy) shift 2; image_copy "$@" ;;
+      *) usage >&2; exit 2 ;;
+    esac
+    ;;
+  volume)
+    case "${2:-}" in
+      export) shift 2; volume_export "$@" ;;
+      import) shift 2; volume_import "$@" ;;
+      copy) shift 2; volume_copy "$@" ;;
+      *) usage >&2; exit 2 ;;
+    esac
     ;;
   *) usage >&2; exit 2 ;;
 esac

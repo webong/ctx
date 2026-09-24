@@ -57,6 +57,59 @@ podman build -f Containerfile .
 
 The build commands use the selected connection. A Containerfile describes the image build; it does not select Docker or Podman.
 
+## Build caches and transfers
+
+Docker builders keep their local caches separate. Use `ctx build` to build through the
+project's resolved Docker context while importing and exporting a BuildKit registry
+cache. The registry reference must be writable by the caller. Give branches or
+concurrent builders distinct cache references so they do not overwrite each other.
+
+~~~sh
+ctx build --cache-ref ghcr.io/acme/api:buildcache -- --tag ghcr.io/acme/api:dev .
+~~~
+
+Images also belong to the Docker daemon selected by a context. Copy a tagged image
+between contexts with a registry, or use `--tar` for a temporary local archive when
+both contexts are reachable from the same machine:
+
+~~~sh
+ctx image sync orbstack desktop-linux ghcr.io/acme/api:dev
+ctx image sync --tar orbstack desktop-linux acme/api:dev
+~~~
+
+Use `ctx image copy` to bridge Docker and Podman through a temporary Docker archive.
+Endpoints must be written as `docker:<context>` or `podman:<connection>`. The archive
+passes through the machine running ctx, so both endpoints must be reachable there.
+
+~~~sh
+ctx image copy docker:orbstack podman:podman-machine-default acme/api:dev
+ctx image copy podman:podman-machine-default docker:orbstack acme/api:dev
+~~~
+
+Named volumes are likewise private to each daemon. `ctx volume export` writes a tar
+archive to standard output, and `ctx volume import` reads one from standard input.
+Import refuses an existing target volume so it cannot silently merge data. Stop or
+quiesce databases before export; this is a migration/backup tool, not live shared
+storage.
+
+~~~sh
+ctx volume export orbstack postgres-data > postgres-data.tar
+ctx volume import desktop-linux postgres-data < postgres-data.tar
+~~~
+
+`ctx volume copy` applies the same export/import approach between Docker and Podman.
+It creates the target volume and refuses to merge into an existing one. It is still a
+point-in-time migration, never live shared storage.
+
+~~~sh
+ctx volume copy docker:orbstack podman:podman-machine-default postgres-data postgres-data
+ctx volume copy podman:podman-machine-default docker:orbstack postgres-data postgres-data
+~~~
+
+For another machine, stream the archive through a secure transport and run the
+import command there. These commands use a short-lived Alpine container; set
+`CTX_VOLUME_IMAGE` if your environment requires a different approved image.
+
 ## Optional central config
 
 You can set fallbacks or map project paths in $HOME/.config/ctx/config.toml:
