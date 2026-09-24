@@ -1,0 +1,26 @@
+#!/usr/bin/env sh
+# ctx wrapper for Podman
+set -eu
+
+BIN_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+CTX="$BIN_DIR/ctx"
+REAL=$("$CTX" real podman)
+
+if [ -n "${CONTAINER_CONNECTION:-}" ] || [ -n "${CONTAINER_HOST:-}" ]; then
+  exec "$REAL" "$@"
+fi
+if [ "${1:-}" = system ] && [ "${2:-}" = connection ]; then
+  exec "$REAL" "$@"
+fi
+if [ "${1:-}" = machine ]; then
+  exec "$REAL" "$@"
+fi
+for arg in "$@"; do
+  case "$arg" in
+    --connection|--connection=*|-c|-c?*|--url|--url=*|--remote|--remote=*|-r) exec "$REAL" "$@" ;;
+  esac
+done
+
+CHOICE=$("$CTX" resolve podman)
+if [ -n "$CHOICE" ]; then exec "$REAL" --connection "$CHOICE" "$@"; fi
+exec "$REAL" "$@"

@@ -1,75 +1,43 @@
 #!/usr/bin/env sh
 set -eu
 
-SRC_DIR="$(cd "$(dirname "$0")" && pwd)"
-DST_BIN="$HOME/.local/bin"
-CONFIG_DIR="$HOME/.config/dctx"
+SRC_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+DST_BIN=${CTX_BIN_DIR:-$HOME/.local/bin}
+CONFIG_DIR=${CTX_HOME:-$HOME/.config/ctx}
 
-echo "→ dctx install $SRC_DIR → $DST_BIN"
-
-mkdir -p "$DST_BIN" "$CONFIG_DIR"
-
-# 1) install binaries
-cp "$SRC_DIR/bin/dctx" "$DST_BIN/dctx"
-cp "$SRC_DIR/bin/docker" "$DST_BIN/docker"
-chmod +x "$DST_BIN/dctx" "$DST_BIN/docker"
-echo "✓ installed $DST_BIN/dctx and $DST_BIN/docker (shim)"
-
-# 2) ensure PATH has ~/.local/bin first
-for rc in "$HOME/.zshrc" "$HOME/.bashrc"; do
-  if [ -f "$rc" ] && ! grep -q '.local/bin' "$rc"; then
-    printf '\nexport PATH="$HOME/.local/bin:$PATH"\n' >> "$rc"
-    echo "✓ added PATH to $rc"
+for tool in ctx docker podman; do
+  target="$DST_BIN/$tool"
+  if [ -e "$target" ] || [ -L "$target" ]; then
+    if [ "$tool" = ctx ]; then marker='ctx command'; else marker='ctx wrapper|dctx shim'; fi
+    if ! (dd if="$target" bs=256 count=1 2>/dev/null | grep -Eq "$marker"); then
+      printf 'ctx: %s exists; choose another CTX_BIN_DIR\n' "$target" >&2
+      exit 1
+    fi
   fi
 done
 
-# 3) shell hooks
-add_hook() {
-  shell="$1"; rc="$2"; line="$3"
-  if [ -f "$rc" ]; then
-    if ! grep -q "dctx hook $shell" "$rc"; then
-      printf '\n# dctx per-project hook\n%s\n' "$line" >> "$rc"
-      echo "✓ hook added to $rc"
-    else
-      echo "• hook already in $rc"
-    fi
-  fi
-}
-add_hook "zsh" "$HOME/.zshrc" 'eval "$(dctx hook zsh)"'
-add_hook "bash" "$HOME/.bashrc" 'eval "$(dctx hook bash)"'
-if [ -d "$HOME/.config/fish" ]; then
-  add_hook "fish" "$HOME/.config/fish/config.fish" 'dctx hook fish | source'
-fi
+mkdir -p "$DST_BIN" "$CONFIG_DIR"
+for tool in ctx docker podman; do
+  cp "$SRC_DIR/bin/$tool" "$DST_BIN/$tool"
+  chmod +x "$DST_BIN/$tool"
+done
 
-# 4) config
 if [ ! -f "$CONFIG_DIR/config.toml" ]; then
   cat > "$CONFIG_DIR/config.toml" <<'TOML'
-# dctx config — shareable across machines
-# default fallback when no .docker-context and only one daemon probe fails
-default = "orbstack"
+# Optional fallbacks when a project has no .ctx choice.
+# docker_default = "my-docker-context"
+# podman_default = "my-podman-connection"
 
-[projects]
-# "/Users/webong/Workspace/Projects/AllAccess/allfans" = "orbstack"
-# "/Users/webong/Workspace/Projects/AllAccess/backass" = "desktop-linux"
+# Optional project mapping:
+# [projects."/absolute/path/to/project"]
+# docker = "my-docker-context"
+# podman = "my-podman-connection"
 TOML
-  echo "✓ created $CONFIG_DIR/config.toml"
-else
-  echo "• config exists $CONFIG_DIR/config.toml"
 fi
 
-# 5) de-duplicate old zsh docker() function if present (we now use shim)
-if grep -q "Docker context auto-switch" "$HOME/.zshrc" 2>/dev/null; then
-  echo "→ removing legacy docker() function from ~/.zshrc (now handled by shim)"
-  # backup
-  cp "$HOME/.zshrc" "$HOME/.zshrc.bak.$(date +%s)"
-  # remove block from "# Docker context" to next "^}" inclusive
-  # use awk to filter
-  awk 'BEGIN{p=1} /# Docker context auto-switch/{p=0} p; /^\}.*# helper/ {if(p==0){p=1; next}} /__docker_context_chpwd/ {if(p==0) next} ' "$HOME/.zshrc.bak."* 2>/dev/null | head -1 >/dev/null || true
-  # simpler: just inform user to manually remove
-  echo "  backup at ~/.zshrc.bak.* — please remove old docker() + __docker_context_chpwd + dctx() blocks if present"
-fi
-
-echo ""
-echo "Done. Restart shell or run: source ~/.zshrc"
-echo "Try: dctx status; dctx ls; dctx set orbstack"
-echo "Share: git add .docker-context"
+printf 'Installed ctx, docker, and podman wrappers in %s\n' "$DST_BIN"
+case ":$PATH:" in
+  *":$DST_BIN:"*) ;;
+  *) printf 'Add this directory before Docker and Podman on PATH: export PATH="%s:$PATH"\n' "$DST_BIN" ;;
+esac
+printf 'Config: %s/config.toml\n' "$CONFIG_DIR"

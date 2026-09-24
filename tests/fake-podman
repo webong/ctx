@@ -1,0 +1,8 @@
+#!/usr/bin/env sh
+set -eu
+
+if [ "${1:-}" = system ] && [ "${2:-}" = connection ] && [ "${3:-}" = list ]; then
+  printf 'red\nblue\n'
+  exit 0
+fi
+printf '%s\n' "$*"

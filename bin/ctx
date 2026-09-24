@@ -1,0 +1,266 @@
+#!/usr/bin/env sh
+# ctx command — project-local Docker contexts and Podman connections
+set -eu
+
+CTX_HOME=${CTX_HOME:-$HOME/.config/ctx}
+CONFIG="$CTX_HOME/config.toml"
+VERSION=0.2.0
+
+usage() {
+  cat <<'HELP'
+ctx — project-local container connections
+usage:
+  ctx status [docker|podman]
+  ctx ls <docker|podman>
+  ctx set <docker|podman> <name> [--global]
+  ctx clear [docker|podman]
+  ctx version
+
+Project choices are stored in .ctx. --global writes a fallback to config.toml.
+HELP
+}
+
+check_tool() {
+  case "$1" in docker|podman) ;; *) printf 'ctx: use docker or podman\n' >&2; exit 2;; esac
+}
+
+find_real() {
+  tool="$1"
+  remaining="$PATH:"
+  while [ -n "$remaining" ]; do
+    part=${remaining%%:*}
+    remaining=${remaining#*:}
+    [ -n "$part" ] || part=.
+    candidate="$part/$tool"
+    if [ -x "$candidate" ] && ! (dd if="$candidate" bs=256 count=1 2>/dev/null | grep -Eq 'ctx wrapper|dctx shim'); then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  printf 'ctx: %s CLI not found on PATH\n' "$tool" >&2
+  return 127
+}
+
+read_choice() {
+  file="$1"
+  key="$2"
+  [ -f "$file" ] || return 0
+  awk -v key="$key" '
+    $0 ~ "^[[:space:]]*" key "[[:space:]]*=[[:space:]]*\"" {
+      line=$0
+      sub(/^[[:space:]]*[a-z]+[[:space:]]*=[[:space:]]*"/, "", line)
+      sub(/".*$/, "", line)
+      if (line != "") { print line; exit }
+    }
+  ' "$file"
+}
+
+read_project_map() {
+  dir="$1"
+  tool="$2"
+  [ -f "$CONFIG" ] || return 0
+  awk -v section="[projects.\"$dir\"]" -v key="$tool" '
+    /^\[/ { active=($0 == section); next }
+    active && $0 ~ "^[[:space:]]*" key "[[:space:]]*=[[:space:]]*\"" {
+      line=$0
+      sub(/^[[:space:]]*[a-z]+[[:space:]]*=[[:space:]]*"/, "", line)
+      sub(/".*$/, "", line)
+      if (line != "") { print line; exit }
+    }
+  ' "$CONFIG"
+}
+
+read_default() {
+  tool="$1"
+  [ -f "$CONFIG" ] || return 0
+  awk -v key="${tool}_default" '
+    /^\[/ { exit }
+    $0 ~ "^[[:space:]]*" key "[[:space:]]*=[[:space:]]*\"" {
+      line=$0
+      sub(/^[[:space:]]*[a-z_]+[[:space:]]*=[[:space:]]*"/, "", line)
+      sub(/".*$/, "", line)
+      if (line != "") { print line; exit }
+    }
+  ' "$CONFIG"
+}
+
+probe_docker() {
+  real=$(find_real docker 2>/dev/null || true)
+  [ -n "$real" ] || return 0
+  orb=0
+  desktop=0
+  if [ -S "$HOME/.orbstack/run/docker.sock" ] && "$real" --context orbstack info >/dev/null 2>&1; then orb=1; fi
+  if [ -S "$HOME/.docker/run/docker.sock" ] && "$real" --context desktop-linux info >/dev/null 2>&1; then desktop=1; fi
+  if [ "$orb" = 1 ] && [ "$desktop" = 0 ]; then
+    RESOLVED=orbstack; VIA='OrbStack daemon'
+  elif [ "$desktop" = 1 ] && [ "$orb" = 0 ]; then
+    RESOLVED=desktop-linux; VIA='Docker Desktop daemon'
+  elif [ "$orb" = 1 ] && [ "$desktop" = 1 ]; then
+    orb_time=$(stat -f %m "$HOME/.orbstack/run/docker.sock" 2>/dev/null || stat -c %Y "$HOME/.orbstack/run/docker.sock" 2>/dev/null || printf 0)
+    desktop_time=$(stat -f %m "$HOME/.docker/run/docker.sock" 2>/dev/null || stat -c %Y "$HOME/.docker/run/docker.sock" 2>/dev/null || printf 0)
+    if [ "$desktop_time" -gt "$orb_time" ]; then
+      RESOLVED=desktop-linux; VIA='newer Docker Desktop socket'
+    else
+      RESOLVED=orbstack; VIA='newer OrbStack socket'
+    fi
+  fi
+}
+
+resolve() {
+  tool="$1"
+  RESOLVED=
+  VIA=
+  dir="$PWD"
+  while :; do
+    choice=$(read_choice "$dir/.ctx" "$tool")
+    if [ -n "$choice" ]; then
+      RESOLVED="$choice"; VIA="$dir/.ctx"; return
+    fi
+    choice=$(read_project_map "$dir" "$tool")
+    if [ -n "$choice" ]; then
+      RESOLVED="$choice"; VIA="$CONFIG project map"; return
+    fi
+    if [ "$dir" = "$HOME" ] || [ "$dir" = / ]; then break; fi
+    dir=$(dirname "$dir")
+  done
+  if [ "$tool" = docker ]; then probe_docker; fi
+  if [ -n "$RESOLVED" ]; then return; fi
+  choice=$(read_default "$tool")
+  if [ -n "$choice" ]; then
+    RESOLVED="$choice"; VIA="$CONFIG default"
+  else
+    VIA="$tool default"
+  fi
+}
+
+status_one() {
+  tool="$1"
+  case "$tool" in
+    docker)
+      if [ -n "${DOCKER_CONTEXT:-}" ]; then printf 'docker: %s (DOCKER_CONTEXT)\n' "$DOCKER_CONTEXT"; return; fi
+      if [ -n "${DOCKER_HOST:-}" ]; then printf 'docker: %s (DOCKER_HOST)\n' "$DOCKER_HOST"; return; fi
+      ;;
+    podman)
+      if [ -n "${CONTAINER_CONNECTION:-}" ]; then printf 'podman: %s (CONTAINER_CONNECTION)\n' "$CONTAINER_CONNECTION"; return; fi
+      if [ -n "${CONTAINER_HOST:-}" ]; then printf 'podman: %s (CONTAINER_HOST)\n' "$CONTAINER_HOST"; return; fi
+      ;;
+  esac
+  resolve "$tool"
+  if [ -n "$RESOLVED" ]; then printf '%s: %s (%s)\n' "$tool" "$RESOLVED" "$VIA"
+  else printf '%s: %s\n' "$tool" "$VIA"; fi
+}
+
+validate_choice() {
+  tool="$1"
+  name="$2"
+  real=$(find_real "$tool")
+  if [ "$tool" = docker ]; then
+    "$real" context inspect "$name" >/dev/null 2>&1
+  else
+    "$real" system connection list --format '{{.Name}}' | grep -Fxq "$name"
+  fi
+}
+
+write_choice() {
+  key="$1"
+  name="$2"
+  file=.ctx
+  tmp=$(mktemp)
+  if [ -f "$file" ]; then
+    awk -v key="$key" -v value="$name" '
+      $0 ~ "^[[:space:]]*" key "[[:space:]]*=" {
+        if (!written) { print key " = \"" value "\""; written=1 }
+        next
+      }
+      { print }
+      END { if (!written) print key " = \"" value "\"" }
+    ' "$file" > "$tmp"
+  else
+    printf '%s = "%s"\n' "$key" "$name" > "$tmp"
+  fi
+  mv "$tmp" "$file"
+  if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    exclude=$(git rev-parse --path-format=absolute --git-path info/exclude)
+    mkdir -p "$(dirname "$exclude")"
+    if ! grep -Fxq .ctx "$exclude" 2>/dev/null; then printf '\n.ctx\n' >> "$exclude"; fi
+  fi
+}
+
+write_default() {
+  key="${1}_default"
+  name="$2"
+  mkdir -p "$CTX_HOME"
+  [ -f "$CONFIG" ] || printf '# ctx fallbacks and project map\n' > "$CONFIG"
+  tmp=$(mktemp)
+  awk -v key="$key" -v value="$name" '
+    BEGIN { print key " = \"" value "\"" }
+    /^\[/ { in_section=1 }
+    !in_section && $0 ~ "^[[:space:]]*" key "[[:space:]]*=" { next }
+    { print }
+  ' "$CONFIG" > "$tmp"
+  mv "$tmp" "$CONFIG"
+}
+
+clear_choice() {
+  tool="${1:-}"
+  [ -f .ctx ] || return 0
+  if [ -z "$tool" ]; then
+    rm .ctx
+    return
+  fi
+  check_tool "$tool"
+  tmp=$(mktemp)
+  awk -v key="$tool" '$0 !~ "^[[:space:]]*" key "[[:space:]]*="' .ctx > "$tmp"
+  if grep -Eq '^[[:space:]]*(docker|podman)[[:space:]]*=' "$tmp"; then
+    mv "$tmp" .ctx
+  else
+    rm .ctx "$tmp"
+  fi
+}
+
+case "${1:-}" in
+  ''|help|--help|-h) usage ;;
+  version|--version|-v) printf 'ctx %s\n' "$VERSION" ;;
+  real)
+    check_tool "${2:-}"
+    find_real "$2"
+    ;;
+  resolve)
+    check_tool "${2:-}"
+    resolve "$2"
+    printf '%s\n' "$RESOLVED"
+    ;;
+  status)
+    if [ -n "${2:-}" ]; then check_tool "$2"; status_one "$2"
+    else status_one docker; status_one podman; fi
+    ;;
+  ls)
+    check_tool "${2:-}"
+    real=$(find_real "$2")
+    if [ "$2" = docker ]; then "$real" context ls
+    else "$real" system connection list; fi
+    ;;
+  set)
+    check_tool "${2:-}"
+    name="${3:-}"
+    [ -n "$name" ] || { usage >&2; exit 2; }
+    if ! validate_choice "$2" "$name"; then
+      printf 'ctx: unknown %s %s\n' "$2" "$name" >&2
+      exit 1
+    fi
+    if [ "${4:-}" = --global ]; then
+      write_default "$2" "$name"
+      printf '%s fallback: %s\n' "$2" "$name"
+    elif [ -z "${4:-}" ]; then
+      write_choice "$2" "$name"
+      printf '%s: %s in %s/.ctx\n' "$2" "$name" "$PWD"
+    else
+      usage >&2; exit 2
+    fi
+    ;;
+  clear)
+    clear_choice "${2:-}"
+    printf 'cleared %s/.ctx\n' "$PWD"
+    ;;
+  *) usage >&2; exit 2 ;;
+esac

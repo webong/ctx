@@ -1,0 +1,10 @@
+#!/usr/bin/env sh
+set -eu
+
+if [ "${1:-}" = context ] && [ "${2:-}" = inspect ]; then
+  case "${3:-}" in alpha|beta|default) exit 0;; esac
+  exit 1
+fi
+
+if [ "${1:-}" = --context ] && [ "${3:-}" = info ]; then exit 1; fi
+printf '%s\n' "$*"

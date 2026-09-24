@@ -1,98 +1,20 @@
 #!/usr/bin/env sh
-# dctx shim — universal docker wrapper, POSIX sh
-# Detects per-project .docker-context and running daemons, then execs real docker --context X
-# install: cp bin/docker ~/.local/bin/docker && chmod +x ~/.local/bin/docker
-# note: string "dctx shim" used for detection by dctx binary
+# ctx wrapper for Docker
 set -eu
 
-# 1) find real docker (first on PATH that is not this shim)
-find_real() {
-  self="$0"
-  # resolve self realpath for comparison
-  for p in $(printf "%s" "$PATH" | tr ':' ' '); do
-    cand="$p/docker"
-    if [ ! -x "$cand" ]; then continue; fi
-    # skip self
-    if [ "$cand" = "$self" ]; then continue; fi
-    # skip if it's this shim (check marker)
-    if grep -q "dctx shim" "$cand" 2>/dev/null; then continue; fi
-    # also skip symlink to shim
-    if [ -L "$cand" ]; then
-      tgt=$(readlink "$cand" 2>/dev/null || true)
-      case "$tgt" in *dctx*|*docker-shim*) continue;; esac
-    fi
-    printf "%s" "$cand"
-    return 0
-  done
-  for c in /opt/homebrew/bin/docker /usr/local/bin/docker "$HOME/.orbstack/bin/docker" /usr/bin/docker; do
-    if [ -x "$c" ] && ! grep -q "dctx shim" "$c" 2>/dev/null; then printf "%s" "$c"; return 0; fi
-  done
-  printf "docker"
-}
+BIN_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+CTX="$BIN_DIR/ctx"
+REAL=$("$CTX" real docker)
 
-REAL=$(find_real)
-
-# 2) respect explicit overrides
-if [ -n "${DOCKER_CONTEXT:-}" ] || [ -n "${DOCKER_HOST:-}" ]; then
+if [ -n "${DOCKER_CONTEXT:-}" ] || [ -n "${DOCKER_HOST:-}" ] || [ "${1:-}" = context ]; then
   exec "$REAL" "$@"
 fi
-# don't intercept context management
-if [ "${1:-}" = "context" ]; then
-  exec "$REAL" "$@"
-fi
-for a in "$@"; do
-  case "$a" in
-    --context|--host|-H|--context=*|--host=*) exec "$REAL" "$@" ;;
+for arg in "$@"; do
+  case "$arg" in
+    --context|--context=*|--host|--host=*|-H|-H?*) exec "$REAL" "$@" ;;
   esac
 done
 
-# 3) per-project .docker-context walk-up
-dir="$PWD"
-while [ "$dir" != "/" ] && [ "$dir" != "$HOME" ]; do
-  if [ -f "$dir/.docker-context" ]; then
-    ctx=$(tr -d ' \t\n\r' < "$dir/.docker-context" 2>/dev/null || true)
-    case "$ctx" in
-      orbstack|desktop-linux|default)
-        exec "$REAL" --context "$ctx" "$@"
-        ;;
-    esac
-    break
-  fi
-  # also check central config.toml projects map (ignore comments)
-  cfg="$HOME/.config/dctx/config.toml"
-  if [ -f "$cfg" ]; then
-    hit=$(grep -F "\"$dir\" =" "$cfg" 2>/dev/null | grep -v '^[[:space:]]*#' | sed -E 's/.*=[[:space:]]*"(.*)".*/\1/' || true)
-    case "$hit" in
-      orbstack|desktop-linux|default)
-        exec "$REAL" --context "$hit" "$@"
-        ;;
-    esac
-  fi
-  dir=$(dirname "$dir")
-done
-
-# 4) fallback: probe running daemons
-orbstack_ok=0; desktop_ok=0
-if [ -S "$HOME/.orbstack/run/docker.sock" ] && "$REAL" --context orbstack info >/dev/null 2>&1; then orbstack_ok=1; fi
-if [ -S "$HOME/.docker/run/docker.sock" ] && "$REAL" --context desktop-linux info >/dev/null 2>&1; then desktop_ok=1; fi
-
-use_ctx=""
-if [ "$orbstack_ok" = 1 ] && [ "$desktop_ok" = 0 ]; then use_ctx="orbstack"
-elif [ "$desktop_ok" = 1 ] && [ "$orbstack_ok" = 0 ]; then use_ctx="desktop-linux"
-elif [ "$orbstack_ok" = 1 ] && [ "$desktop_ok" = 1 ]; then
-  # both up: pick newer socket (last opened app wins)
-  if command -v stat >/dev/null 2>&1; then
-    orb_mtime=$(stat -f %m "$HOME/.orbstack/run/docker.sock" 2>/dev/null || stat -c %Y "$HOME/.orbstack/run/docker.sock" 2>/dev/null || echo 0)
-    desk_mtime=$(stat -f %m "$HOME/.docker/run/docker.sock" 2>/dev/null || stat -c %Y "$HOME/.docker/run/docker.sock" 2>/dev/null || echo 0)
-    # shell arithmetic may not support large ints in dash, use test
-    if [ "${desk_mtime:-0}" -gt "${orb_mtime:-0}" ] 2>/dev/null; then use_ctx="desktop-linux"; else use_ctx="orbstack"; fi
-  else
-    use_ctx="orbstack"
-  fi
-fi
-
-if [ -n "$use_ctx" ]; then
-  exec "$REAL" --context "$use_ctx" "$@"
-else
-  exec "$REAL" "$@"
-fi
+CHOICE=$("$CTX" resolve docker)
+if [ -n "$CHOICE" ]; then exec "$REAL" --context "$CHOICE" "$@"; fi
+exec "$REAL" "$@"

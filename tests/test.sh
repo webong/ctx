@@ -1,0 +1,72 @@
+#!/usr/bin/env sh
+set -eu
+
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+TEST_ROOT=$(mktemp -d)
+trap 'rm -rf "$TEST_ROOT"' EXIT HUP INT TERM
+
+export HOME="$TEST_ROOT/home"
+export CTX_HOME="$HOME/.config/ctx"
+export CTX_BIN_DIR="$HOME/.local/bin"
+mkdir -p "$TEST_ROOT/fake-bin" "$TEST_ROOT/project/child" "$TEST_ROOT/mapped" "$HOME"
+cp "$ROOT/tests/fake-docker" "$TEST_ROOT/fake-bin/docker"
+cp "$ROOT/tests/fake-podman" "$TEST_ROOT/fake-bin/podman"
+chmod +x "$TEST_ROOT/fake-bin/docker" "$TEST_ROOT/fake-bin/podman"
+export PATH="$CTX_BIN_DIR:$TEST_ROOT/fake-bin:$PATH"
+
+"$ROOT/install.sh" >/dev/null
+"$ROOT/install.sh" >/dev/null
+test -x "$CTX_BIN_DIR/ctx"
+test -x "$CTX_BIN_DIR/docker"
+test -x "$CTX_BIN_DIR/podman"
+test -f "$CTX_HOME/config.toml"
+
+git init -q "$TEST_ROOT/project"
+cd "$TEST_ROOT/project"
+ctx set docker alpha >/dev/null
+ctx set podman red >/dev/null
+grep -Fxq 'docker = "alpha"' .ctx
+grep -Fxq 'podman = "red"' .ctx
+git check-ignore -q .ctx
+
+cd child
+test "$(docker ps)" = '--context alpha ps'
+test "$(podman ps)" = '--connection red ps'
+test "$(docker build -f Containerfile .)" = '--context alpha build -f Containerfile .'
+test "$(podman build -f Containerfile .)" = '--connection red build -f Containerfile .'
+test "$(DOCKER_CONTEXT=beta docker ps)" = ps
+test "$(CONTAINER_CONNECTION=blue podman ps)" = ps
+test "$(docker --context beta ps)" = '--context beta ps'
+test "$(podman --connection blue ps)" = '--connection blue ps'
+test "$(podman system connection list)" = "$(printf 'red\nblue')"
+test "$(ctx status docker)" = "docker: alpha ($TEST_ROOT/project/.ctx)"
+
+cd "$TEST_ROOT/project"
+ctx clear docker >/dev/null
+test "$(podman ps)" = '--connection red ps'
+test "$(docker ps)" = ps
+ctx clear >/dev/null
+test ! -e .ctx
+
+printf '\n[projects."%s"]\ndocker = "beta"\npodman = "blue"\n' "$TEST_ROOT/mapped" >> "$CTX_HOME/config.toml"
+cd "$TEST_ROOT/mapped"
+test "$(docker ps)" = '--context beta ps'
+test "$(podman ps)" = '--connection blue ps'
+
+cd "$HOME"
+test "$(docker ps)" = ps
+test "$(podman ps)" = ps
+ctx set docker alpha --global >/dev/null
+ctx set podman red --global >/dev/null
+test "$(docker ps)" = '--context alpha ps'
+test "$(podman ps)" = '--connection red ps'
+if ctx set docker missing >/dev/null 2>&1; then
+  printf 'invalid Docker context was accepted\n' >&2
+  exit 1
+fi
+if ctx set podman missing >/dev/null 2>&1; then
+  printf 'invalid Podman connection was accepted\n' >&2
+  exit 1
+fi
+
+printf 'ctx tests passed\n'

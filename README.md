@@ -1,92 +1,84 @@
-# dctx — Docker Context Auto-Switcher
+# ctx
 
-Universal, shareable per-project Docker context switcher for OrbStack ↔ Docker Desktop.
-
-Works everywhere: `zsh`/`bash`/`fish`, VS Code, JetBrains, `docker compose`, CI — because it’s a **binary shim** on `PATH`, not a shell alias.
-
-## Why
-
-`~/.docker/config.json:10` `currentContext` is global. You want:
-- `~/Workspace/Projects/AllAccess/allfans` → `orbstack`
-- `~/Workspace/playground/desktop-test` → `desktop-linux`
-- `cd` elsewhere → fallback to whichever daemon is running (last opened app wins)
-
-`dctx` gives you that with zero per-terminal `docker context use`.
+ctx chooses container engine connections per project. It wraps the Docker and Podman commands, so the same directory can select a Docker context, a Podman connection, or both. It does not change either tool's global default.
 
 ## Install
 
-```bash
-# curl (shareable)
-curl -fsSL https://raw.githubusercontent.com/<you>/dctx/main/install.sh | bash
+You need Git and at least one of the Docker or Podman CLIs.
 
-# or manual
-git clone https://github.com/<you>/dctx ~/.local/share/dctx
-~/.local/share/dctx/install.sh
-```
+~~~sh
+git clone https://github.com/webong/ctx.git "$HOME/.local/share/ctx"
+"$HOME/.local/share/ctx/install.sh"
+~~~
 
-`install.sh` does:
-1. copies `bin/docker` shim → `~/.local/bin/docker` (before `/opt/homebrew/bin`/`~/.orbstack/bin` on PATH)
-2. copies `bin/dctx` → `~/.local/bin/dctx`
-3. adds `eval "$(dctx hook zsh)"` to `~/.zshrc` (and bash/fish equivalents)
-4. creates `~/.config/dctx/config.toml`
+Put $HOME/.local/bin before the real Docker and Podman commands on your PATH. For example, add this to ~/.zshrc or ~/.bashrc:
 
-## Usage
+~~~sh
+export PATH="$HOME/.local/bin:$PATH"
+~~~
 
-```bash
-dctx ls                          # docker context ls + project map
-dctx status                      # show what ctx would be used for $PWD
-dctx set orbstack                # echo orbstack > ./.docker-context (per-project)
-dctx set desktop-linux --global  # set fallback default
-dctx set default --clear         # rm ./.docker-context
+Open a new shell and check `command -v ctx`, `command -v docker`, and `command -v podman`. The installer leaves an existing config in place and refuses to replace an unrelated command. Set CTX_BIN_DIR and CTX_HOME to change installation locations.
 
-# per-project file (checked walking up to $HOME)
-cat .docker-context
-# orbstack
+## Choose connections
 
-# any docker command now auto-routes:
+Run these in a project directory:
+
+~~~sh
+ctx ls docker
+ctx ls podman
+ctx set docker my-docker-context
+ctx set podman my-podman-connection
+ctx status
+~~~
+
+This creates a local .ctx file:
+
+~~~toml
+docker = "my-docker-context"
+podman = "my-podman-connection"
+~~~
+
+ctx set verifies that the named Docker context or Podman system connection exists. In a Git repository, it excludes .ctx through the local .git/info/exclude file. The choice stays on your machine, without modifying the project's tracked .gitignore. Use `ctx clear docker`, `ctx clear podman`, or `ctx clear` to remove choices.
+
+~~~sh
 docker ps
-docker compose up -d
-docker info --format '{{.Name}}'  # → orbstack or docker-desktop
-```
+podman ps
+docker build -f Containerfile .
+podman build -f Containerfile .
+~~~
 
-## How it works
+The build commands use the selected connection. A Containerfile describes the image build; it does not select Docker or Podman.
 
-Priority per `docker` invocation (`bin/docker` shim):
+## Optional central config
 
-1. `DOCKER_CONTEXT` / `DOCKER_HOST` env → respect
-2. explicit `--context` / `--host` / `-H` flag → respect
-3. `.docker-context` file walk-up from `$PWD` → `orbstack|desktop-linux|default`
-4. `~/.config/dctx/config.toml` `[projects]` map
-5. probe sockets: `~/.orbstack/run/docker.sock` vs `~/.docker/run/docker.sock` (+ `docker --context X info` check + mtime tie-break)
-6. fallback → real `docker` with no `--context`
+You can set fallbacks or map project paths in $HOME/.config/ctx/config.toml:
 
-Shell hook (`shell/hook.zsh`) only exports `DOCKER_CONTEXT` for prompt/plugins; shim is the source of truth so GUI apps work too.
+~~~toml
+docker_default = "my-docker-context"
+podman_default = "my-podman-connection"
 
-## Share across team (local-only)
+[projects."/absolute/path/to/project"]
+docker = "another-docker-context"
+podman = "another-podman-connection"
+~~~
 
-`.docker-context` is **gitignored** — local per-dev, not committed. `dctx set` auto-adds it to `.gitignore`:
+Mappings apply to the named directory and its descendants. You can also set a fallback with `ctx set docker NAME --global` or `ctx set podman NAME --global`. If no Podman connection is selected, Podman keeps its own default behavior, including local operation on Linux.
 
-```bash
-echo "orbstack" > .docker-context   # local only, ignored
-# already in .gitignore: .docker-context
-```
+## Selection order
 
-Share the *tool* not the choice:
+1. Explicit command flags or connection environment variables take priority.
+2. The nearest .ctx entry or central project mapping is used.
+3. Docker can detect a running OrbStack or Docker Desktop daemon on macOS. Podman has no automatic daemon selection.
+4. The optional per-tool fallback is used.
+5. The unmodified CLI chooses its own default.
 
-```bash
-git clone https://github.com/<you>/dctx ~/.local/share/dctx && ~/.local/share/dctx/install.sh
-```
+`docker context ...`, `podman system connection ...`, and `podman machine ...` pass through to the real CLI. The wrappers affect commands launched through them; other applications may use their own connection settings.
 
-Teammate picks their own: `dctx set desktop-linux` (or `orbstack`) locally. Fallback still probes sockets if no file.
+Podman connection selection uses its [--connection option](https://docs.podman.io/en/latest/markdown/podman.1.html). `podman build` accepts [Containerfiles](https://docs.podman.io/en/stable/markdown/podman-build.1.html).
 
-## Uninstall
+## Remove
 
-```bash
-dctx uninstall
-# or
-rm ~/.local/bin/docker ~/.local/bin/dctx
-# remove eval line from ~/.zshrc
-```
+Remove the installed ctx, docker, and podman wrappers from $HOME/.local/bin after checking they belong to ctx. Your config is in $HOME/.config/ctx. If you added the PATH line solely for ctx, remove that line from your shell startup file.
 
 ## License
 
