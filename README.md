@@ -19,6 +19,8 @@ export PATH="$HOME/.local/bin:$PATH"
 
 Open a new shell and check `command -v ctx`, `command -v docker`, and `command -v podman`. The installer leaves an existing config in place and refuses to replace an unrelated command. Set CTX_BIN_DIR and CTX_HOME to change installation locations.
 
+If you previously installed dctx, remove any `eval "$(dctx hook zsh)"` or `eval "$(dctx hook bash)"` line from your shell startup file. That older hook can export DOCKER_CONTEXT and override .ctx. Set your project choices again with `ctx set`; the old .docker-context and dctx config are not read by ctx.
+
 ## Choose connections
 
 Run these in a project directory:

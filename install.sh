@@ -41,3 +41,8 @@ case ":$PATH:" in
   *) printf 'Add this directory before Docker and Podman on PATH: export PATH="%s:$PATH"\n' "$DST_BIN" ;;
 esac
 printf 'Config: %s/config.toml\n' "$CONFIG_DIR"
+for rc in "$HOME/.zshrc" "$HOME/.bashrc"; do
+  if [ -f "$rc" ] && grep -q 'dctx hook' "$rc"; then
+    printf 'Old dctx shell hook found in %s; remove that line so it cannot override ctx.\n' "$rc"
+  fi
+done
