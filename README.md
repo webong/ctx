@@ -4,7 +4,13 @@ ctx chooses container engine connections per project. It wraps the Docker and Po
 
 ## Install
 
-You need Git and at least one of the Docker or Podman CLIs.
+You need curl and at least one of the Docker or Podman CLIs. The installer downloads the three commands when run as a stream:
+
+~~~sh
+curl -fsSL https://raw.githubusercontent.com/webong/ctx/main/install.sh | sh
+~~~
+
+To install from a local checkout instead, use Git:
 
 ~~~sh
 git clone https://github.com/webong/ctx.git "$HOME/.local/share/ctx"

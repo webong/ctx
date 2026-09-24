@@ -21,6 +21,15 @@ test -x "$CTX_BIN_DIR/docker"
 test -x "$CTX_BIN_DIR/podman"
 test -f "$CTX_HOME/config.toml"
 
+(
+  cd "$TEST_ROOT/mapped"
+  CTX_BIN_DIR="$TEST_ROOT/stream-bin" CTX_HOME="$TEST_ROOT/stream-config" CTX_SOURCE_BASE="file://$ROOT" sh < "$ROOT/install.sh" >/dev/null
+  test -x "$TEST_ROOT/stream-bin/ctx"
+  test -x "$TEST_ROOT/stream-bin/docker"
+  test -x "$TEST_ROOT/stream-bin/podman"
+  test -f "$TEST_ROOT/stream-config/config.toml"
+)
+
 git init -q "$TEST_ROOT/project"
 cd "$TEST_ROOT/project"
 ctx set docker alpha >/dev/null

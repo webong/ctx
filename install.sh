@@ -1,7 +1,6 @@
 #!/usr/bin/env sh
 set -eu
 
-SRC_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 DST_BIN=${CTX_BIN_DIR:-$HOME/.local/bin}
 CONFIG_DIR=${CTX_HOME:-$HOME/.config/ctx}
 
@@ -15,6 +14,34 @@ for tool in ctx docker podman; do
     fi
   fi
 done
+
+SRC_DIR=
+if [ -f "$0" ]; then
+  candidate=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+  if [ -f "$candidate/bin/ctx" ] && [ -f "$candidate/bin/docker" ] && [ -f "$candidate/bin/podman" ]; then
+    SRC_DIR=$candidate
+  fi
+fi
+
+if [ -z "$SRC_DIR" ]; then
+  if ! command -v curl >/dev/null 2>&1; then
+    printf 'ctx: curl is required for streamed installation\n' >&2
+    exit 1
+  fi
+  FETCH_DIR=$(mktemp -d)
+  trap 'rm -rf "$FETCH_DIR"' 0
+  SOURCE_BASE=${CTX_SOURCE_BASE:-https://raw.githubusercontent.com/webong/ctx/${CTX_REF:-main}}
+  mkdir -p "$FETCH_DIR/bin"
+  for tool in ctx docker podman; do
+    curl -fsSL "$SOURCE_BASE/bin/$tool" -o "$FETCH_DIR/bin/$tool"
+    if [ ! -s "$FETCH_DIR/bin/$tool" ]; then
+      printf 'ctx: empty download for %s\n' "$tool" >&2
+      exit 1
+    fi
+    sh -n "$FETCH_DIR/bin/$tool"
+  done
+  SRC_DIR=$FETCH_DIR
+fi
 
 mkdir -p "$DST_BIN" "$CONFIG_DIR"
 for tool in ctx docker podman; do
