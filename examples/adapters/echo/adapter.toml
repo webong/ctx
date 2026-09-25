@@ -1,0 +1,5 @@
+api_version = "1"
+name = "echo"
+executable = "ctx-echo"
+description = "Reference adapter for ctx adapter API v1"
+capabilities = "list,validate,run,doctor,open"

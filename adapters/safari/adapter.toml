@@ -1,0 +1,8 @@
+api_version = "1"
+name = "safari"
+kind = "browser"
+executable = "ctx-safari"
+description = "First-party Safari browser provider"
+capabilities = "list,validate,open,doctor"
+selector_key = "browser"
+first_party = "true"

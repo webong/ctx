@@ -1,0 +1,8 @@
+api_version = "1"
+name = "aws"
+executable = "ctx-aws"
+description = "First-party AWS CLI profile adapter"
+capabilities = "list,validate,run,doctor"
+selector_key = "aws_profile"
+commands = "aws"
+first_party = "true"

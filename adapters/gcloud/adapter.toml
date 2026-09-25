@@ -1,0 +1,8 @@
+api_version = "1"
+name = "gcloud"
+executable = "ctx-gcloud"
+description = "First-party Google Cloud configuration adapter"
+capabilities = "list,validate,run,doctor"
+selector_key = "gcloud_configuration"
+commands = "gcloud"
+first_party = "true"

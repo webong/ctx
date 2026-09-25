@@ -1,17 +1,18 @@
 # ctx
 
-ctx chooses tool contexts per project. It wraps Docker, Podman, and nerdctl, and
-can run kubectl, AWS CLI, gcloud, PostgreSQL, and MySQL commands with project
-selectors. It can also open a Firefox or Chromium-family browser profile. Named
-profiles bundle those choices without changing any tool's global default. Apple
-Container is supported as an explicit transfer endpoint.
+ctx chooses tool contexts per project. Its core owns shell environments, browser
+profiles, and the container family: Docker, Podman, nerdctl/containerd, plus
+Apple Container transfer endpoints. Kubernetes, AWS, gcloud, PostgreSQL, and
+MySQL are first-party adapter packages developed in this repository and installed
+with ctx. Named profiles bundle all of these choices without changing a tool's
+global default. External adapters can add selectors without changing ctx itself.
 
 ## Install
 
 You need curl and at least one of the Docker, Podman, or nerdctl CLIs. kubectl and
 the AWS CLI, gcloud, database clients, and browsers are optional and only needed
-for their adapters. The installer
-downloads ctx and its three container wrappers when run as a stream:
+for their adapters. The installer downloads ctx, its three container wrappers,
+and the bundled first-party adapters when run as a stream:
 
 ~~~sh
 curl -fsSL https://raw.githubusercontent.com/webong/ctx/main/install.sh | sh
@@ -82,6 +83,7 @@ Select a browser profile and open project URLs without mixing client, admin, and
 personal sessions:
 
 ~~~sh
+ctx ls browser
 ctx set browser firefox:client-a
 ctx open http://localhost:3000
 
@@ -90,9 +92,11 @@ ctx open https://client-a.example
 ~~~
 
 Firefox values are Firefox profile names. Chrome and Chromium values are profile
-directory names such as `Default` or `Profile 1`. On macOS ctx launches a new app
-instance through `open`; on other systems it invokes the browser executable.
-`CTX_BROWSER` temporarily overrides the project selection.
+directory names such as `Default` or `Profile 1`; Safari currently exposes
+`safari:default`. `ctx ls browser` asks every installed browser provider for its
+available selections and prints values ready for `ctx set browser`. On macOS the
+providers launch a new app instance through `open`; on other systems they invoke
+the browser executable. `CTX_BROWSER` temporarily overrides the project selection.
 
 Database adapters use native client-side profiles and do not copy connection
 secrets into `.ctx`:
@@ -296,9 +300,79 @@ database passwords, browser data, and tokens remain in each tool's native config
 or credential store. Environment entries are plain text, so they are intended for
 non-secret settings only.
 
+## First-party and external adapters
+
+The bundled first-party adapters live under `adapters/` in this repository:
+
+- `docker`, `podman`, and `nerdctl` contain the built-in container-engine shims.
+  The installer places those executables in the binary directory so normal engine
+  commands can transparently resolve the current project's selection.
+- `firefox`, `chrome`, `chromium`, and `safari` are browser providers used by the
+  built-in `browser` context. Each provider owns application-specific profile
+  discovery, validation, and launch behavior.
+- `kube` owns `kubectl` contexts, namespaces, and kubeconfig selection.
+- `aws` owns AWS CLI profiles.
+- `gcloud` owns Google Cloud configurations.
+- `postgres` owns PostgreSQL service profiles and client commands.
+- `mysql` owns MySQL login paths and client commands.
+
+The installer installs and trusts these packages alongside ctx. They use the same
+public adapter protocol as third-party additions, so integrations can evolve
+without adding another selector switch to the core.
+
+ctx adapter API v1 lets a separately installed executable provide `list`,
+`configure`, `validate`, `run`, `doctor`, and optional `open` operations.
+Adapters are loaded only from `$CTX_HOME/adapters`; ctx never sources them or
+discovers code in the current directory or arbitrary PATH entries.
+
+Test, install, review, and trust an adapter explicitly:
+
+~~~sh
+ctx adapter test ./ctx-azure
+ctx adapter install ./ctx-azure
+ctx adapter inspect azure
+ctx adapter trust azure
+ctx adapter ls
+~~~
+
+`ctx adapter test` executes the adapter's `doctor` operation, so review unknown
+adapter code before testing it. `ctx adapter install` only copies a structurally
+valid package and does not execute it.
+
+Installation alone does not permit execution. Trust records a checksum of every
+file in the installed adapter. Editing any file revokes trust until the user
+reviews it and runs `ctx adapter trust` again.
+
+Once trusted, an external adapter behaves like a built-in selector:
+
+~~~sh
+ctx ls azure
+ctx set azure client-a-subscription
+ctx run azure account show
+ctx adapter doctor azure
+ctx explain
+~~~
+
+External selections also work in bundles:
+
+~~~sh
+ctx profile set client-a azure client-a-subscription
+~~~
+
+Adapters with the `open` capability can be invoked with `ctx open --adapter
+NAME`. Use `ctx adapter remove NAME` to remove an installed adapter and its trust
+record. The repository includes an executable reference adapter under
+`examples/adapters/echo`. See the [adapter API v1 specification](docs/adapter-api.md)
+to implement an adapter in any language.
+
+An adapter with `kind = "browser"` extends the built-in browser context instead
+of creating another top-level selector. Its name becomes the prefix in values
+such as `brave:Default`; `ctx ls browser`, `ctx set browser`, `ctx open`, and
+`ctx doctor` route through it automatically.
+
 ## Remove
 
-Remove the installed ctx, docker, podman, and nerdctl wrappers from $HOME/.local/bin after checking they belong to ctx. Your config is in $HOME/.config/ctx. If you added the PATH line solely for ctx, remove that line from your shell startup file.
+Remove the installed ctx, docker, podman, and nerdctl wrappers from $HOME/.local/bin after checking they belong to ctx. Your config and installed adapters are in $HOME/.config/ctx. If you added the PATH line solely for ctx, remove that line from your shell startup file.
 
 ## License
 

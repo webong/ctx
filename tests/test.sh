@@ -9,6 +9,14 @@ export HOME="$TEST_ROOT/home"
 export CTX_HOME="$HOME/.config/ctx"
 export CTX_BIN_DIR="$HOME/.local/bin"
 mkdir -p "$TEST_ROOT/fake-bin" "$TEST_ROOT/project/child" "$TEST_ROOT/mapped" "$TEST_ROOT/bundled" "$HOME"
+mkdir -p "$HOME/Library/Application Support/Firefox" \
+  "$HOME/Library/Application Support/Google/Chrome/Default" \
+  "$HOME/Library/Application Support/Google/Chrome/Profile 1" \
+  "$HOME/Library/Application Support/Chromium/Default"
+printf '%s\n' '[Profile1]' 'Name=client-a' '' '[Profile0]' 'Name=default-release' > "$HOME/Library/Application Support/Firefox/profiles.ini"
+printf '{}\n' > "$HOME/Library/Application Support/Google/Chrome/Default/Preferences"
+printf '{}\n' > "$HOME/Library/Application Support/Google/Chrome/Profile 1/Preferences"
+printf '{}\n' > "$HOME/Library/Application Support/Chromium/Default/Preferences"
 cp "$ROOT/tests/fake-docker" "$TEST_ROOT/fake-bin/docker"
 cp "$ROOT/tests/fake-podman" "$TEST_ROOT/fake-bin/podman"
 cp "$ROOT/tests/fake-nerdctl" "$TEST_ROOT/fake-bin/nerdctl"
@@ -25,14 +33,40 @@ chmod +x "$TEST_ROOT/fake-bin/docker" "$TEST_ROOT/fake-bin/podman" "$TEST_ROOT/f
 export PATH="$CTX_BIN_DIR:$TEST_ROOT/fake-bin:$PATH"
 export CTX_PLATFORM=Darwin
 
+for engine_adapter in docker podman nerdctl; do
+  test -x "$ROOT/adapters/$engine_adapter/$engine_adapter"
+  test ! -e "$ROOT/bin/$engine_adapter"
+done
+
 "$ROOT/install.sh" >/dev/null
 "$ROOT/install.sh" >/dev/null
-test "$(ctx version)" = 'ctx 0.6.0'
+test "$(ctx version)" = 'ctx 0.7.0'
 test -x "$CTX_BIN_DIR/ctx"
 test -x "$CTX_BIN_DIR/docker"
 test -x "$CTX_BIN_DIR/podman"
 test -x "$CTX_BIN_DIR/nerdctl"
 test -f "$CTX_HOME/config.toml"
+test "$(ctx ls browser)" = "$(printf '%s\n' 'chrome:Default' 'chrome:Profile 1' 'chromium:Default' 'firefox:client-a' 'firefox:default-release' 'safari:default')"
+
+for first_party_adapter in firefox chrome chromium safari kube aws gcloud postgres mysql; do
+  ctx adapter ls | grep -Eq "^${first_party_adapter}[[:space:]]+trusted"
+  ctx adapter test "$ROOT/adapters/$first_party_adapter" | grep -Fq "adapter $first_party_adapter satisfies ctx adapter API v1"
+done
+
+ctx adapter test "$ROOT/examples/adapters/echo" | grep -Fq 'satisfies ctx adapter API v1'
+ctx adapter install "$ROOT/examples/adapters/echo" >/dev/null
+test -x "$CTX_HOME/adapters/echo/ctx-echo"
+ctx adapter ls | grep -Eq '^echo[[:space:]]+untrusted'
+if ctx ls echo >/dev/null 2>&1; then
+  printf 'untrusted adapter was executed\n' >&2
+  exit 1
+fi
+ctx adapter trust echo >/dev/null
+ctx adapter ls | grep -Eq '^echo[[:space:]]+trusted'
+ctx adapter inspect echo | grep -Fq 'api:          1'
+ctx adapter inspect echo | grep -Fq 'state:        trusted'
+test "$(ctx ls echo)" = "$(printf 'local\nstaging')"
+ctx adapter doctor echo >/dev/null
 
 (
   cd "$TEST_ROOT/mapped"
@@ -49,9 +83,11 @@ cd "$TEST_ROOT/project"
 ctx set docker alpha >/dev/null
 ctx set podman red >/dev/null
 ctx set nerdctl k8s.io >/dev/null
+ctx set echo local >/dev/null
 grep -Fxq 'docker = "alpha"' .ctx
 grep -Fxq 'podman = "red"' .ctx
 grep -Fxq 'nerdctl = "k8s.io"' .ctx
+grep -Fxq 'echo = "local"' .ctx
 git check-ignore -q .ctx
 
 cd child
@@ -61,6 +97,8 @@ test "$(docker build -f Containerfile .)" = '--context alpha build -f Containerf
 test "$(podman build -f Containerfile .)" = '--connection red build -f Containerfile .'
 test "$(nerdctl ps)" = '--namespace k8s.io ps'
 test "$(nerdctl build -f Containerfile .)" = '--namespace k8s.io build -f Containerfile .'
+test "$(ctx run echo hello world)" = 'run[local] hello world'
+test "$(ctx open --adapter echo -- https://example.test)" = 'open[local] https://example.test'
 test "$(DOCKER_CONTEXT=beta docker ps)" = ps
 test "$(CONTAINER_CONNECTION=blue podman ps)" = ps
 test "$(CONTAINERD_NAMESPACE=default nerdctl ps)" = ps
@@ -137,6 +175,7 @@ ctx profile unset client-b kube_context >/dev/null
 test "$(ctx profile show client-b)" = 'aws_profile = "default"'
 ctx profile env client-a CTX_TEST_REGION eu-west-1 >/dev/null
 ctx profile set client-a shell_path /profile/bin >/dev/null
+ctx profile set client-a echo staging >/dev/null
 ctx profile use client-a >/dev/null
 grep -Fxq 'profile = "client-a"' .ctx
 test "$(docker ps)" = '--context beta ps'
@@ -157,6 +196,11 @@ test "$(ctx run psql -c 'select 1')" = 'PGSERVICE=client-a-dev -c select 1'
 test "$(PGSERVICE=override ctx run pg_dump app)" = 'PGSERVICE=override app'
 test "$(ctx run mysql -e 'select 1')" = '--login-path=client-a -e select 1'
 test "$(ctx run mysql --login-path=override -e 'select 1')" = '--login-path=override -e select 1'
+test "$(ctx run echo profile-command)" = 'run[staging] profile-command'
+ctx set echo local >/dev/null
+test "$(ctx run echo override-command)" = 'run[local] override-command'
+ctx clear echo >/dev/null
+test "$(ctx run echo profile-command)" = 'run[staging] profile-command'
 test "$(ctx run -- sh -c 'printf %s "$CTX_TEST_REGION"')" = 'eu-west-1'
 test "$(CTX_TEST_REGION=override ctx run -- sh -c 'printf %s "$CTX_TEST_REGION"')" = 'override'
 test "$(ctx shell -- sh -c 'printf %s "$CTX_TEST_REGION"')" = 'eu-west-1'
@@ -166,14 +210,16 @@ ctx env | grep -Fq 'PATH=/profile/bin:'
 CTX_TEST_REGION=override ctx env | grep -Fq 'CTX_TEST_REGION=override'
 ctx profile show client-a | grep -Fq '[env]'
 test "$(ctx run docker ps)" = '--context beta ps'
-ctx explain | grep -Fq 'kube-context     client-a-dev'
-ctx explain | grep -Fq 'aws-profile      client-a'
-ctx doctor | grep -Fq 'ok   kube client-a-dev'
-ctx doctor | grep -Fq 'ok   aws client-a'
-ctx doctor | grep -Fq 'ok   gcloud client-a'
+ctx explain | grep -Eq 'kube[[:space:]]+client-a-dev.*adapter .*/kube/ctx-kube; trusted'
+ctx explain | grep -Eq 'aws[[:space:]]+client-a.*adapter .*/aws/ctx-aws; trusted'
+ctx explain | grep -Eq 'echo[[:space:]]+staging.*adapter .*/echo/ctx-echo; trusted'
+ctx doctor | grep -Fq 'ok   adapter kube client-a-dev'
+ctx doctor | grep -Fq 'ok   adapter aws client-a'
+ctx doctor | grep -Fq 'ok   adapter gcloud client-a'
 ctx doctor | grep -Fq 'ok   browser firefox:client-a'
-ctx doctor | grep -Fq 'ok   postgres service client-a-dev'
-ctx doctor | grep -Fq 'ok   mysql login path client-a'
+ctx doctor | grep -Fq 'ok   adapter postgres client-a-dev'
+ctx doctor | grep -Fq 'ok   adapter mysql client-a'
+ctx doctor | grep -Fq 'ok   adapter echo staging'
 ctx profile clear >/dev/null
 test ! -e .ctx
 
@@ -219,5 +265,17 @@ if ctx set nerdctl missing >/dev/null 2>&1; then
   printf 'invalid nerdctl namespace was accepted\n' >&2
   exit 1
 fi
+
+ctx set echo local >/dev/null
+printf '\n# changed after trust\n' >> "$CTX_HOME/adapters/echo/ctx-echo"
+if ctx run echo changed >/dev/null 2>&1; then
+  printf 'changed adapter retained trust\n' >&2
+  exit 1
+fi
+ctx adapter trust echo >/dev/null
+test "$(ctx run echo trusted-again)" = 'run[local] trusted-again'
+ctx clear echo >/dev/null
+ctx adapter remove echo >/dev/null
+test ! -e "$CTX_HOME/adapters/echo"
 
 printf 'ctx tests passed\n'

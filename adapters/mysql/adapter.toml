@@ -1,0 +1,8 @@
+api_version = "1"
+name = "mysql"
+executable = "ctx-mysql"
+description = "First-party MySQL login-path adapter"
+capabilities = "validate,run,doctor"
+selector_key = "mysql_login_path"
+commands = "mysql,mysqldump,mysqladmin"
+first_party = "true"

@@ -4,23 +4,27 @@ set -eu
 
 CTX_HOME=${CTX_HOME:-$HOME/.config/ctx}
 CONFIG="$CTX_HOME/config.toml"
-VERSION=0.6.0
+ADAPTER_HOME=${CTX_ADAPTER_HOME:-$CTX_HOME/adapters}
+ADAPTER_TRUST="$ADAPTER_HOME/trust"
+ADAPTER_API=1
+VERSION=0.7.0
 VOLUME_IMAGE=${CTX_VOLUME_IMAGE:-alpine:3.21}
 
 usage() {
   cat <<'HELP'
 ctx — project-local tool contexts
 usage:
-  ctx status [docker|podman|nerdctl|kube|aws|gcloud|browser|postgres|mysql]
-  ctx ls <docker|podman|nerdctl|kube|aws|gcloud>
-  ctx set <docker|podman|nerdctl|kube|aws|gcloud|browser|postgres|mysql> <name> [options]
-  ctx clear [docker|podman|nerdctl|kube|aws|gcloud|browser|postgres|mysql|profile]
+  ctx status [selector]
+  ctx ls <selector>
+  ctx set <selector> <name> [options]
+  ctx clear [selector|profile]
+  ctx adapter <ls|inspect|install|trust|test|doctor|remove> [arguments...]
   ctx profile <ls|show|use|set|unset|env|env-unset|clear> [arguments...]
-  ctx run <docker|podman|nerdctl|kubectl|aws|gcloud|psql|pg_dump|mysql|mysqldump> [arguments...]
+  ctx run <tool-or-adapter> [arguments...]
   ctx run -- <command> [arguments...]
   ctx shell [-- <command> [arguments...]]
   ctx env
-  ctx open [URL...]
+  ctx open [--adapter <name>] [URL...]
   ctx explain
   ctx doctor
   ctx build [docker|podman|nerdctl] --cache-ref <registry-ref> [--] <build arguments>
@@ -33,6 +37,7 @@ usage:
 
 Project choices are stored in .ctx. Container --global writes a fallback to
 config.toml. Named bundles live in [profiles."name"] sections in config.toml.
+External adapters are explicitly installed and trusted under CTX_HOME/adapters.
 HELP
 }
 
@@ -41,9 +46,390 @@ check_tool() {
 }
 
 check_selector() {
+  selector="$1"
+  if is_builtin_selector "$selector" || selector_adapter_exists "$selector"; then return 0; fi
+  printf 'ctx: unknown selector %s\n' "$selector" >&2
+  exit 2
+}
+
+is_builtin_selector() {
+  case "$1" in docker|podman|nerdctl|browser) return 0 ;; *) return 1 ;; esac
+}
+
+valid_adapter_name() {
   case "$1" in
-    docker|podman|nerdctl|kube|aws|gcloud|browser|postgres|mysql) ;;
-    *) printf 'ctx: unknown selector %s\n' "$1" >&2; exit 2 ;;
+    ''|*[!a-z0-9_]*|[0-9_]*) return 1 ;;
+    docker|podman|nerdctl|browser|profile|shell|env|image|volume|build|adapter) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+valid_config_key() {
+  case "$1" in ''|*[!a-z0-9_]*|[0-9_]*) return 1 ;; *) return 0 ;; esac
+}
+
+manifest_value() {
+  manifest_path="$1"
+  manifest_lookup_key="$2"
+  awk -v key="$manifest_lookup_key" '
+    $0 ~ "^[[:space:]]*" key "[[:space:]]*=[[:space:]]*\"" {
+      line=$0
+      sub(/^[^\"]*\"/, "", line)
+      sub(/\".*$/, "", line)
+      print line
+      exit
+    }
+  ' "$manifest_path"
+}
+
+adapter_exists() {
+  valid_adapter_name "$1" && [ -f "$ADAPTER_HOME/$1/adapter.toml" ]
+}
+
+adapter_validate_directory() {
+  source_dir="$1"
+  [ -d "$source_dir" ] || { printf 'ctx: adapter directory not found: %s\n' "$source_dir" >&2; return 1; }
+  source_dir=$(CDPATH= cd -- "$source_dir" && pwd)
+  manifest="$source_dir/adapter.toml"
+  [ -f "$manifest" ] || { printf 'ctx: adapter manifest not found: %s\n' "$manifest" >&2; return 1; }
+  if find "$source_dir" -type l -print | grep -q .; then
+    printf 'ctx: adapter packages cannot contain symbolic links: %s\n' "$source_dir" >&2
+    return 1
+  fi
+
+  ADAPTER_API_VERSION=$(manifest_value "$manifest" api_version)
+  ADAPTER_NAME=$(manifest_value "$manifest" name)
+  ADAPTER_EXECUTABLE=$(manifest_value "$manifest" executable)
+  ADAPTER_DESCRIPTION=$(manifest_value "$manifest" description)
+  ADAPTER_CAPABILITIES=$(manifest_value "$manifest" capabilities)
+  ADAPTER_KIND=$(manifest_value "$manifest" kind)
+  ADAPTER_SELECTOR_KEY=$(manifest_value "$manifest" selector_key)
+  ADAPTER_EXTRA_KEYS=$(manifest_value "$manifest" extra_keys)
+  ADAPTER_COMMANDS=$(manifest_value "$manifest" commands)
+  ADAPTER_FIRST_PARTY=$(manifest_value "$manifest" first_party)
+  [ -n "$ADAPTER_KIND" ] || ADAPTER_KIND=selector
+  if [ -z "$ADAPTER_SELECTOR_KEY" ]; then
+    if [ "$ADAPTER_KIND" = browser ]; then ADAPTER_SELECTOR_KEY=browser
+    else ADAPTER_SELECTOR_KEY=$ADAPTER_NAME
+    fi
+  fi
+  if [ -z "$ADAPTER_COMMANDS" ] && [ "$ADAPTER_KIND" = selector ]; then ADAPTER_COMMANDS=$ADAPTER_NAME; fi
+  ADAPTER_DIRECTORY=$source_dir
+  ADAPTER_MANIFEST=$manifest
+
+  [ "$ADAPTER_API_VERSION" = "$ADAPTER_API" ] || {
+    printf 'ctx: adapter %s uses unsupported API %s (expected %s)\n' "${ADAPTER_NAME:-<unknown>}" "${ADAPTER_API_VERSION:-<missing>}" "$ADAPTER_API" >&2
+    return 1
+  }
+  valid_adapter_name "$ADAPTER_NAME" || { printf 'ctx: invalid or reserved adapter name %s\n' "${ADAPTER_NAME:-<missing>}" >&2; return 1; }
+  case "$ADAPTER_KIND" in selector|browser) ;; *) printf 'ctx: adapter %s has invalid kind %s\n' "$ADAPTER_NAME" "$ADAPTER_KIND" >&2; return 1 ;; esac
+  valid_config_key "$ADAPTER_SELECTOR_KEY" || { printf 'ctx: adapter %s has invalid selector key %s\n' "$ADAPTER_NAME" "$ADAPTER_SELECTOR_KEY" >&2; return 1; }
+  old_ifs=$IFS
+  IFS=,
+  for config_key in $ADAPTER_EXTRA_KEYS; do
+    if ! valid_config_key "$config_key"; then IFS=$old_ifs; printf 'ctx: adapter %s has invalid extra key %s\n' "$ADAPTER_NAME" "$config_key" >&2; return 1; fi
+  done
+  for adapter_command_name in $ADAPTER_COMMANDS; do
+    if ! valid_config_key "$adapter_command_name"; then IFS=$old_ifs; printf 'ctx: adapter %s has invalid command %s\n' "$ADAPTER_NAME" "$adapter_command_name" >&2; return 1; fi
+  done
+  IFS=$old_ifs
+  case "$ADAPTER_EXECUTABLE" in
+    ''|*/*|.*) printf 'ctx: adapter %s has an invalid executable name\n' "$ADAPTER_NAME" >&2; return 1 ;;
+  esac
+  ADAPTER_EXEC_PATH="$source_dir/$ADAPTER_EXECUTABLE"
+  [ -f "$ADAPTER_EXEC_PATH" ] && [ -x "$ADAPTER_EXEC_PATH" ] || {
+    printf 'ctx: adapter executable is missing or not executable: %s\n' "$ADAPTER_EXEC_PATH" >&2
+    return 1
+  }
+  [ -n "$ADAPTER_CAPABILITIES" ] || { printf 'ctx: adapter %s has no capabilities\n' "$ADAPTER_NAME" >&2; return 1; }
+
+  has_validate=0
+  has_doctor=0
+  has_action=0
+  old_ifs=$IFS
+  IFS=,
+  for capability in $ADAPTER_CAPABILITIES; do
+    case "$capability" in
+      list) ;;
+      configure) ;;
+      validate) has_validate=1 ;;
+      run|open) has_action=1 ;;
+      doctor) has_doctor=1 ;;
+      *) IFS=$old_ifs; printf 'ctx: adapter %s declares unknown capability %s\n' "$ADAPTER_NAME" "$capability" >&2; return 1 ;;
+    esac
+  done
+  IFS=$old_ifs
+  [ "$has_validate" -eq 1 ] && [ "$has_doctor" -eq 1 ] && [ "$has_action" -eq 1 ] || {
+    printf 'ctx: adapter %s must provide validate, doctor, and run or open\n' "$ADAPTER_NAME" >&2
+    return 1
+  }
+}
+
+adapter_config_keys() {
+  printf '%s\n' "$ADAPTER_SELECTOR_KEY"
+  old_ifs=$IFS
+  IFS=,
+  for config_key in $ADAPTER_EXTRA_KEYS; do [ -n "$config_key" ] && printf '%s\n' "$config_key"; done
+  IFS=$old_ifs
+}
+
+adapter_has_command() {
+  requested_command="$1"
+  case ",$ADAPTER_COMMANDS," in *",$requested_command,"*) return 0 ;; *) return 1 ;; esac
+}
+
+adapter_for_command() {
+  requested_command="$1"
+  COMMAND_ADAPTER=
+  adapter_names_file=$(mktemp)
+  list_adapter_names > "$adapter_names_file"
+  while IFS= read -r possible_adapter; do
+    [ -n "$possible_adapter" ] || continue
+    if adapter_load "$possible_adapter" >/dev/null 2>&1 && [ "$ADAPTER_KIND" = selector ] && adapter_has_command "$requested_command"; then
+      if [ -n "$COMMAND_ADAPTER" ]; then
+        rm -f "$adapter_names_file"
+        printf 'ctx: command %s is claimed by both %s and %s\n' "$requested_command" "$COMMAND_ADAPTER" "$possible_adapter" >&2
+        return 1
+      fi
+      COMMAND_ADAPTER=$possible_adapter
+    fi
+  done < "$adapter_names_file"
+  rm -f "$adapter_names_file"
+  [ -n "$COMMAND_ADAPTER" ]
+}
+
+adapter_owns_config_key() {
+  requested_key="$1"
+  adapter_names_file=$(mktemp)
+  list_adapter_names > "$adapter_names_file"
+  while IFS= read -r possible_adapter; do
+    [ -n "$possible_adapter" ] || continue
+    if adapter_load "$possible_adapter" >/dev/null 2>&1 && [ "$ADAPTER_KIND" = selector ]; then
+      if [ "$requested_key" = "$ADAPTER_SELECTOR_KEY" ]; then rm -f "$adapter_names_file"; return 0; fi
+      case ",$ADAPTER_EXTRA_KEYS," in *",$requested_key,"*) rm -f "$adapter_names_file"; return 0 ;; esac
+    fi
+  done < "$adapter_names_file"
+  rm -f "$adapter_names_file"
+  return 1
+}
+
+adapter_load() {
+  adapter_load_name="$1"
+  adapter_validate_directory "$ADAPTER_HOME/$adapter_load_name" || return 1
+  [ "$ADAPTER_NAME" = "$adapter_load_name" ] || {
+    printf 'ctx: adapter directory %s contains manifest for %s\n' "$adapter_load_name" "$ADAPTER_NAME" >&2
+    return 1
+  }
+}
+
+selector_adapter_exists() {
+  adapter_exists "$1" || return 1
+  adapter_load "$1" >/dev/null 2>&1 || return 1
+  [ "$ADAPTER_KIND" = selector ]
+}
+
+adapter_has_capability() {
+  capability="$1"
+  case ",$ADAPTER_CAPABILITIES," in *",$capability,"*) return 0 ;; *) return 1 ;; esac
+}
+
+adapter_checksum() {
+  if command -v shasum >/dev/null 2>&1; then
+    (
+      cd "$ADAPTER_DIRECTORY"
+      find . -type f -print | LC_ALL=C sort | while IFS= read -r adapter_file; do
+        printf '%s ' "$adapter_file"
+        shasum -a 256 "$adapter_file" | awk '{ print $1 }'
+      done
+    ) | shasum -a 256 | awk '{ print $1 }'
+  elif command -v sha256sum >/dev/null 2>&1; then
+    (
+      cd "$ADAPTER_DIRECTORY"
+      find . -type f -print | LC_ALL=C sort | while IFS= read -r adapter_file; do
+        printf '%s ' "$adapter_file"
+        sha256sum "$adapter_file" | awk '{ print $1 }'
+      done
+    ) | sha256sum | awk '{ print $1 }'
+  else
+    printf 'ctx: shasum or sha256sum is required for adapter trust\n' >&2
+    return 127
+  fi
+}
+
+adapter_is_trusted_loaded() {
+  [ -f "$ADAPTER_TRUST" ] || return 1
+  checksum=$(adapter_checksum) || return 1
+  awk -v name="$ADAPTER_NAME" -v checksum="$checksum" '$1 == name && $2 == checksum { found=1 } END { exit !found }' "$ADAPTER_TRUST"
+}
+
+adapter_assert_trusted_loaded() {
+  adapter_is_trusted_loaded && return 0
+  printf 'ctx: adapter %s is not trusted or changed; run ctx adapter trust %s after reviewing it\n' "$ADAPTER_NAME" "$ADAPTER_NAME" >&2
+  return 1
+}
+
+adapter_export_config() {
+  config_keys_file=$(mktemp)
+  adapter_config_keys > "$config_keys_file"
+  while IFS= read -r config_key; do
+    [ -n "$config_key" ] || continue
+    resolve_key "$config_key"
+    config_value=$RESOLVED
+    config_env_key=$(printf '%s' "$config_key" | tr '[:lower:]' '[:upper:]')
+    export "CTX_ADAPTER_VALUE_$config_env_key=$config_value"
+  done < "$config_keys_file"
+  rm -f "$config_keys_file"
+}
+
+list_adapter_names() {
+  [ -d "$ADAPTER_HOME" ] || return 0
+  for adapter_dir in "$ADAPTER_HOME"/*; do
+    [ -d "$adapter_dir" ] || continue
+    listed_adapter_name=${adapter_dir##*/}
+    valid_adapter_name "$listed_adapter_name" || continue
+    [ -f "$adapter_dir/adapter.toml" ] || continue
+    printf '%s\n' "$listed_adapter_name"
+  done
+}
+
+adapter_invoke() {
+  invoke_adapter_name="$1"
+  invoke_operation="$2"
+  invoke_selection="$3"
+  shift 3
+  adapter_load "$invoke_adapter_name"
+  adapter_assert_trusted_loaded
+  adapter_has_capability "$invoke_operation" || {
+    printf 'ctx: adapter %s does not support %s\n' "$invoke_adapter_name" "$invoke_operation" >&2
+    return 2
+  }
+  resolve_key profile
+  adapter_profile=$RESOLVED
+  adapter_export_config
+  adapter_requested_command=${ADAPTER_REQUESTED_COMMAND:-$invoke_adapter_name}
+  case "$invoke_operation" in
+    list)
+      CTX_ADAPTER_API=$ADAPTER_API CTX_ADAPTER_NAME=$invoke_adapter_name CTX_ADAPTER_COMMAND=$adapter_requested_command CTX_PROJECT_DIR=$PWD CTX_PROFILE=$adapter_profile \
+        "$ADAPTER_EXEC_PATH" list
+      ;;
+    validate|doctor)
+      CTX_ADAPTER_API=$ADAPTER_API CTX_ADAPTER_NAME=$invoke_adapter_name CTX_ADAPTER_COMMAND=$adapter_requested_command CTX_PROJECT_DIR=$PWD CTX_PROFILE=$adapter_profile \
+        "$ADAPTER_EXEC_PATH" "$invoke_operation" "$invoke_selection"
+      ;;
+    configure|run|open)
+      CTX_ADAPTER_API=$ADAPTER_API CTX_ADAPTER_NAME=$invoke_adapter_name CTX_ADAPTER_COMMAND=$adapter_requested_command CTX_PROJECT_DIR=$PWD CTX_PROFILE=$adapter_profile \
+        "$ADAPTER_EXEC_PATH" "$invoke_operation" "$invoke_selection" -- "$@"
+      ;;
+  esac
+}
+
+adapter_trust_loaded() {
+  checksum=$(adapter_checksum)
+  mkdir -p "$ADAPTER_HOME"
+  tmp=$(mktemp)
+  if [ -f "$ADAPTER_TRUST" ]; then
+    awk -v name="$ADAPTER_NAME" '$1 != name' "$ADAPTER_TRUST" > "$tmp"
+  fi
+  printf '%s %s\n' "$ADAPTER_NAME" "$checksum" >> "$tmp"
+  mv "$tmp" "$ADAPTER_TRUST"
+  chmod 600 "$ADAPTER_TRUST"
+}
+
+adapter_remove_trust() {
+  name="$1"
+  [ -f "$ADAPTER_TRUST" ] || return 0
+  tmp=$(mktemp)
+  awk -v name="$name" '$1 != name' "$ADAPTER_TRUST" > "$tmp"
+  mv "$tmp" "$ADAPTER_TRUST"
+  chmod 600 "$ADAPTER_TRUST"
+}
+
+adapter_install() {
+  [ "$#" -eq 1 ] || { printf 'ctx: adapter install needs a source directory\n' >&2; exit 2; }
+  source_dir=$1
+  adapter_validate_directory "$source_dir"
+  target="$ADAPTER_HOME/$ADAPTER_NAME"
+  [ ! -e "$target" ] || { printf 'ctx: adapter %s is already installed\n' "$ADAPTER_NAME" >&2; exit 1; }
+  mkdir -p "$ADAPTER_HOME"
+  install_stage=$(mktemp -d "$ADAPTER_HOME/.install.XXXXXX")
+  trap 'rm -rf "$install_stage"' EXIT HUP INT TERM
+  cp -R "$ADAPTER_DIRECTORY/." "$install_stage/"
+  mv "$install_stage" "$target"
+  trap - EXIT HUP INT TERM
+  printf 'installed adapter %s in %s (untrusted)\n' "$ADAPTER_NAME" "$target"
+  printf 'review it, then run: ctx adapter trust %s\n' "$ADAPTER_NAME"
+}
+
+adapter_list() {
+  list_adapter_names | while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    if adapter_load "$name" >/dev/null 2>&1; then
+      if adapter_is_trusted_loaded; then state=trusted; else state=untrusted; fi
+      printf '%-16s %-10s %s\n' "$name" "$state" "${ADAPTER_DESCRIPTION:-}"
+    else
+      printf '%-16s invalid\n' "$name"
+    fi
+  done
+}
+
+adapter_inspect() {
+  [ "$#" -eq 1 ] || { printf 'ctx: adapter inspect needs a name\n' >&2; exit 2; }
+  adapter_load "$1"
+  if adapter_is_trusted_loaded; then state=trusted; else state=untrusted; fi
+  printf 'name:         %s\n' "$ADAPTER_NAME"
+  printf 'api:          %s\n' "$ADAPTER_API_VERSION"
+  printf 'kind:         %s\n' "$ADAPTER_KIND"
+  printf 'state:        %s\n' "$state"
+  printf 'capabilities: %s\n' "$ADAPTER_CAPABILITIES"
+  printf 'executable:   %s\n' "$ADAPTER_EXEC_PATH"
+  printf 'description:  %s\n' "$ADAPTER_DESCRIPTION"
+}
+
+adapter_test() {
+  [ "$#" -eq 1 ] || { printf 'ctx: adapter test needs an adapter directory\n' >&2; exit 2; }
+  adapter_validate_directory "$1"
+  CTX_ADAPTER_API=$ADAPTER_API CTX_ADAPTER_NAME=$ADAPTER_NAME CTX_PROJECT_DIR=$PWD CTX_PROFILE= \
+    "$ADAPTER_EXEC_PATH" doctor ''
+  printf 'adapter %s satisfies ctx adapter API v%s\n' "$ADAPTER_NAME" "$ADAPTER_API"
+}
+
+adapter_command() {
+  action="${1:-}"
+  case "$action" in
+    ls|list) [ "$#" -eq 1 ] || { printf 'ctx: adapter ls takes no arguments\n' >&2; exit 2; }; adapter_list ;;
+    inspect) shift; adapter_inspect "$@" ;;
+    install) shift; adapter_install "$@" ;;
+    trust)
+      name="${2:-}"
+      [ "$#" -eq 2 ] || { printf 'ctx: adapter trust needs a name\n' >&2; exit 2; }
+      adapter_load "$name"
+      adapter_trust_loaded
+      printf 'trusted adapter %s\n' "$name"
+      ;;
+    test) shift; adapter_test "$@" ;;
+    doctor)
+      name="${2:-}"
+      [ "$#" -eq 2 ] || { printf 'ctx: adapter doctor needs a name\n' >&2; exit 2; }
+      adapter_load "$name"
+      resolve_key "$ADAPTER_SELECTOR_KEY"
+      selection=$RESOLVED
+      if [ "$ADAPTER_KIND" = browser ] && [ -n "$selection" ]; then
+        parse_browser_choice "$selection" || { printf 'ctx: invalid browser selection %s\n' "$selection" >&2; exit 1; }
+        if [ "$BROWSER_ENGINE" = "$name" ]; then selection=$BROWSER_PROFILE; else selection=; fi
+      fi
+      adapter_invoke "$name" doctor "$selection"
+      ;;
+    remove)
+      name="${2:-}"
+      [ "$#" -eq 2 ] || { printf 'ctx: adapter remove needs a name\n' >&2; exit 2; }
+      valid_adapter_name "$name" || { printf 'ctx: invalid adapter name %s\n' "$name" >&2; exit 2; }
+      target="$ADAPTER_HOME/$name"
+      [ -d "$target" ] || { printf 'ctx: adapter %s is not installed\n' "$name" >&2; exit 1; }
+      rm -rf "$target"
+      adapter_remove_trust "$name"
+      printf 'removed adapter %s\n' "$name"
+      ;;
+    *) printf 'ctx: adapter requires ls, inspect, install, trust, test, doctor, or remove\n' >&2; exit 2 ;;
   esac
 }
 
@@ -71,7 +457,7 @@ read_choice() {
   awk -v key="$key" '
     $0 ~ "^[[:space:]]*" key "[[:space:]]*=[[:space:]]*\"" {
       line=$0
-      sub(/^[[:space:]]*[a-z_]+[[:space:]]*=[[:space:]]*"/, "", line)
+      sub(/^[[:space:]]*[a-z][a-z0-9_]*[[:space:]]*=[[:space:]]*"/, "", line)
       sub(/".*$/, "", line)
       if (line != "") { print line; exit }
     }
@@ -86,7 +472,7 @@ read_project_map() {
     /^\[/ { active=($0 == section); next }
     active && $0 ~ "^[[:space:]]*" key "[[:space:]]*=[[:space:]]*\"" {
       line=$0
-      sub(/^[[:space:]]*[a-z_]+[[:space:]]*=[[:space:]]*"/, "", line)
+      sub(/^[[:space:]]*[a-z][a-z0-9_]*[[:space:]]*=[[:space:]]*"/, "", line)
       sub(/".*$/, "", line)
       if (line != "") { print line; exit }
     }
@@ -101,7 +487,7 @@ read_profile_choice() {
     /^\[/ { active=($0 == section); next }
     active && $0 ~ "^[[:space:]]*" key "[[:space:]]*=[[:space:]]*\"" {
       line=$0
-      sub(/^[[:space:]]*[a-z_]+[[:space:]]*=[[:space:]]*\"/, "", line)
+      sub(/^[[:space:]]*[a-z][a-z0-9_]*[[:space:]]*=[[:space:]]*\"/, "", line)
       sub(/\".*$/, "", line)
       if (line != "") { print line; exit }
     }
@@ -132,8 +518,8 @@ valid_profile_name() {
 
 valid_profile_key() {
   case "$1" in
-    docker|podman|nerdctl|kube_context|kube_namespace|kubeconfig|aws_profile|gcloud_configuration|browser|postgres_service|postgres_service_file|mysql_login_path|shell_path) return 0 ;;
-    *) return 1 ;;
+    docker|podman|nerdctl|browser|shell_path) return 0 ;;
+    *) adapter_owns_config_key "$1" ;;
   esac
 }
 
@@ -277,7 +663,7 @@ read_default() {
     /^\[/ { exit }
     $0 ~ "^[[:space:]]*" key "[[:space:]]*=[[:space:]]*\"" {
       line=$0
-      sub(/^[[:space:]]*[a-z_]+[[:space:]]*=[[:space:]]*"/, "", line)
+      sub(/^[[:space:]]*[a-z][a-z0-9_]*[[:space:]]*=[[:space:]]*"/, "", line)
       sub(/".*$/, "", line)
       if (line != "") { print line; exit }
     }
@@ -369,36 +755,6 @@ status_one() {
     nerdctl)
       if [ -n "${CONTAINERD_NAMESPACE:-}" ]; then printf 'nerdctl: %s (CONTAINERD_NAMESPACE)\n' "$CONTAINERD_NAMESPACE"; return; fi
       ;;
-    kube)
-      resolve_key kube_context
-      context=$RESOLVED
-      context_via=$VIA
-      resolve_key kube_namespace
-      namespace=$RESOLVED
-      if [ -n "$context" ]; then
-        printf 'kube: %s (%s)' "$context" "$context_via"
-        if [ -n "$namespace" ]; then printf ', namespace %s' "$namespace"; fi
-        printf '\n'
-      else
-        printf 'kube: kubectl default\n'
-      fi
-      return
-      ;;
-    aws)
-      if [ -n "${AWS_PROFILE:-}" ]; then printf 'aws: %s (AWS_PROFILE)\n' "$AWS_PROFILE"; return; fi
-      if [ -n "${AWS_DEFAULT_PROFILE:-}" ]; then printf 'aws: %s (AWS_DEFAULT_PROFILE)\n' "$AWS_DEFAULT_PROFILE"; return; fi
-      resolve_key aws_profile
-      if [ -n "$RESOLVED" ]; then printf 'aws: %s (%s)\n' "$RESOLVED" "$VIA"
-      else printf 'aws: aws default\n'; fi
-      return
-      ;;
-    gcloud)
-      if [ -n "${CLOUDSDK_ACTIVE_CONFIG_NAME:-}" ]; then printf 'gcloud: %s (CLOUDSDK_ACTIVE_CONFIG_NAME)\n' "$CLOUDSDK_ACTIVE_CONFIG_NAME"; return; fi
-      resolve_key gcloud_configuration
-      if [ -n "$RESOLVED" ]; then printf 'gcloud: %s (%s)\n' "$RESOLVED" "$VIA"
-      else printf 'gcloud: active configuration\n'; fi
-      return
-      ;;
     browser)
       if [ -n "${CTX_BROWSER:-}" ]; then printf 'browser: %s (CTX_BROWSER)\n' "$CTX_BROWSER"; return; fi
       resolve_key browser
@@ -406,22 +762,17 @@ status_one() {
       else printf 'browser: <not selected>\n'; fi
       return
       ;;
-    postgres)
-      if [ -n "${PGSERVICE:-}" ]; then printf 'postgres: %s (PGSERVICE)\n' "$PGSERVICE"; return; fi
-      resolve_key postgres_service
-      if [ -n "$RESOLVED" ]; then printf 'postgres: %s (%s)\n' "$RESOLVED" "$VIA"
-      else printf 'postgres: libpq default\n'; fi
-      return
-      ;;
-    mysql)
-      resolve_key mysql_login_path
-      if [ -n "$RESOLVED" ]; then printf 'mysql: %s (%s)\n' "$RESOLVED" "$VIA"
-      else printf 'mysql: client default\n'; fi
-      return
-      ;;
   esac
+  if adapter_exists "$tool"; then
+    adapter_load "$tool"
+    resolve_key "$ADAPTER_SELECTOR_KEY"
+    if [ -n "$RESOLVED" ]; then printf '%s: %s (%s)\n' "$tool" "$RESOLVED" "$VIA"
+    else printf '%s: <not selected>\n' "$tool"; fi
+    return
+  fi
   resolve "$tool"
   if [ -n "$RESOLVED" ]; then printf '%s: %s (%s)\n' "$tool" "$RESOLVED" "$VIA"
+  elif adapter_exists "$tool"; then printf '%s: <not selected>\n' "$tool"
   else printf '%s: %s\n' "$tool" "$VIA"; fi
 }
 
@@ -444,56 +795,47 @@ validate_selector() {
   name="$2"
   case "$selector" in
     docker|podman|nerdctl) validate_choice "$selector" "$name" ;;
-    kube)
-      real=$(find_real kubectl)
-      "$real" config get-contexts "$name" >/dev/null 2>&1
-      ;;
-    aws)
-      real=$(find_real aws)
-      "$real" configure list-profiles | grep -Fxq "$name"
-      ;;
-    gcloud)
-      real=$(find_real gcloud)
-      "$real" config configurations list --filter="name=$name" --format='value(name)' | grep -Fxq "$name"
-      ;;
     browser) validate_browser_choice "$name" ;;
-    postgres) find_real psql >/dev/null ;;
-    mysql) find_real mysql >/dev/null ;;
   esac
 }
 
 parse_browser_choice() {
   choice="$1"
   case "$choice" in
-    firefox:*) BROWSER_ENGINE=firefox; BROWSER_PROFILE=${choice#firefox:} ;;
-    chrome:*) BROWSER_ENGINE=chrome; BROWSER_PROFILE=${choice#chrome:} ;;
-    chromium:*) BROWSER_ENGINE=chromium; BROWSER_PROFILE=${choice#chromium:} ;;
+    *:*) BROWSER_ENGINE=${choice%%:*}; BROWSER_PROFILE=${choice#*:} ;;
     *) return 1 ;;
   esac
-  [ -n "$BROWSER_PROFILE" ]
+  [ -n "$BROWSER_ENGINE" ] && [ -n "$BROWSER_PROFILE" ] || return 1
+  adapter_exists "$BROWSER_ENGINE" || return 1
+  adapter_load "$BROWSER_ENGINE" >/dev/null 2>&1 || return 1
+  [ "$ADAPTER_KIND" = browser ]
+}
+
+browser_list() {
+  browser_list_file=$(mktemp)
+  browser_adapters_file=$(mktemp)
+  list_adapter_names > "$browser_adapters_file"
+  while IFS= read -r browser_adapter; do
+    [ -n "$browser_adapter" ] || continue
+    if adapter_load "$browser_adapter" >/dev/null 2>&1 && [ "$ADAPTER_KIND" = browser ] && adapter_is_trusted_loaded; then
+      adapter_invoke "$browser_adapter" list '' >> "$browser_list_file"
+    fi
+  done < "$browser_adapters_file"
+  rm -f "$browser_adapters_file"
+
+  if [ -s "$browser_list_file" ]; then
+    cat "$browser_list_file"
+    rm -f "$browser_list_file"
+    return 0
+  fi
+  rm -f "$browser_list_file"
+  printf 'ctx: no supported browser profiles found\n' >&2
+  return 1
 }
 
 validate_browser_choice() {
   parse_browser_choice "$1" || return 1
-  platform=${CTX_PLATFORM:-$(uname -s)}
-  case "$platform" in
-    Darwin)
-      real=$(find_real open)
-      case "$BROWSER_ENGINE" in
-        firefox) app=Firefox ;;
-        chrome) app='Google Chrome' ;;
-        chromium) app=Chromium ;;
-      esac
-      "$real" -Ra "$app" >/dev/null 2>&1
-      ;;
-    *)
-      case "$BROWSER_ENGINE" in
-        firefox) find_real firefox >/dev/null ;;
-        chrome) find_real google-chrome >/dev/null ;;
-        chromium) find_real chromium >/dev/null ;;
-      esac
-      ;;
-  esac
+  adapter_invoke "$BROWSER_ENGINE" validate "$BROWSER_PROFILE"
 }
 
 browser_open() {
@@ -501,148 +843,32 @@ browser_open() {
   if [ -n "${CTX_BROWSER:-}" ]; then choice=$CTX_BROWSER
   else resolve_key browser; choice=$RESOLVED
   fi
-  [ -n "$choice" ] || { printf 'ctx: no browser selected; use ctx set browser <firefox|chrome|chromium>:<profile>\n' >&2; exit 1; }
+  [ -n "$choice" ] || { printf 'ctx: no browser selected; use a value from ctx ls browser\n' >&2; exit 1; }
   if ! parse_browser_choice "$choice"; then
     printf 'ctx: invalid browser selection %s\n' "$choice" >&2
     exit 1
   fi
-  platform=${CTX_PLATFORM:-$(uname -s)}
-  case "$platform" in
-    Darwin)
-      real=$(find_real open)
-      case "$BROWSER_ENGINE" in
-        firefox) "$real" -na Firefox --args -P "$BROWSER_PROFILE" "$@" ;;
-        chrome) "$real" -na 'Google Chrome' --args "--profile-directory=$BROWSER_PROFILE" "$@" ;;
-        chromium) "$real" -na Chromium --args "--profile-directory=$BROWSER_PROFILE" "$@" ;;
-      esac
-      ;;
-    *)
-      case "$BROWSER_ENGINE" in
-        firefox) real=$(find_real firefox); "$real" -P "$BROWSER_PROFILE" "$@" ;;
-        chrome) real=$(find_real google-chrome); "$real" "--profile-directory=$BROWSER_PROFILE" "$@" ;;
-        chromium) real=$(find_real chromium); "$real" "--profile-directory=$BROWSER_PROFILE" "$@" ;;
-      esac
-      ;;
-  esac
+  adapter_invoke "$BROWSER_ENGINE" open "$BROWSER_PROFILE" "$@"
 }
 
-has_kubectl_context_arg() {
-  for arg in "$@"; do
-    case "$arg" in --context|--context=*) return 0 ;; esac
-  done
-  return 1
-}
-
-has_kubectl_namespace_arg() {
-  for arg in "$@"; do
-    case "$arg" in --namespace|--namespace=*|-n|-n?*) return 0 ;; esac
-  done
-  return 1
-}
-
-has_aws_profile_arg() {
-  for arg in "$@"; do
-    case "$arg" in --profile|--profile=*) return 0 ;; esac
-  done
-  return 1
-}
-
-kubectl_exec() {
-  real=$(find_real kubectl)
-  resolve_key kube_context
-  context=$RESOLVED
-  resolve_key kube_namespace
-  namespace=$RESOLVED
-  resolve_key kubeconfig
-  kubeconfig=$RESOLVED
-
-  if [ -n "$namespace" ] && ! has_kubectl_namespace_arg "$@"; then
-    set -- --namespace "$namespace" "$@"
-  fi
-  if [ -n "$context" ] && ! has_kubectl_context_arg "$@"; then
-    set -- --context "$context" "$@"
-  fi
-  if [ -n "$kubeconfig" ] && [ -z "${KUBECONFIG:-}" ]; then
-    KUBECONFIG="$kubeconfig" "$real" "$@"
+open_command() {
+  if [ "${1:-}" = --adapter ]; then
+    name="${2:-}"
+    [ -n "$name" ] || { printf 'ctx: open --adapter needs a name\n' >&2; exit 2; }
+    shift 2
+    if [ "${1:-}" = -- ]; then shift; fi
+    adapter_load "$name"
+    resolve_key "$ADAPTER_SELECTOR_KEY"
+    selection=$RESOLVED
+    if [ "$ADAPTER_KIND" = browser ] && [ -n "$selection" ]; then
+      parse_browser_choice "$selection" || { printf 'ctx: invalid browser selection %s\n' "$selection" >&2; exit 1; }
+      [ "$BROWSER_ENGINE" = "$name" ] || { printf 'ctx: selected browser uses %s, not %s\n' "$BROWSER_ENGINE" "$name" >&2; exit 1; }
+      selection=$BROWSER_PROFILE
+    fi
+    [ -n "$selection" ] || { printf 'ctx: no %s selection; run ctx set %s <name>\n' "$name" "$name" >&2; exit 1; }
+    adapter_invoke "$name" open "$selection" "$@"
   else
-    "$real" "$@"
-  fi
-}
-
-aws_exec() {
-  real=$(find_real aws)
-  if [ -n "${AWS_PROFILE:-}" ] || [ -n "${AWS_DEFAULT_PROFILE:-}" ] || has_aws_profile_arg "$@"; then
-    "$real" "$@"
-    return
-  fi
-  resolve_key aws_profile
-  if [ -n "$RESOLVED" ]; then
-    "$real" --profile "$RESOLVED" "$@"
-  else
-    "$real" "$@"
-  fi
-}
-
-has_gcloud_configuration_arg() {
-  for arg in "$@"; do
-    case "$arg" in --configuration|--configuration=*) return 0 ;; esac
-  done
-  return 1
-}
-
-gcloud_exec() {
-  real=$(find_real gcloud)
-  if [ -n "${CLOUDSDK_ACTIVE_CONFIG_NAME:-}" ] || has_gcloud_configuration_arg "$@"; then
-    "$real" "$@"
-    return
-  fi
-  resolve_key gcloud_configuration
-  if [ -n "$RESOLVED" ]; then
-    "$real" --configuration "$RESOLVED" "$@"
-  else
-    "$real" "$@"
-  fi
-}
-
-postgres_exec() {
-  command="$1"
-  shift
-  real=$(find_real "$command")
-  resolve_key postgres_service
-  service=$RESOLVED
-  resolve_key postgres_service_file
-  service_file=$RESOLVED
-
-  if [ -n "${PGSERVICE:-}" ]; then service=$PGSERVICE; fi
-  if [ -n "${PGSERVICEFILE:-}" ]; then service_file=$PGSERVICEFILE; fi
-
-  if [ -n "$service" ] && [ -n "$service_file" ]; then
-    PGSERVICE="$service" PGSERVICEFILE="$service_file" "$real" "$@"
-  elif [ -n "$service" ]; then
-    PGSERVICE="$service" "$real" "$@"
-  elif [ -n "$service_file" ]; then
-    PGSERVICEFILE="$service_file" "$real" "$@"
-  else
-    "$real" "$@"
-  fi
-}
-
-has_mysql_login_path_arg() {
-  for arg in "$@"; do
-    case "$arg" in --login-path|--login-path=*) return 0 ;; esac
-  done
-  return 1
-}
-
-mysql_exec() {
-  command="$1"
-  shift
-  real=$(find_real "$command")
-  resolve_key mysql_login_path
-  if [ -n "$RESOLVED" ] && ! has_mysql_login_path_arg "$@"; then
-    "$real" "--login-path=$RESOLVED" "$@"
-  else
-    "$real" "$@"
+    browser_open "$@"
   fi
 }
 
@@ -709,12 +935,19 @@ run_tool() {
     docker) docker_exec "$@" ;;
     podman) podman_exec "$@" ;;
     nerdctl) nerdctl_exec "$@" ;;
-    kubectl|kube) kubectl_exec "$@" ;;
-    aws) aws_exec "$@" ;;
-    gcloud) gcloud_exec "$@" ;;
-    psql|pg_dump|pg_restore|createdb|dropdb) postgres_exec "$tool" "$@" ;;
-    mysql|mysqldump|mysqladmin) mysql_exec "$tool" "$@" ;;
-    *) printf 'ctx: no adapter for %s\n' "$tool" >&2; exit 2 ;;
+    *)
+      if adapter_exists "$tool"; then selected_adapter=$tool
+      elif adapter_for_command "$tool"; then selected_adapter=$COMMAND_ADAPTER
+      else
+        printf 'ctx: no adapter for %s\n' "$tool" >&2
+        exit 2
+      fi
+      adapter_load "$selected_adapter"
+      resolve_key "$ADAPTER_SELECTOR_KEY"
+      selection=$RESOLVED
+      [ -n "$selection" ] || { printf 'ctx: no %s selection; run ctx set %s <name>\n' "$selected_adapter" "$selected_adapter" >&2; exit 1; }
+      ADAPTER_REQUESTED_COMMAND=$tool adapter_invoke "$selected_adapter" run "$selection" "$@"
+      ;;
   esac
 }
 
@@ -1029,6 +1262,38 @@ write_default() {
   mv "$tmp" "$CONFIG"
 }
 
+adapter_key_allowed() {
+  candidate_key="$1"
+  [ "$candidate_key" = "$ADAPTER_SELECTOR_KEY" ] && return 0
+  case ",$ADAPTER_EXTRA_KEYS," in *",$candidate_key,"*) return 0 ;; *) return 1 ;; esac
+}
+
+adapter_configure_selection() {
+  adapter_name="$1"
+  requested_selection="$2"
+  shift 2
+  adapter_load "$adapter_name"
+  adapter_assert_trusted_loaded
+  if adapter_has_capability configure; then
+    configured_values=$(mktemp)
+    ADAPTER_REQUESTED_COMMAND=$adapter_name adapter_invoke "$adapter_name" configure "$requested_selection" "$@" > "$configured_values"
+    primary_written=0
+    tab=$(printf '\t')
+    while IFS="$tab" read -r configured_key configured_value; do
+      [ -n "$configured_key" ] || continue
+      adapter_key_allowed "$configured_key" || { rm -f "$configured_values"; printf 'ctx: adapter %s returned undeclared key %s\n' "$adapter_name" "$configured_key" >&2; return 1; }
+      [ -n "$configured_value" ] || { rm -f "$configured_values"; printf 'ctx: adapter %s returned an empty value for %s\n' "$adapter_name" "$configured_key" >&2; return 1; }
+      write_choice "$configured_key" "$configured_value"
+      if [ "$configured_key" = "$ADAPTER_SELECTOR_KEY" ]; then primary_written=1; fi
+    done < "$configured_values"
+    rm -f "$configured_values"
+    [ "$primary_written" -eq 1 ] || { printf 'ctx: adapter %s did not return selector key %s\n' "$adapter_name" "$ADAPTER_SELECTOR_KEY" >&2; return 1; }
+  else
+    adapter_invoke "$adapter_name" validate "$requested_selection"
+    write_choice "$ADAPTER_SELECTOR_KEY" "$requested_selection"
+  fi
+}
+
 clear_choice() {
   selector="${1:-}"
   [ -f .ctx ] || return 0
@@ -1038,18 +1303,20 @@ clear_choice() {
   fi
   case "$selector" in
     docker|podman|nerdctl) keys="$selector" ;;
-    kube) keys='kube_context|kube_namespace|kubeconfig' ;;
-    aws) keys='aws_profile' ;;
-    gcloud) keys='gcloud_configuration' ;;
     browser) keys='browser' ;;
-    postgres) keys='postgres_service|postgres_service_file' ;;
-    mysql) keys='mysql_login_path' ;;
     profile) keys='profile' ;;
-    *) printf 'ctx: cannot clear %s\n' "$selector" >&2; exit 2 ;;
+    *)
+      if adapter_exists "$selector"; then
+        adapter_load "$selector"
+        keys=$(adapter_config_keys | awk 'BEGIN { ORS="" } { if (NR > 1) printf "|"; printf "%s", $0 }')
+      elif valid_adapter_name "$selector"; then keys="$selector"
+      else printf 'ctx: cannot clear %s\n' "$selector" >&2; exit 2
+      fi
+      ;;
   esac
   tmp=$(mktemp)
   awk -v keys="$keys" '$0 !~ "^[[:space:]]*(" keys ")[[:space:]]*="' .ctx > "$tmp"
-  if grep -Eq '^[[:space:]]*(profile|docker|podman|nerdctl|kube_context|kube_namespace|kubeconfig|aws_profile|gcloud_configuration|browser|postgres_service|postgres_service_file|mysql_login_path)[[:space:]]*=' "$tmp"; then
+  if grep -Eq '^[[:space:]]*[a-z][a-z0-9_]*[[:space:]]*=' "$tmp"; then
     mv "$tmp" .ctx
   else
     rm .ctx "$tmp"
@@ -1076,57 +1343,6 @@ set_selector() {
         usage >&2; exit 2
       fi
       ;;
-    kube)
-      namespace=
-      kubeconfig=
-      while [ "$#" -gt 0 ]; do
-        case "$1" in
-          --namespace)
-            [ "$#" -ge 2 ] || { printf 'ctx: --namespace needs a value\n' >&2; exit 2; }
-            namespace=$2; shift 2
-            ;;
-          --namespace=*) namespace=${1#--namespace=}; shift ;;
-          --kubeconfig)
-            [ "$#" -ge 2 ] || { printf 'ctx: --kubeconfig needs a path\n' >&2; exit 2; }
-            kubeconfig=$2; shift 2
-            ;;
-          --kubeconfig=*) kubeconfig=${1#--kubeconfig=}; shift ;;
-          *) usage >&2; exit 2 ;;
-        esac
-      done
-      real=$(find_real kubectl)
-      if [ -n "$kubeconfig" ]; then
-        if ! KUBECONFIG="$kubeconfig" "$real" config get-contexts "$name" >/dev/null 2>&1; then
-          printf 'ctx: unknown Kubernetes context %s in %s\n' "$name" "$kubeconfig" >&2
-          exit 1
-        fi
-      elif ! validate_selector kube "$name"; then
-        printf 'ctx: unknown Kubernetes context %s\n' "$name" >&2
-        exit 1
-      fi
-      write_choice kube_context "$name"
-      if [ -n "$namespace" ]; then write_choice kube_namespace "$namespace"; fi
-      if [ -n "$kubeconfig" ]; then write_choice kubeconfig "$kubeconfig"; fi
-      printf 'kube: %s in %s/.ctx\n' "$name" "$PWD"
-      ;;
-    aws)
-      [ "$#" -eq 0 ] || { usage >&2; exit 2; }
-      if ! validate_selector aws "$name"; then
-        printf 'ctx: unknown AWS profile %s\n' "$name" >&2
-        exit 1
-      fi
-      write_choice aws_profile "$name"
-      printf 'aws: %s in %s/.ctx\n' "$name" "$PWD"
-      ;;
-    gcloud)
-      [ "$#" -eq 0 ] || { usage >&2; exit 2; }
-      if ! validate_selector gcloud "$name"; then
-        printf 'ctx: unknown gcloud configuration %s\n' "$name" >&2
-        exit 1
-      fi
-      write_choice gcloud_configuration "$name"
-      printf 'gcloud: %s in %s/.ctx\n' "$name" "$PWD"
-      ;;
     browser)
       [ "$#" -eq 0 ] || { usage >&2; exit 2; }
       if ! validate_selector browser "$name"; then
@@ -1136,34 +1352,10 @@ set_selector() {
       write_choice browser "$name"
       printf 'browser: %s in %s/.ctx\n' "$name" "$PWD"
       ;;
-    postgres)
-      service_file=
-      while [ "$#" -gt 0 ]; do
-        case "$1" in
-          --service-file)
-            [ "$#" -ge 2 ] || { printf 'ctx: --service-file needs a path\n' >&2; exit 2; }
-            service_file=$2; shift 2
-            ;;
-          --service-file=*) service_file=${1#--service-file=}; shift ;;
-          *) usage >&2; exit 2 ;;
-        esac
-      done
-      if ! validate_selector postgres "$name"; then
-        printf 'ctx: psql is required to select a PostgreSQL service\n' >&2
-        exit 1
-      fi
-      write_choice postgres_service "$name"
-      if [ -n "$service_file" ]; then write_choice postgres_service_file "$service_file"; fi
-      printf 'postgres: %s in %s/.ctx\n' "$name" "$PWD"
-      ;;
-    mysql)
-      [ "$#" -eq 0 ] || { usage >&2; exit 2; }
-      if ! validate_selector mysql "$name"; then
-        printf 'ctx: mysql is required to select a login path\n' >&2
-        exit 1
-      fi
-      write_choice mysql_login_path "$name"
-      printf 'mysql: %s in %s/.ctx\n' "$name" "$PWD"
+    *)
+      external_selection=$name
+      adapter_configure_selection "$selector" "$external_selection" "$@"
+      printf '%s: %s in %s/.ctx\n' "$selector" "$external_selection" "$PWD"
       ;;
   esac
 }
@@ -1205,7 +1397,7 @@ profile_command() {
       key="${3:-}"
       [ "$#" -eq 3 ] || { printf 'ctx: profile unset needs name and key\n' >&2; exit 2; }
       if ! valid_profile_name "$name"; then printf 'ctx: invalid profile name %s\n' "$name" >&2; exit 2; fi
-      if ! valid_profile_key "$key"; then printf 'ctx: unsupported profile key %s\n' "$key" >&2; exit 2; fi
+      if ! valid_profile_key "$key" && ! valid_adapter_name "$key"; then printf 'ctx: unsupported profile key %s\n' "$key" >&2; exit 2; fi
       unset_profile_choice "$name" "$key"
       printf 'profile %s: cleared %s\n' "$name" "$key"
       ;;
@@ -1254,16 +1446,25 @@ explain() {
   explain_line docker docker
   explain_line podman podman
   explain_line nerdctl nerdctl
-  explain_line kube-context kube_context
-  explain_line kube-namespace kube_namespace
-  explain_line kubeconfig kubeconfig
-  explain_line aws-profile aws_profile
-  explain_line gcloud-config gcloud_configuration
   explain_line browser browser
-  explain_line postgres-service postgres_service
-  explain_line postgres-service-file postgres_service_file
-  explain_line mysql-login-path mysql_login_path
   explain_line shell-path shell_path
+  list_adapter_names | while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    if adapter_load "$name" >/dev/null 2>&1; then
+      [ "$ADAPTER_KIND" = selector ] || continue
+      resolve_key "$ADAPTER_SELECTOR_KEY"
+      selection=$RESOLVED
+      selection_via=$VIA
+      if adapter_is_trusted_loaded; then state=trusted; else state=untrusted; fi
+      if [ -n "$selection" ]; then
+        printf '%-16s %s (%s; adapter %s; %s)\n' "$name" "$selection" "$selection_via" "$ADAPTER_EXEC_PATH" "$state"
+      else
+        printf '%-16s <not selected> (adapter %s; %s)\n' "$name" "$ADAPTER_EXEC_PATH" "$state"
+      fi
+    else
+      printf '%-16s <invalid adapter>\n' "$name"
+    fi
+  done
 }
 
 doctor() {
@@ -1294,50 +1495,6 @@ doctor() {
     fi
   done
 
-  resolve_key kubeconfig
-  kubeconfig=$RESOLVED
-  resolve_key kube_context
-  context=$RESOLVED
-  if [ -n "$context" ]; then
-    checked=1
-    real=$(find_real kubectl 2>/dev/null || true)
-    if [ -n "$real" ] && { [ -z "$kubeconfig" ] && "$real" config get-contexts "$context" >/dev/null 2>&1 || [ -n "$kubeconfig" ] && KUBECONFIG="$kubeconfig" "$real" config get-contexts "$context" >/dev/null 2>&1; }; then
-      printf 'ok   kube %s\n' "$context"
-    else
-      printf 'fail kube context %s is unavailable\n' "$context"
-      failures=$((failures + 1))
-    fi
-  fi
-
-  if [ -n "${AWS_PROFILE:-}" ]; then aws_profile=$AWS_PROFILE
-  elif [ -n "${AWS_DEFAULT_PROFILE:-}" ]; then aws_profile=$AWS_DEFAULT_PROFILE
-  else resolve_key aws_profile; aws_profile=$RESOLVED
-  fi
-  if [ -n "$aws_profile" ]; then
-    checked=1
-    real=$(find_real aws 2>/dev/null || true)
-    if [ -n "$real" ] && "$real" configure list-profiles | grep -Fxq "$aws_profile"; then
-      printf 'ok   aws %s\n' "$aws_profile"
-    else
-      printf 'fail aws profile %s is unavailable\n' "$aws_profile"
-      failures=$((failures + 1))
-    fi
-  fi
-
-  if [ -n "${CLOUDSDK_ACTIVE_CONFIG_NAME:-}" ]; then gcloud_configuration=$CLOUDSDK_ACTIVE_CONFIG_NAME
-  else resolve_key gcloud_configuration; gcloud_configuration=$RESOLVED
-  fi
-  if [ -n "$gcloud_configuration" ]; then
-    checked=1
-    real=$(find_real gcloud 2>/dev/null || true)
-    if [ -n "$real" ] && "$real" config configurations list --filter="name=$gcloud_configuration" --format='value(name)' | grep -Fxq "$gcloud_configuration"; then
-      printf 'ok   gcloud %s\n' "$gcloud_configuration"
-    else
-      printf 'fail gcloud configuration %s is unavailable\n' "$gcloud_configuration"
-      failures=$((failures + 1))
-    fi
-  fi
-
   if [ -n "${CTX_BROWSER:-}" ]; then browser_choice=$CTX_BROWSER
   else resolve_key browser; browser_choice=$RESOLVED
   fi
@@ -1351,30 +1508,24 @@ doctor() {
     fi
   fi
 
-  if [ -n "${PGSERVICE:-}" ]; then postgres_service=$PGSERVICE
-  else resolve_key postgres_service; postgres_service=$RESOLVED
-  fi
-  if [ -n "$postgres_service" ]; then
+  adapter_names=$(mktemp)
+  list_adapter_names > "$adapter_names"
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    if ! adapter_load "$name" >/dev/null 2>&1; then continue; fi
+    [ "$ADAPTER_KIND" = selector ] || continue
+    resolve_key "$ADAPTER_SELECTOR_KEY"
+    selection=$RESOLVED
+    [ -n "$selection" ] || continue
     checked=1
-    if find_real psql >/dev/null 2>&1; then
-      printf 'ok   postgres service %s\n' "$postgres_service"
+    if adapter_invoke "$name" doctor "$selection" >/dev/null; then
+      printf 'ok   adapter %s %s\n' "$name" "$selection"
     else
-      printf 'fail psql is unavailable for service %s\n' "$postgres_service"
+      printf 'fail adapter %s %s is unavailable\n' "$name" "$selection"
       failures=$((failures + 1))
     fi
-  fi
-
-  resolve_key mysql_login_path
-  mysql_login_path=$RESOLVED
-  if [ -n "$mysql_login_path" ]; then
-    checked=1
-    if find_real mysql >/dev/null 2>&1; then
-      printf 'ok   mysql login path %s\n' "$mysql_login_path"
-    else
-      printf 'fail mysql is unavailable for login path %s\n' "$mysql_login_path"
-      failures=$((failures + 1))
-    fi
-  fi
+  done < "$adapter_names"
+  rm -f "$adapter_names"
 
   if [ "$checked" -eq 0 ]; then printf 'ok   no ctx-managed selections\n'; fi
   [ "$failures" -eq 0 ]
@@ -1394,7 +1545,13 @@ case "${1:-}" in
     ;;
   status)
     if [ -n "${2:-}" ]; then check_selector "$2"; status_one "$2"
-    else status_one docker; status_one podman; status_one nerdctl; status_one kube; status_one aws; status_one gcloud; status_one browser; status_one postgres; status_one mysql; fi
+    else
+      status_one docker; status_one podman; status_one nerdctl; status_one browser
+      list_adapter_names | while IFS= read -r name; do
+        [ -n "$name" ] || continue
+        if adapter_load "$name" >/dev/null 2>&1 && [ "$ADAPTER_KIND" = selector ]; then status_one "$name"; fi
+      done
+    fi
     ;;
   ls)
     check_selector "${2:-}"
@@ -1402,10 +1559,8 @@ case "${1:-}" in
       docker) real=$(find_real docker); "$real" context ls ;;
       podman) real=$(find_real podman); "$real" system connection list ;;
       nerdctl) real=$(find_real nerdctl); "$real" namespace ls ;;
-      kube) real=$(find_real kubectl); "$real" config get-contexts ;;
-      aws) real=$(find_real aws); "$real" configure list-profiles ;;
-      gcloud) real=$(find_real gcloud); "$real" config configurations list ;;
-      browser|postgres|mysql) printf 'ctx: %s does not expose a portable profile listing\n' "$2" >&2; exit 2 ;;
+      browser) browser_list ;;
+      *) adapter_invoke "$2" list '' ;;
     esac
     ;;
   set)
@@ -1424,6 +1579,10 @@ case "${1:-}" in
     shift
     profile_command "$@"
     ;;
+  adapter)
+    shift
+    adapter_command "$@"
+    ;;
   run)
     shift
     run_tool "$@"
@@ -1435,7 +1594,7 @@ case "${1:-}" in
   env) show_environment ;;
   open)
     shift
-    browser_open "$@"
+    open_command "$@"
     ;;
   explain) explain ;;
   doctor) doctor ;;
