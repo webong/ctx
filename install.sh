@@ -56,6 +56,20 @@ if [ ! -f "$CONFIG_DIR/config.toml" ]; then
 # podman_default = "my-podman-connection"
 # nerdctl_default = "default"
 
+# Optional named bundle:
+# [profiles."client-a"]
+# docker = "my-docker-context"
+# kube_context = "client-a-dev"
+# kube_namespace = "payments"
+# aws_profile = "client-a"
+# gcloud_configuration = "client-a"
+# browser = "firefox:client-a"
+# postgres_service = "client-a-dev"
+# mysql_login_path = "client-a"
+# shell_path = "/opt/client-a/bin"
+# [profiles."client-a".env]
+# APP_ENV = "development"
+
 # Optional project mapping:
 # [projects."/absolute/path/to/project"]
 # docker = "my-docker-context"

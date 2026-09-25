@@ -1,0 +1,9 @@
+#!/usr/bin/env sh
+set -eu
+
+if [ "${1:-}" = configure ] && [ "${2:-}" = list-profiles ]; then
+  printf 'default\nclient-a\n'
+  exit 0
+fi
+
+printf '%s\n' "$*"

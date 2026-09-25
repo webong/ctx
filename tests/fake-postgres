@@ -1,0 +1,5 @@
+#!/usr/bin/env sh
+set -eu
+printf 'PGSERVICE=%s' "${PGSERVICE:-}"
+if [ -n "${PGSERVICEFILE:-}" ]; then printf ' PGSERVICEFILE=%s' "$PGSERVICEFILE"; fi
+printf ' %s\n' "$*"

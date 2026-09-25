@@ -1,0 +1,13 @@
+#!/usr/bin/env sh
+set -eu
+
+if [ "${1:-}" = config ] && [ "${2:-}" = get-contexts ]; then
+  if [ -z "${3:-}" ]; then
+    printf 'NAME\nclient-a-dev\nproduction\n'
+    exit 0
+  fi
+  case "$3" in client-a-dev|production) exit 0 ;; esac
+  exit 1
+fi
+
+printf '%s\n' "$*"

@@ -1,0 +1,17 @@
+#!/usr/bin/env sh
+set -eu
+
+if [ "${1:-}" = config ] && [ "${2:-}" = configurations ] && [ "${3:-}" = list ]; then
+  selected=
+  for arg in "$@"; do
+    case "$arg" in --filter=name=*) selected=${arg#--filter=name=} ;; esac
+  done
+  if [ -n "$selected" ]; then
+    case "$selected" in default|client-a) printf '%s\n' "$selected" ;; esac
+  else
+    printf 'default\nclient-a\n'
+  fi
+  exit 0
+fi
+
+printf '%s\n' "$*"

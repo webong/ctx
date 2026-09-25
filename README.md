@@ -1,10 +1,17 @@
 # ctx
 
-ctx chooses container engine connections per project. It wraps Docker, Podman, and nerdctl, so the same directory can select a Docker context, a Podman connection, and a containerd namespace. It does not change any tool's global default. Apple Container is supported as an explicit transfer endpoint.
+ctx chooses tool contexts per project. It wraps Docker, Podman, and nerdctl, and
+can run kubectl, AWS CLI, gcloud, PostgreSQL, and MySQL commands with project
+selectors. It can also open a Firefox or Chromium-family browser profile. Named
+profiles bundle those choices without changing any tool's global default. Apple
+Container is supported as an explicit transfer endpoint.
 
 ## Install
 
-You need curl and at least one of the Docker, Podman, or nerdctl CLIs. The installer downloads ctx and its three wrappers when run as a stream:
+You need curl and at least one of the Docker, Podman, or nerdctl CLIs. kubectl and
+the AWS CLI, gcloud, database clients, and browsers are optional and only needed
+for their adapters. The installer
+downloads ctx and its three container wrappers when run as a stream:
 
 ~~~sh
 curl -fsSL https://raw.githubusercontent.com/webong/ctx/main/install.sh | sh
@@ -48,6 +55,61 @@ docker = "my-docker-context"
 podman = "my-podman-connection"
 nerdctl = "k8s.io"
 ~~~
+
+Kubernetes and AWS selections are also stored locally:
+
+~~~sh
+ctx ls kube
+ctx set kube client-a-dev --namespace payments
+ctx ls aws
+ctx set aws client-a
+ctx ls gcloud
+ctx set gcloud client-a
+
+ctx run kubectl get pods
+ctx run aws sts get-caller-identity
+ctx run gcloud projects list
+~~~
+
+`ctx run kubectl` supplies `--context` and `--namespace`. Explicit kubectl flags
+take priority. `ctx run aws` supplies `--profile`; AWS_PROFILE,
+AWS_DEFAULT_PROFILE, or an explicit `--profile` takes priority. Use
+`--kubeconfig /absolute/path` with `ctx set kube` when the context is in a
+non-default kubeconfig. `ctx run gcloud` similarly applies `--configuration`;
+CLOUDSDK_ACTIVE_CONFIG_NAME or an explicit `--configuration` takes priority.
+
+Select a browser profile and open project URLs without mixing client, admin, and
+personal sessions:
+
+~~~sh
+ctx set browser firefox:client-a
+ctx open http://localhost:3000
+
+ctx set browser 'chrome:Profile 1'
+ctx open https://client-a.example
+~~~
+
+Firefox values are Firefox profile names. Chrome and Chromium values are profile
+directory names such as `Default` or `Profile 1`. On macOS ctx launches a new app
+instance through `open`; on other systems it invokes the browser executable.
+`CTX_BROWSER` temporarily overrides the project selection.
+
+Database adapters use native client-side profiles and do not copy connection
+secrets into `.ctx`:
+
+~~~sh
+ctx set postgres client-a-dev
+ctx run psql
+ctx run pg_dump app > app.sql
+
+ctx set mysql client-a
+ctx run mysql app
+ctx run mysqldump app > app.sql
+~~~
+
+PostgreSQL selections become `PGSERVICE` and can include `--service-file`.
+Existing PGSERVICE and PGSERVICEFILE values take priority. MySQL selections use
+login paths created separately with `mysql_config_editor`.
 
 ctx set verifies that the named Docker context, Podman system connection, or nerdctl namespace exists. In a Git repository, it excludes .ctx through the local .git/info/exclude file. The choice stays on your machine, without modifying the project's tracked .gitignore. Use `ctx clear TOOL` or `ctx clear` to remove choices.
 
@@ -159,6 +221,80 @@ Mappings apply to the named directory and its descendants. Set a fallback with `
 `docker context ...`, `podman system connection ...`, `podman machine ...`, and `nerdctl namespace ...` pass through to the real CLI. The wrappers affect commands launched through them; other applications may use their own connection settings.
 
 Podman connection selection uses its [--connection option](https://docs.podman.io/en/latest/markdown/podman.1.html). nerdctl selection uses [containerd namespaces](https://github.com/containerd/nerdctl/blob/main/docs/command-reference.md#namespace-management). Apple Container transfer support follows its [image and volume commands](https://github.com/apple/container/blob/main/docs/command-reference.md).
+
+## Profile bundles
+
+Put reusable bundles in `$HOME/.config/ctx/config.toml`:
+
+~~~toml
+[profiles."client-a"]
+docker = "orbstack"
+podman = "podman-machine-default"
+nerdctl = "k8s.io"
+kube_context = "client-a-dev"
+kube_namespace = "payments"
+aws_profile = "client-a"
+gcloud_configuration = "client-a"
+browser = "firefox:client-a"
+postgres_service = "client-a-dev"
+mysql_login_path = "client-a"
+shell_path = "/opt/client-a/bin"
+
+[profiles."client-a".env]
+APP_ENV = "development"
+AWS_REGION = "eu-west-1"
+~~~
+
+You can also create or update bundle entries from the CLI:
+
+~~~sh
+ctx profile set client-a docker orbstack
+ctx profile set client-a kube_context client-a-dev
+ctx profile set client-a kube_namespace payments
+ctx profile set client-a aws_profile client-a
+ctx profile set client-a gcloud_configuration client-a
+ctx profile set client-a browser firefox:client-a
+ctx profile set client-a postgres_service client-a-dev
+ctx profile set client-a mysql_login_path client-a
+ctx profile set client-a shell_path /opt/client-a/bin
+ctx profile env client-a APP_ENV development
+ctx profile show client-a
+~~~
+
+Select a bundle for the current project:
+
+~~~sh
+ctx profile ls
+ctx profile use client-a
+ctx explain
+ctx doctor
+~~~
+
+The project `.ctx` contains only `profile = "client-a"`. Direct values in the
+same `.ctx` override bundle values, so `ctx set docker desktop-linux` can make a
+local exception. `ctx explain` shows the resolved value and its source. `ctx
+doctor` checks that selected profiles and contexts still exist without making
+network calls.
+
+The same bundle can provide a declarative child-shell environment:
+
+~~~sh
+ctx env
+ctx run -- npm test
+ctx shell
+ctx shell -- npm test
+~~~
+
+`ctx run --` applies the profile to one command. `ctx shell` starts the user's
+shell with those values and restores the original environment when it exits.
+Existing environment variables take priority over profile values. `shell_path`
+is prepended to PATH. ctx does not source startup fragments or execute profile
+hooks.
+
+Profiles contain selectors, not credentials. Cloud keys, Kubernetes credentials,
+database passwords, browser data, and tokens remain in each tool's native config
+or credential store. Environment entries are plain text, so they are intended for
+non-secret settings only.
 
 ## Remove
 

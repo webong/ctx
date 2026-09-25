@@ -1,20 +1,28 @@
 #!/usr/bin/env sh
-# ctx command — project-local Docker contexts and Podman connections
+# ctx command — project-local tool contexts and profile bundles
 set -eu
 
 CTX_HOME=${CTX_HOME:-$HOME/.config/ctx}
 CONFIG="$CTX_HOME/config.toml"
-VERSION=0.5.0
+VERSION=0.6.0
 VOLUME_IMAGE=${CTX_VOLUME_IMAGE:-alpine:3.21}
 
 usage() {
   cat <<'HELP'
-ctx — project-local container connections
+ctx — project-local tool contexts
 usage:
-  ctx status [docker|podman|nerdctl]
-  ctx ls <docker|podman|nerdctl>
-  ctx set <docker|podman|nerdctl> <name> [--global]
-  ctx clear [docker|podman|nerdctl]
+  ctx status [docker|podman|nerdctl|kube|aws|gcloud|browser|postgres|mysql]
+  ctx ls <docker|podman|nerdctl|kube|aws|gcloud>
+  ctx set <docker|podman|nerdctl|kube|aws|gcloud|browser|postgres|mysql> <name> [options]
+  ctx clear [docker|podman|nerdctl|kube|aws|gcloud|browser|postgres|mysql|profile]
+  ctx profile <ls|show|use|set|unset|env|env-unset|clear> [arguments...]
+  ctx run <docker|podman|nerdctl|kubectl|aws|gcloud|psql|pg_dump|mysql|mysqldump> [arguments...]
+  ctx run -- <command> [arguments...]
+  ctx shell [-- <command> [arguments...]]
+  ctx env
+  ctx open [URL...]
+  ctx explain
+  ctx doctor
   ctx build [docker|podman|nerdctl] --cache-ref <registry-ref> [--] <build arguments>
   ctx image sync [--tar] <source-context> <target-context> <image>...
   ctx image copy <engine:endpoint> <engine:endpoint> <image>...
@@ -23,12 +31,20 @@ usage:
   ctx volume copy <engine:endpoint> <engine:endpoint> <source-volume> [target-volume]
   ctx version
 
-Project choices are stored in .ctx. --global writes a fallback to config.toml.
+Project choices are stored in .ctx. Container --global writes a fallback to
+config.toml. Named bundles live in [profiles."name"] sections in config.toml.
 HELP
 }
 
 check_tool() {
   case "$1" in docker|podman|nerdctl) ;; *) printf 'ctx: use docker, podman, or nerdctl\n' >&2; exit 2;; esac
+}
+
+check_selector() {
+  case "$1" in
+    docker|podman|nerdctl|kube|aws|gcloud|browser|postgres|mysql) ;;
+    *) printf 'ctx: unknown selector %s\n' "$1" >&2; exit 2 ;;
+  esac
 }
 
 find_real() {
@@ -55,7 +71,7 @@ read_choice() {
   awk -v key="$key" '
     $0 ~ "^[[:space:]]*" key "[[:space:]]*=[[:space:]]*\"" {
       line=$0
-      sub(/^[[:space:]]*[a-z]+[[:space:]]*=[[:space:]]*"/, "", line)
+      sub(/^[[:space:]]*[a-z_]+[[:space:]]*=[[:space:]]*"/, "", line)
       sub(/".*$/, "", line)
       if (line != "") { print line; exit }
     }
@@ -70,11 +86,188 @@ read_project_map() {
     /^\[/ { active=($0 == section); next }
     active && $0 ~ "^[[:space:]]*" key "[[:space:]]*=[[:space:]]*\"" {
       line=$0
-      sub(/^[[:space:]]*[a-z]+[[:space:]]*=[[:space:]]*"/, "", line)
+      sub(/^[[:space:]]*[a-z_]+[[:space:]]*=[[:space:]]*"/, "", line)
       sub(/".*$/, "", line)
       if (line != "") { print line; exit }
     }
   ' "$CONFIG"
+}
+
+read_profile_choice() {
+  profile="$1"
+  key="$2"
+  [ -f "$CONFIG" ] || return 0
+  awk -v section="[profiles.\"$profile\"]" -v key="$key" '
+    /^\[/ { active=($0 == section); next }
+    active && $0 ~ "^[[:space:]]*" key "[[:space:]]*=[[:space:]]*\"" {
+      line=$0
+      sub(/^[[:space:]]*[a-z_]+[[:space:]]*=[[:space:]]*\"/, "", line)
+      sub(/\".*$/, "", line)
+      if (line != "") { print line; exit }
+    }
+  ' "$CONFIG"
+}
+
+profile_exists() {
+  profile="$1"
+  [ -f "$CONFIG" ] || return 1
+  awk -v section="[profiles.\"$profile\"]" '$0 == section { found=1 } END { exit !found }' "$CONFIG"
+}
+
+list_profiles() {
+  [ -f "$CONFIG" ] || return 0
+  awk '
+    /^\[profiles\."[^"]+"\]$/ {
+      line=$0
+      sub(/^\[profiles\."/, "", line)
+      sub(/"\]$/, "", line)
+      print line
+    }
+  ' "$CONFIG"
+}
+
+valid_profile_name() {
+  case "$1" in ''|*[!A-Za-z0-9._-]*) return 1 ;; *) return 0 ;; esac
+}
+
+valid_profile_key() {
+  case "$1" in
+    docker|podman|nerdctl|kube_context|kube_namespace|kubeconfig|aws_profile|gcloud_configuration|browser|postgres_service|postgres_service_file|mysql_login_path|shell_path) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+valid_env_key() {
+  case "$1" in
+    [A-Za-z_]* ) case "$1" in *[!A-Za-z0-9_]*) return 1 ;; *) return 0 ;; esac ;;
+    *) return 1 ;;
+  esac
+}
+
+ensure_profile() {
+  profile="$1"
+  profile_exists "$profile" && return 0
+  mkdir -p "$CTX_HOME"
+  [ -f "$CONFIG" ] || printf '# ctx fallbacks, project maps, and profiles\n' > "$CONFIG"
+  printf '\n[profiles."%s"]\n' "$profile" >> "$CONFIG"
+}
+
+read_profile_env() {
+  profile="$1"
+  [ -f "$CONFIG" ] || return 0
+  awk -v section="[profiles.\"$profile\".env]" '
+    /^\[/ { active=($0 == section); next }
+    active && $0 ~ "^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=[[:space:]]*\"" {
+      key=$0
+      sub(/^[[:space:]]*/, "", key)
+      sub(/[[:space:]]*=.*$/, "", key)
+      value=$0
+      sub(/^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=[[:space:]]*\"/, "", value)
+      sub(/\".*$/, "", value)
+      print key "\t" value
+    }
+  ' "$CONFIG"
+}
+
+write_profile_env() {
+  profile="$1"
+  key="$2"
+  value="$3"
+  ensure_profile "$profile"
+  section="[profiles.\"$profile\".env]"
+  tmp=$(mktemp)
+  awk -v section="$section" -v key="$key" -v value="$value" '
+    $0 == section { active=1; found=1; print; next }
+    active && /^\[/ {
+      if (!written) { print key " = \"" value "\""; written=1 }
+      active=0
+    }
+    active && $0 ~ "^[[:space:]]*" key "[[:space:]]*=" {
+      if (!written) { print key " = \"" value "\""; written=1 }
+      next
+    }
+    { print }
+    END {
+      if (active && !written) print key " = \"" value "\""
+      if (!found) {
+        print ""
+        print section
+        print key " = \"" value "\""
+      }
+    }
+  ' "$CONFIG" > "$tmp"
+  mv "$tmp" "$CONFIG"
+}
+
+unset_profile_env() {
+  profile="$1"
+  key="$2"
+  [ -f "$CONFIG" ] || return 0
+  section="[profiles.\"$profile\".env]"
+  tmp=$(mktemp)
+  awk -v section="$section" -v key="$key" '
+    /^\[/ { active=($0 == section) }
+    active && $0 ~ "^[[:space:]]*" key "[[:space:]]*=" { next }
+    { print }
+  ' "$CONFIG" > "$tmp"
+  mv "$tmp" "$CONFIG"
+}
+
+show_profile() {
+  profile="$1"
+  [ -f "$CONFIG" ] || return 0
+  awk -v section="[profiles.\"$profile\"]" -v env_section="[profiles.\"$profile\".env]" '
+    /^\[/ {
+      if ($0 == section) { active=1; next }
+      if ($0 == env_section) { active=1; print "[env]"; next }
+      active=0
+      next
+    }
+    active { print }
+  ' "$CONFIG"
+}
+
+write_profile_choice() {
+  profile="$1"
+  key="$2"
+  value="$3"
+  mkdir -p "$CTX_HOME"
+  [ -f "$CONFIG" ] || printf '# ctx fallbacks, project maps, and profiles\n' > "$CONFIG"
+  tmp=$(mktemp)
+  awk -v section="[profiles.\"$profile\"]" -v key="$key" -v value="$value" '
+    $0 == section { active=1; found=1; print; next }
+    active && /^\[/ {
+      if (!written) { print key " = \"" value "\""; written=1 }
+      active=0
+    }
+    active && $0 ~ "^[[:space:]]*" key "[[:space:]]*=" {
+      if (!written) { print key " = \"" value "\""; written=1 }
+      next
+    }
+    { print }
+    END {
+      if (active && !written) print key " = \"" value "\""
+      if (!found) {
+        print ""
+        print section
+        print key " = \"" value "\""
+      }
+    }
+  ' "$CONFIG" > "$tmp"
+  mv "$tmp" "$CONFIG"
+}
+
+unset_profile_choice() {
+  profile="$1"
+  key="$2"
+  [ -f "$CONFIG" ] || return 0
+  tmp=$(mktemp)
+  awk -v section="[profiles.\"$profile\"]" -v key="$key" '
+    /^\[/ { active=($0 == section) }
+    active && $0 ~ "^[[:space:]]*" key "[[:space:]]*=" { next }
+    { print }
+  ' "$CONFIG" > "$tmp"
+  mv "$tmp" "$CONFIG"
 }
 
 read_default() {
@@ -113,31 +306,53 @@ probe_docker() {
   fi
 }
 
-resolve() {
-  tool="$1"
+resolve_key() {
+  key="$1"
   RESOLVED=
   VIA=
   dir="$PWD"
   while :; do
-    choice=$(read_choice "$dir/.ctx" "$tool")
+    choice=$(read_choice "$dir/.ctx" "$key")
     if [ -n "$choice" ]; then
       RESOLVED="$choice"; VIA="$dir/.ctx"; return
     fi
-    choice=$(read_project_map "$dir" "$tool")
+    if [ "$key" != profile ]; then
+      profile=$(read_choice "$dir/.ctx" profile)
+      if [ -n "$profile" ]; then
+        choice=$(read_profile_choice "$profile" "$key")
+        if [ -n "$choice" ]; then
+          RESOLVED="$choice"; VIA="$CONFIG profile $profile"; return
+        fi
+      fi
+    fi
+    choice=$(read_project_map "$dir" "$key")
     if [ -n "$choice" ]; then
       RESOLVED="$choice"; VIA="$CONFIG project map"; return
+    fi
+    if [ "$key" != profile ]; then
+      profile=$(read_project_map "$dir" profile)
+      if [ -n "$profile" ]; then
+        choice=$(read_profile_choice "$profile" "$key")
+        if [ -n "$choice" ]; then
+          RESOLVED="$choice"; VIA="$CONFIG project profile $profile"; return
+        fi
+      fi
     fi
     if [ "$dir" = "$HOME" ] || [ "$dir" = / ]; then break; fi
     dir=$(dirname "$dir")
   done
-  if [ "$tool" = docker ]; then probe_docker; fi
+  if [ "$key" = docker ]; then probe_docker; fi
   if [ -n "$RESOLVED" ]; then return; fi
-  choice=$(read_default "$tool")
+  choice=$(read_default "$key")
   if [ -n "$choice" ]; then
     RESOLVED="$choice"; VIA="$CONFIG default"
   else
-    VIA="$tool default"
+    VIA="$key default"
   fi
+}
+
+resolve() {
+  resolve_key "$1"
 }
 
 status_one() {
@@ -153,6 +368,56 @@ status_one() {
       ;;
     nerdctl)
       if [ -n "${CONTAINERD_NAMESPACE:-}" ]; then printf 'nerdctl: %s (CONTAINERD_NAMESPACE)\n' "$CONTAINERD_NAMESPACE"; return; fi
+      ;;
+    kube)
+      resolve_key kube_context
+      context=$RESOLVED
+      context_via=$VIA
+      resolve_key kube_namespace
+      namespace=$RESOLVED
+      if [ -n "$context" ]; then
+        printf 'kube: %s (%s)' "$context" "$context_via"
+        if [ -n "$namespace" ]; then printf ', namespace %s' "$namespace"; fi
+        printf '\n'
+      else
+        printf 'kube: kubectl default\n'
+      fi
+      return
+      ;;
+    aws)
+      if [ -n "${AWS_PROFILE:-}" ]; then printf 'aws: %s (AWS_PROFILE)\n' "$AWS_PROFILE"; return; fi
+      if [ -n "${AWS_DEFAULT_PROFILE:-}" ]; then printf 'aws: %s (AWS_DEFAULT_PROFILE)\n' "$AWS_DEFAULT_PROFILE"; return; fi
+      resolve_key aws_profile
+      if [ -n "$RESOLVED" ]; then printf 'aws: %s (%s)\n' "$RESOLVED" "$VIA"
+      else printf 'aws: aws default\n'; fi
+      return
+      ;;
+    gcloud)
+      if [ -n "${CLOUDSDK_ACTIVE_CONFIG_NAME:-}" ]; then printf 'gcloud: %s (CLOUDSDK_ACTIVE_CONFIG_NAME)\n' "$CLOUDSDK_ACTIVE_CONFIG_NAME"; return; fi
+      resolve_key gcloud_configuration
+      if [ -n "$RESOLVED" ]; then printf 'gcloud: %s (%s)\n' "$RESOLVED" "$VIA"
+      else printf 'gcloud: active configuration\n'; fi
+      return
+      ;;
+    browser)
+      if [ -n "${CTX_BROWSER:-}" ]; then printf 'browser: %s (CTX_BROWSER)\n' "$CTX_BROWSER"; return; fi
+      resolve_key browser
+      if [ -n "$RESOLVED" ]; then printf 'browser: %s (%s)\n' "$RESOLVED" "$VIA"
+      else printf 'browser: <not selected>\n'; fi
+      return
+      ;;
+    postgres)
+      if [ -n "${PGSERVICE:-}" ]; then printf 'postgres: %s (PGSERVICE)\n' "$PGSERVICE"; return; fi
+      resolve_key postgres_service
+      if [ -n "$RESOLVED" ]; then printf 'postgres: %s (%s)\n' "$RESOLVED" "$VIA"
+      else printf 'postgres: libpq default\n'; fi
+      return
+      ;;
+    mysql)
+      resolve_key mysql_login_path
+      if [ -n "$RESOLVED" ]; then printf 'mysql: %s (%s)\n' "$RESOLVED" "$VIA"
+      else printf 'mysql: client default\n'; fi
+      return
       ;;
   esac
   resolve "$tool"
@@ -171,6 +436,285 @@ validate_choice() {
     nerdctl) "$real" namespace ls --quiet | grep -Fxq "$name" ;;
     apple) [ "$name" = local ] && "$real" system version >/dev/null 2>&1 ;;
     *) return 1 ;;
+  esac
+}
+
+validate_selector() {
+  selector="$1"
+  name="$2"
+  case "$selector" in
+    docker|podman|nerdctl) validate_choice "$selector" "$name" ;;
+    kube)
+      real=$(find_real kubectl)
+      "$real" config get-contexts "$name" >/dev/null 2>&1
+      ;;
+    aws)
+      real=$(find_real aws)
+      "$real" configure list-profiles | grep -Fxq "$name"
+      ;;
+    gcloud)
+      real=$(find_real gcloud)
+      "$real" config configurations list --filter="name=$name" --format='value(name)' | grep -Fxq "$name"
+      ;;
+    browser) validate_browser_choice "$name" ;;
+    postgres) find_real psql >/dev/null ;;
+    mysql) find_real mysql >/dev/null ;;
+  esac
+}
+
+parse_browser_choice() {
+  choice="$1"
+  case "$choice" in
+    firefox:*) BROWSER_ENGINE=firefox; BROWSER_PROFILE=${choice#firefox:} ;;
+    chrome:*) BROWSER_ENGINE=chrome; BROWSER_PROFILE=${choice#chrome:} ;;
+    chromium:*) BROWSER_ENGINE=chromium; BROWSER_PROFILE=${choice#chromium:} ;;
+    *) return 1 ;;
+  esac
+  [ -n "$BROWSER_PROFILE" ]
+}
+
+validate_browser_choice() {
+  parse_browser_choice "$1" || return 1
+  platform=${CTX_PLATFORM:-$(uname -s)}
+  case "$platform" in
+    Darwin)
+      real=$(find_real open)
+      case "$BROWSER_ENGINE" in
+        firefox) app=Firefox ;;
+        chrome) app='Google Chrome' ;;
+        chromium) app=Chromium ;;
+      esac
+      "$real" -Ra "$app" >/dev/null 2>&1
+      ;;
+    *)
+      case "$BROWSER_ENGINE" in
+        firefox) find_real firefox >/dev/null ;;
+        chrome) find_real google-chrome >/dev/null ;;
+        chromium) find_real chromium >/dev/null ;;
+      esac
+      ;;
+  esac
+}
+
+browser_open() {
+  if [ "${1:-}" = -- ]; then shift; fi
+  if [ -n "${CTX_BROWSER:-}" ]; then choice=$CTX_BROWSER
+  else resolve_key browser; choice=$RESOLVED
+  fi
+  [ -n "$choice" ] || { printf 'ctx: no browser selected; use ctx set browser <firefox|chrome|chromium>:<profile>\n' >&2; exit 1; }
+  if ! parse_browser_choice "$choice"; then
+    printf 'ctx: invalid browser selection %s\n' "$choice" >&2
+    exit 1
+  fi
+  platform=${CTX_PLATFORM:-$(uname -s)}
+  case "$platform" in
+    Darwin)
+      real=$(find_real open)
+      case "$BROWSER_ENGINE" in
+        firefox) "$real" -na Firefox --args -P "$BROWSER_PROFILE" "$@" ;;
+        chrome) "$real" -na 'Google Chrome' --args "--profile-directory=$BROWSER_PROFILE" "$@" ;;
+        chromium) "$real" -na Chromium --args "--profile-directory=$BROWSER_PROFILE" "$@" ;;
+      esac
+      ;;
+    *)
+      case "$BROWSER_ENGINE" in
+        firefox) real=$(find_real firefox); "$real" -P "$BROWSER_PROFILE" "$@" ;;
+        chrome) real=$(find_real google-chrome); "$real" "--profile-directory=$BROWSER_PROFILE" "$@" ;;
+        chromium) real=$(find_real chromium); "$real" "--profile-directory=$BROWSER_PROFILE" "$@" ;;
+      esac
+      ;;
+  esac
+}
+
+has_kubectl_context_arg() {
+  for arg in "$@"; do
+    case "$arg" in --context|--context=*) return 0 ;; esac
+  done
+  return 1
+}
+
+has_kubectl_namespace_arg() {
+  for arg in "$@"; do
+    case "$arg" in --namespace|--namespace=*|-n|-n?*) return 0 ;; esac
+  done
+  return 1
+}
+
+has_aws_profile_arg() {
+  for arg in "$@"; do
+    case "$arg" in --profile|--profile=*) return 0 ;; esac
+  done
+  return 1
+}
+
+kubectl_exec() {
+  real=$(find_real kubectl)
+  resolve_key kube_context
+  context=$RESOLVED
+  resolve_key kube_namespace
+  namespace=$RESOLVED
+  resolve_key kubeconfig
+  kubeconfig=$RESOLVED
+
+  if [ -n "$namespace" ] && ! has_kubectl_namespace_arg "$@"; then
+    set -- --namespace "$namespace" "$@"
+  fi
+  if [ -n "$context" ] && ! has_kubectl_context_arg "$@"; then
+    set -- --context "$context" "$@"
+  fi
+  if [ -n "$kubeconfig" ] && [ -z "${KUBECONFIG:-}" ]; then
+    KUBECONFIG="$kubeconfig" "$real" "$@"
+  else
+    "$real" "$@"
+  fi
+}
+
+aws_exec() {
+  real=$(find_real aws)
+  if [ -n "${AWS_PROFILE:-}" ] || [ -n "${AWS_DEFAULT_PROFILE:-}" ] || has_aws_profile_arg "$@"; then
+    "$real" "$@"
+    return
+  fi
+  resolve_key aws_profile
+  if [ -n "$RESOLVED" ]; then
+    "$real" --profile "$RESOLVED" "$@"
+  else
+    "$real" "$@"
+  fi
+}
+
+has_gcloud_configuration_arg() {
+  for arg in "$@"; do
+    case "$arg" in --configuration|--configuration=*) return 0 ;; esac
+  done
+  return 1
+}
+
+gcloud_exec() {
+  real=$(find_real gcloud)
+  if [ -n "${CLOUDSDK_ACTIVE_CONFIG_NAME:-}" ] || has_gcloud_configuration_arg "$@"; then
+    "$real" "$@"
+    return
+  fi
+  resolve_key gcloud_configuration
+  if [ -n "$RESOLVED" ]; then
+    "$real" --configuration "$RESOLVED" "$@"
+  else
+    "$real" "$@"
+  fi
+}
+
+postgres_exec() {
+  command="$1"
+  shift
+  real=$(find_real "$command")
+  resolve_key postgres_service
+  service=$RESOLVED
+  resolve_key postgres_service_file
+  service_file=$RESOLVED
+
+  if [ -n "${PGSERVICE:-}" ]; then service=$PGSERVICE; fi
+  if [ -n "${PGSERVICEFILE:-}" ]; then service_file=$PGSERVICEFILE; fi
+
+  if [ -n "$service" ] && [ -n "$service_file" ]; then
+    PGSERVICE="$service" PGSERVICEFILE="$service_file" "$real" "$@"
+  elif [ -n "$service" ]; then
+    PGSERVICE="$service" "$real" "$@"
+  elif [ -n "$service_file" ]; then
+    PGSERVICEFILE="$service_file" "$real" "$@"
+  else
+    "$real" "$@"
+  fi
+}
+
+has_mysql_login_path_arg() {
+  for arg in "$@"; do
+    case "$arg" in --login-path|--login-path=*) return 0 ;; esac
+  done
+  return 1
+}
+
+mysql_exec() {
+  command="$1"
+  shift
+  real=$(find_real "$command")
+  resolve_key mysql_login_path
+  if [ -n "$RESOLVED" ] && ! has_mysql_login_path_arg "$@"; then
+    "$real" "--login-path=$RESOLVED" "$@"
+  else
+    "$real" "$@"
+  fi
+}
+
+apply_profile_environment() {
+  resolve_key profile
+  active_profile=$RESOLVED
+  if [ -n "$active_profile" ]; then
+    env_file=$(mktemp)
+    read_profile_env "$active_profile" > "$env_file"
+    tab=$(printf '\t')
+    while IFS="$tab" read -r env_key env_value; do
+      [ -n "$env_key" ] || continue
+      if env | grep -q "^${env_key}="; then continue; fi
+      export "$env_key=$env_value"
+    done < "$env_file"
+    rm -f "$env_file"
+  fi
+
+  resolve_key shell_path
+  if [ -n "$RESOLVED" ]; then PATH="$RESOLVED:$PATH"; export PATH; fi
+}
+
+show_environment() {
+  apply_profile_environment
+  resolve_key profile
+  active_profile=$RESOLVED
+  if [ -n "$active_profile" ]; then
+    env_file=$(mktemp)
+    read_profile_env "$active_profile" > "$env_file"
+    tab=$(printf '\t')
+    while IFS="$tab" read -r env_key env_value; do
+      [ -n "$env_key" ] || continue
+      env_value=$(printenv "$env_key" 2>/dev/null || true)
+      printf '%s=%s\n' "$env_key" "$env_value"
+    done < "$env_file"
+    rm -f "$env_file"
+  fi
+  resolve_key shell_path
+  if [ -n "$RESOLVED" ]; then printf 'PATH=%s\n' "$PATH"; fi
+}
+
+shell_command() {
+  apply_profile_environment
+  if [ "${1:-}" = -- ]; then
+    shift
+    [ "$#" -gt 0 ] || { printf 'ctx: shell -- needs a command\n' >&2; exit 2; }
+    exec "$@"
+  fi
+  [ "$#" -eq 0 ] || { printf 'ctx: shell only accepts -- followed by a command\n' >&2; exit 2; }
+  shell=${SHELL:-/bin/sh}
+  exec "$shell" -i
+}
+
+run_tool() {
+  tool="${1:-}"
+  [ -n "$tool" ] || { printf 'ctx: run needs a tool name\n' >&2; exit 2; }
+  shift
+  apply_profile_environment
+  case "$tool" in
+    --)
+      [ "$#" -gt 0 ] || { printf 'ctx: run -- needs a command\n' >&2; exit 2; }
+      "$@"
+      ;;
+    docker) docker_exec "$@" ;;
+    podman) podman_exec "$@" ;;
+    nerdctl) nerdctl_exec "$@" ;;
+    kubectl|kube) kubectl_exec "$@" ;;
+    aws) aws_exec "$@" ;;
+    gcloud) gcloud_exec "$@" ;;
+    psql|pg_dump|pg_restore|createdb|dropdb) postgres_exec "$tool" "$@" ;;
+    mysql|mysqldump|mysqladmin) mysql_exec "$tool" "$@" ;;
+    *) printf 'ctx: no adapter for %s\n' "$tool" >&2; exit 2 ;;
   esac
 }
 
@@ -486,20 +1030,354 @@ write_default() {
 }
 
 clear_choice() {
-  tool="${1:-}"
+  selector="${1:-}"
   [ -f .ctx ] || return 0
-  if [ -z "$tool" ]; then
+  if [ -z "$selector" ]; then
     rm .ctx
     return
   fi
-  check_tool "$tool"
+  case "$selector" in
+    docker|podman|nerdctl) keys="$selector" ;;
+    kube) keys='kube_context|kube_namespace|kubeconfig' ;;
+    aws) keys='aws_profile' ;;
+    gcloud) keys='gcloud_configuration' ;;
+    browser) keys='browser' ;;
+    postgres) keys='postgres_service|postgres_service_file' ;;
+    mysql) keys='mysql_login_path' ;;
+    profile) keys='profile' ;;
+    *) printf 'ctx: cannot clear %s\n' "$selector" >&2; exit 2 ;;
+  esac
   tmp=$(mktemp)
-  awk -v key="$tool" '$0 !~ "^[[:space:]]*" key "[[:space:]]*="' .ctx > "$tmp"
-  if grep -Eq '^[[:space:]]*(docker|podman|nerdctl)[[:space:]]*=' "$tmp"; then
+  awk -v keys="$keys" '$0 !~ "^[[:space:]]*(" keys ")[[:space:]]*="' .ctx > "$tmp"
+  if grep -Eq '^[[:space:]]*(profile|docker|podman|nerdctl|kube_context|kube_namespace|kubeconfig|aws_profile|gcloud_configuration|browser|postgres_service|postgres_service_file|mysql_login_path)[[:space:]]*=' "$tmp"; then
     mv "$tmp" .ctx
   else
     rm .ctx "$tmp"
   fi
+}
+
+set_selector() {
+  selector="$1"
+  name="$2"
+  shift 2
+  case "$selector" in
+    docker|podman|nerdctl)
+      if ! validate_selector "$selector" "$name"; then
+        printf 'ctx: unknown %s %s\n' "$selector" "$name" >&2
+        exit 1
+      fi
+      if [ "${1:-}" = --global ] && [ "$#" -eq 1 ]; then
+        write_default "$selector" "$name"
+        printf '%s fallback: %s\n' "$selector" "$name"
+      elif [ "$#" -eq 0 ]; then
+        write_choice "$selector" "$name"
+        printf '%s: %s in %s/.ctx\n' "$selector" "$name" "$PWD"
+      else
+        usage >&2; exit 2
+      fi
+      ;;
+    kube)
+      namespace=
+      kubeconfig=
+      while [ "$#" -gt 0 ]; do
+        case "$1" in
+          --namespace)
+            [ "$#" -ge 2 ] || { printf 'ctx: --namespace needs a value\n' >&2; exit 2; }
+            namespace=$2; shift 2
+            ;;
+          --namespace=*) namespace=${1#--namespace=}; shift ;;
+          --kubeconfig)
+            [ "$#" -ge 2 ] || { printf 'ctx: --kubeconfig needs a path\n' >&2; exit 2; }
+            kubeconfig=$2; shift 2
+            ;;
+          --kubeconfig=*) kubeconfig=${1#--kubeconfig=}; shift ;;
+          *) usage >&2; exit 2 ;;
+        esac
+      done
+      real=$(find_real kubectl)
+      if [ -n "$kubeconfig" ]; then
+        if ! KUBECONFIG="$kubeconfig" "$real" config get-contexts "$name" >/dev/null 2>&1; then
+          printf 'ctx: unknown Kubernetes context %s in %s\n' "$name" "$kubeconfig" >&2
+          exit 1
+        fi
+      elif ! validate_selector kube "$name"; then
+        printf 'ctx: unknown Kubernetes context %s\n' "$name" >&2
+        exit 1
+      fi
+      write_choice kube_context "$name"
+      if [ -n "$namespace" ]; then write_choice kube_namespace "$namespace"; fi
+      if [ -n "$kubeconfig" ]; then write_choice kubeconfig "$kubeconfig"; fi
+      printf 'kube: %s in %s/.ctx\n' "$name" "$PWD"
+      ;;
+    aws)
+      [ "$#" -eq 0 ] || { usage >&2; exit 2; }
+      if ! validate_selector aws "$name"; then
+        printf 'ctx: unknown AWS profile %s\n' "$name" >&2
+        exit 1
+      fi
+      write_choice aws_profile "$name"
+      printf 'aws: %s in %s/.ctx\n' "$name" "$PWD"
+      ;;
+    gcloud)
+      [ "$#" -eq 0 ] || { usage >&2; exit 2; }
+      if ! validate_selector gcloud "$name"; then
+        printf 'ctx: unknown gcloud configuration %s\n' "$name" >&2
+        exit 1
+      fi
+      write_choice gcloud_configuration "$name"
+      printf 'gcloud: %s in %s/.ctx\n' "$name" "$PWD"
+      ;;
+    browser)
+      [ "$#" -eq 0 ] || { usage >&2; exit 2; }
+      if ! validate_selector browser "$name"; then
+        printf 'ctx: browser must be firefox:<profile>, chrome:<profile>, or chromium:<profile> and its launcher must be available\n' >&2
+        exit 1
+      fi
+      write_choice browser "$name"
+      printf 'browser: %s in %s/.ctx\n' "$name" "$PWD"
+      ;;
+    postgres)
+      service_file=
+      while [ "$#" -gt 0 ]; do
+        case "$1" in
+          --service-file)
+            [ "$#" -ge 2 ] || { printf 'ctx: --service-file needs a path\n' >&2; exit 2; }
+            service_file=$2; shift 2
+            ;;
+          --service-file=*) service_file=${1#--service-file=}; shift ;;
+          *) usage >&2; exit 2 ;;
+        esac
+      done
+      if ! validate_selector postgres "$name"; then
+        printf 'ctx: psql is required to select a PostgreSQL service\n' >&2
+        exit 1
+      fi
+      write_choice postgres_service "$name"
+      if [ -n "$service_file" ]; then write_choice postgres_service_file "$service_file"; fi
+      printf 'postgres: %s in %s/.ctx\n' "$name" "$PWD"
+      ;;
+    mysql)
+      [ "$#" -eq 0 ] || { usage >&2; exit 2; }
+      if ! validate_selector mysql "$name"; then
+        printf 'ctx: mysql is required to select a login path\n' >&2
+        exit 1
+      fi
+      write_choice mysql_login_path "$name"
+      printf 'mysql: %s in %s/.ctx\n' "$name" "$PWD"
+      ;;
+  esac
+}
+
+profile_command() {
+  action="${1:-}"
+  case "$action" in
+    ls|list) list_profiles ;;
+    show)
+      name="${2:-}"
+      [ -n "$name" ] && [ "$#" -eq 2 ] || { printf 'ctx: profile show needs a profile name\n' >&2; exit 2; }
+      if ! profile_exists "$name"; then printf 'ctx: unknown profile %s\n' "$name" >&2; exit 1; fi
+      show_profile "$name"
+      ;;
+    use)
+      name="${2:-}"
+      [ -n "$name" ] && [ "$#" -eq 2 ] || { printf 'ctx: profile use needs a profile name\n' >&2; exit 2; }
+      if ! valid_profile_name "$name"; then printf 'ctx: invalid profile name %s\n' "$name" >&2; exit 2; fi
+      if ! profile_exists "$name"; then
+        printf 'ctx: unknown profile %s\n' "$name" >&2
+        exit 1
+      fi
+      write_choice profile "$name"
+      printf 'profile: %s in %s/.ctx\n' "$name" "$PWD"
+      ;;
+    set)
+      name="${2:-}"
+      key="${3:-}"
+      value="${4:-}"
+      [ "$#" -eq 4 ] && [ -n "$value" ] || { printf 'ctx: profile set needs name, key, and value\n' >&2; exit 2; }
+      if ! valid_profile_name "$name"; then printf 'ctx: invalid profile name %s\n' "$name" >&2; exit 2; fi
+      if ! valid_profile_key "$key"; then printf 'ctx: unsupported profile key %s\n' "$key" >&2; exit 2; fi
+      case "$value" in *'"'*) printf 'ctx: profile values cannot contain double quotes\n' >&2; exit 2 ;; esac
+      write_profile_choice "$name" "$key" "$value"
+      printf 'profile %s: %s = %s\n' "$name" "$key" "$value"
+      ;;
+    unset)
+      name="${2:-}"
+      key="${3:-}"
+      [ "$#" -eq 3 ] || { printf 'ctx: profile unset needs name and key\n' >&2; exit 2; }
+      if ! valid_profile_name "$name"; then printf 'ctx: invalid profile name %s\n' "$name" >&2; exit 2; fi
+      if ! valid_profile_key "$key"; then printf 'ctx: unsupported profile key %s\n' "$key" >&2; exit 2; fi
+      unset_profile_choice "$name" "$key"
+      printf 'profile %s: cleared %s\n' "$name" "$key"
+      ;;
+    env)
+      name="${2:-}"
+      key="${3:-}"
+      value="${4:-}"
+      [ "$#" -eq 4 ] || { printf 'ctx: profile env needs name, variable, and value\n' >&2; exit 2; }
+      if ! valid_profile_name "$name"; then printf 'ctx: invalid profile name %s\n' "$name" >&2; exit 2; fi
+      if ! valid_env_key "$key"; then printf 'ctx: invalid environment variable %s\n' "$key" >&2; exit 2; fi
+      case "$value" in *'"'*|*'	'*) printf 'ctx: environment values cannot contain double quotes or tabs\n' >&2; exit 2 ;; esac
+      write_profile_env "$name" "$key" "$value"
+      printf 'profile %s environment: %s set\n' "$name" "$key"
+      ;;
+    env-unset)
+      name="${2:-}"
+      key="${3:-}"
+      [ "$#" -eq 3 ] || { printf 'ctx: profile env-unset needs name and variable\n' >&2; exit 2; }
+      if ! valid_profile_name "$name"; then printf 'ctx: invalid profile name %s\n' "$name" >&2; exit 2; fi
+      if ! valid_env_key "$key"; then printf 'ctx: invalid environment variable %s\n' "$key" >&2; exit 2; fi
+      unset_profile_env "$name" "$key"
+      printf 'profile %s environment: cleared %s\n' "$name" "$key"
+      ;;
+    clear)
+      [ "$#" -eq 1 ] || { printf 'ctx: profile clear takes no name\n' >&2; exit 2; }
+      clear_choice profile
+      printf 'cleared profile in %s/.ctx\n' "$PWD"
+      ;;
+    *) printf 'ctx: profile requires ls, show, use, set, unset, env, env-unset, or clear\n' >&2; exit 2 ;;
+  esac
+}
+
+explain_line() {
+  label="$1"
+  key="$2"
+  resolve_key "$key"
+  if [ -n "$RESOLVED" ]; then
+    printf '%-16s %s (%s)\n' "$label" "$RESOLVED" "$VIA"
+  else
+    printf '%-16s <native default>\n' "$label"
+  fi
+}
+
+explain() {
+  explain_line profile profile
+  explain_line docker docker
+  explain_line podman podman
+  explain_line nerdctl nerdctl
+  explain_line kube-context kube_context
+  explain_line kube-namespace kube_namespace
+  explain_line kubeconfig kubeconfig
+  explain_line aws-profile aws_profile
+  explain_line gcloud-config gcloud_configuration
+  explain_line browser browser
+  explain_line postgres-service postgres_service
+  explain_line postgres-service-file postgres_service_file
+  explain_line mysql-login-path mysql_login_path
+  explain_line shell-path shell_path
+}
+
+doctor() {
+  failures=0
+  checked=0
+
+  resolve_key profile
+  if [ -n "$RESOLVED" ]; then
+    checked=1
+    if profile_exists "$RESOLVED"; then
+      printf 'ok   profile %s\n' "$RESOLVED"
+    else
+      printf 'fail profile %s does not exist in %s\n' "$RESOLVED" "$CONFIG"
+      failures=$((failures + 1))
+    fi
+  fi
+
+  for selector in docker podman nerdctl; do
+    resolve_key "$selector"
+    if [ -n "$RESOLVED" ]; then
+      checked=1
+      if validate_selector "$selector" "$RESOLVED"; then
+        printf 'ok   %s %s\n' "$selector" "$RESOLVED"
+      else
+        printf 'fail %s %s is unavailable\n' "$selector" "$RESOLVED"
+        failures=$((failures + 1))
+      fi
+    fi
+  done
+
+  resolve_key kubeconfig
+  kubeconfig=$RESOLVED
+  resolve_key kube_context
+  context=$RESOLVED
+  if [ -n "$context" ]; then
+    checked=1
+    real=$(find_real kubectl 2>/dev/null || true)
+    if [ -n "$real" ] && { [ -z "$kubeconfig" ] && "$real" config get-contexts "$context" >/dev/null 2>&1 || [ -n "$kubeconfig" ] && KUBECONFIG="$kubeconfig" "$real" config get-contexts "$context" >/dev/null 2>&1; }; then
+      printf 'ok   kube %s\n' "$context"
+    else
+      printf 'fail kube context %s is unavailable\n' "$context"
+      failures=$((failures + 1))
+    fi
+  fi
+
+  if [ -n "${AWS_PROFILE:-}" ]; then aws_profile=$AWS_PROFILE
+  elif [ -n "${AWS_DEFAULT_PROFILE:-}" ]; then aws_profile=$AWS_DEFAULT_PROFILE
+  else resolve_key aws_profile; aws_profile=$RESOLVED
+  fi
+  if [ -n "$aws_profile" ]; then
+    checked=1
+    real=$(find_real aws 2>/dev/null || true)
+    if [ -n "$real" ] && "$real" configure list-profiles | grep -Fxq "$aws_profile"; then
+      printf 'ok   aws %s\n' "$aws_profile"
+    else
+      printf 'fail aws profile %s is unavailable\n' "$aws_profile"
+      failures=$((failures + 1))
+    fi
+  fi
+
+  if [ -n "${CLOUDSDK_ACTIVE_CONFIG_NAME:-}" ]; then gcloud_configuration=$CLOUDSDK_ACTIVE_CONFIG_NAME
+  else resolve_key gcloud_configuration; gcloud_configuration=$RESOLVED
+  fi
+  if [ -n "$gcloud_configuration" ]; then
+    checked=1
+    real=$(find_real gcloud 2>/dev/null || true)
+    if [ -n "$real" ] && "$real" config configurations list --filter="name=$gcloud_configuration" --format='value(name)' | grep -Fxq "$gcloud_configuration"; then
+      printf 'ok   gcloud %s\n' "$gcloud_configuration"
+    else
+      printf 'fail gcloud configuration %s is unavailable\n' "$gcloud_configuration"
+      failures=$((failures + 1))
+    fi
+  fi
+
+  if [ -n "${CTX_BROWSER:-}" ]; then browser_choice=$CTX_BROWSER
+  else resolve_key browser; browser_choice=$RESOLVED
+  fi
+  if [ -n "$browser_choice" ]; then
+    checked=1
+    if validate_browser_choice "$browser_choice"; then
+      printf 'ok   browser %s\n' "$browser_choice"
+    else
+      printf 'fail browser %s is unavailable\n' "$browser_choice"
+      failures=$((failures + 1))
+    fi
+  fi
+
+  if [ -n "${PGSERVICE:-}" ]; then postgres_service=$PGSERVICE
+  else resolve_key postgres_service; postgres_service=$RESOLVED
+  fi
+  if [ -n "$postgres_service" ]; then
+    checked=1
+    if find_real psql >/dev/null 2>&1; then
+      printf 'ok   postgres service %s\n' "$postgres_service"
+    else
+      printf 'fail psql is unavailable for service %s\n' "$postgres_service"
+      failures=$((failures + 1))
+    fi
+  fi
+
+  resolve_key mysql_login_path
+  mysql_login_path=$RESOLVED
+  if [ -n "$mysql_login_path" ]; then
+    checked=1
+    if find_real mysql >/dev/null 2>&1; then
+      printf 'ok   mysql login path %s\n' "$mysql_login_path"
+    else
+      printf 'fail mysql is unavailable for login path %s\n' "$mysql_login_path"
+      failures=$((failures + 1))
+    fi
+  fi
+
+  if [ "$checked" -eq 0 ]; then printf 'ok   no ctx-managed selections\n'; fi
+  [ "$failures" -eq 0 ]
 }
 
 case "${1:-}" in
@@ -515,40 +1393,52 @@ case "${1:-}" in
     printf '%s\n' "$RESOLVED"
     ;;
   status)
-    if [ -n "${2:-}" ]; then check_tool "$2"; status_one "$2"
-    else status_one docker; status_one podman; status_one nerdctl; fi
+    if [ -n "${2:-}" ]; then check_selector "$2"; status_one "$2"
+    else status_one docker; status_one podman; status_one nerdctl; status_one kube; status_one aws; status_one gcloud; status_one browser; status_one postgres; status_one mysql; fi
     ;;
   ls)
-    check_tool "${2:-}"
-    real=$(find_real "$2")
+    check_selector "${2:-}"
     case "$2" in
-      docker) "$real" context ls ;;
-      podman) "$real" system connection list ;;
-      nerdctl) "$real" namespace ls ;;
+      docker) real=$(find_real docker); "$real" context ls ;;
+      podman) real=$(find_real podman); "$real" system connection list ;;
+      nerdctl) real=$(find_real nerdctl); "$real" namespace ls ;;
+      kube) real=$(find_real kubectl); "$real" config get-contexts ;;
+      aws) real=$(find_real aws); "$real" configure list-profiles ;;
+      gcloud) real=$(find_real gcloud); "$real" config configurations list ;;
+      browser|postgres|mysql) printf 'ctx: %s does not expose a portable profile listing\n' "$2" >&2; exit 2 ;;
     esac
     ;;
   set)
-    check_tool "${2:-}"
+    check_selector "${2:-}"
+    selector=$2
     name="${3:-}"
     [ -n "$name" ] || { usage >&2; exit 2; }
-    if ! validate_choice "$2" "$name"; then
-      printf 'ctx: unknown %s %s\n' "$2" "$name" >&2
-      exit 1
-    fi
-    if [ "${4:-}" = --global ]; then
-      write_default "$2" "$name"
-      printf '%s fallback: %s\n' "$2" "$name"
-    elif [ -z "${4:-}" ]; then
-      write_choice "$2" "$name"
-      printf '%s: %s in %s/.ctx\n' "$2" "$name" "$PWD"
-    else
-      usage >&2; exit 2
-    fi
+    shift 3
+    set_selector "$selector" "$name" "$@"
     ;;
   clear)
     clear_choice "${2:-}"
     printf 'cleared %s/.ctx\n' "$PWD"
     ;;
+  profile)
+    shift
+    profile_command "$@"
+    ;;
+  run)
+    shift
+    run_tool "$@"
+    ;;
+  shell)
+    shift
+    shell_command "$@"
+    ;;
+  env) show_environment ;;
+  open)
+    shift
+    browser_open "$@"
+    ;;
+  explain) explain ;;
+  doctor) doctor ;;
   build)
     shift
     build "$@"
