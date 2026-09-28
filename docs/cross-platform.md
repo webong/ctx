@@ -15,6 +15,7 @@ reaches command parity.
 - Adapter v1 discovery, checksum trust, lifecycle commands, and process dispatch.
 - Selector adapters for Kubernetes, cloud CLIs, and databases.
 - Browser-provider aggregation, validation, launching, and diagnostics.
+- Atomic, lock-protected `set`, `clear`, and profile configuration mutations.
 
 Build the preview locally:
 
@@ -33,7 +34,6 @@ ctx.exe version
 ## Remaining parity work
 
 - Windows-native implementations of the bundled browser and selector adapters.
-- `set`, `clear`, and profile mutation commands.
 - Build-cache, image, and volume transfer commands.
 - Native macOS/Linux installation and signed release artifacts.
 - PowerShell completion and richer Windows shell selection.

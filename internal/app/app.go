@@ -56,6 +56,12 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return showEnvironment(resolver, stdout, stderr)
 	case "adapter":
 		return adapterCommand(resolver, args[1:], stdout, stderr)
+	case "set":
+		return setContext(resolver, args[1:], stdout, stderr)
+	case "clear":
+		return clearContext(args[1:], stdout, stderr)
+	case "profile":
+		return profileCommand(resolver, args[1:], stdout, stderr)
 	case "ls":
 		return listContexts(resolver, args[1:], stdout, stderr)
 	case "open":
@@ -79,6 +85,9 @@ usage:
   ctx resolve <key>
   ctx explain
   ctx env
+  ctx set <selector> <name> [options]
+  ctx clear [selector|profile]
+  ctx profile <ls|show|use|set|unset|env|env-unset|clear> [arguments...]
   ctx adapter <ls|inspect|install|trust|test|doctor|remove> [arguments...]
   ctx ls <selector>
   ctx open [URL...]
