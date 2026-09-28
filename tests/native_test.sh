@@ -50,6 +50,7 @@ ctx set postgres client-a-dev >/dev/null
 ctx set mysql client-a >/dev/null
 ctx set echo staging >/dev/null
 
+test "$(ctx real docker)" = "$TEST_ROOT/fake-bin/docker"
 test "$(ctx run docker ps)" = '--context alpha ps'
 test "$(ctx run podman ps)" = '--connection red ps'
 test "$(ctx run nerdctl ps)" = '--namespace k8s.io ps'

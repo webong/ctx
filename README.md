@@ -33,6 +33,17 @@ git clone https://github.com/webong/ctx.git "$HOME/.local/share/ctx"
 "$HOME/.local/share/ctx/install.sh"
 ~~~
 
+To preview the native Go core on macOS or Linux, use the native installer from a
+checkout. Tagged releases also publish checksum-verified native bundles for
+macOS, Linux, and Windows:
+
+~~~sh
+./install-native.sh
+~~~
+
+On Windows, run `./install.ps1` from PowerShell. Release bundles carry GitHub
+build-provenance attestations and inject the release tag into `ctx version`.
+
 Put $HOME/.local/bin before the real Docker, Podman, and nerdctl commands on your PATH. For example, add this to ~/.zshrc or ~/.bashrc:
 
 ~~~sh

@@ -20,6 +20,8 @@ reaches command parity.
   Docker, Podman, nerdctl/containerd, and Apple Container endpoints.
 - Windows-native PowerShell providers for the bundled browser, Kubernetes, cloud,
   PostgreSQL, and MySQL adapters.
+- Checksum-verified macOS, Linux, and Windows release bundles with GitHub build
+  provenance attestations and source installers for each platform.
 
 Build the preview locally:
 
@@ -37,7 +39,6 @@ ctx.exe version
 
 ## Remaining parity work
 
-- Native macOS/Linux installation and signed release artifacts.
 - PowerShell completion and richer Windows shell selection.
 
 The target architecture keeps `shell`, `browser`, and `container` as ctx context

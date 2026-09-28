@@ -15,7 +15,7 @@ import (
 	"github.com/webong/ctx/internal/platform"
 )
 
-const Version = "0.8.0-dev"
+var Version = "0.8.0-dev"
 
 type environment struct{}
 
@@ -28,6 +28,24 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	}
 	if args[0] == "version" || args[0] == "--version" || args[0] == "-V" {
 		fmt.Fprintf(stdout, "ctx %s\n", Version)
+		return 0
+	}
+	if args[0] == "real" {
+		if len(args) != 2 {
+			fmt.Fprintln(stderr, "ctx: real needs docker, podman, or nerdctl")
+			return 2
+		}
+		switch args[1] {
+		case "docker", "podman", "nerdctl":
+		default:
+			fmt.Fprintf(stderr, "ctx: unsupported engine %s\n", args[1])
+			return 2
+		}
+		real, err := launch.FindReal(args[1])
+		if err != nil {
+			return reportErrorCode(stderr, err, 127)
+		}
+		fmt.Fprintln(stdout, real)
 		return 0
 	}
 	resolver, err := newResolver()
@@ -88,6 +106,7 @@ func usage(output io.Writer) {
 	fmt.Fprintln(output, `ctx — native cross-platform context core (migration preview)
 usage:
   ctx status [selector]
+  ctx real <docker|podman|nerdctl>
   ctx resolve <key>
   ctx explain
   ctx env

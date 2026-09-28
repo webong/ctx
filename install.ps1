@@ -9,11 +9,30 @@ $ErrorActionPreference = 'Stop'
 $repositoryRoot = $PSScriptRoot
 $localSource = Test-Path (Join-Path $repositoryRoot 'cmd\ctx\main.go')
 $firstPartyAdapters = @('firefox', 'chrome', 'chromium', 'safari', 'kube', 'aws', 'gcloud', 'postgres', 'mysql')
+$bundleRoot = $null
+$downloadRoot = $null
 
 New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
 New-Item -ItemType Directory -Force -Path $ConfigDir | Out-Null
 
 $ctxTarget = Join-Path $BinDir 'ctx.exe'
+if (Test-Path $ctxTarget) {
+    $owned = $false
+    try {
+        $installedVersion = @(& $ctxTarget version 2>$null) -join "`n"
+        $owned = $LASTEXITCODE -eq 0 -and $installedVersion -match '^ctx '
+    }
+    catch { $owned = $false }
+    if (-not $owned) { throw "$ctxTarget exists; choose another BinDir" }
+}
+foreach ($engine in @('docker', 'podman', 'nerdctl')) {
+    $existingShim = Join-Path $BinDir "$engine.cmd"
+    if (Test-Path $existingShim) {
+        if (-not (Select-String -Quiet -Path $existingShim -Pattern 'ctx native Windows shim')) {
+            throw "$existingShim exists; choose another BinDir"
+        }
+    }
+}
 if ($localSource) {
     if (-not (Get-Command go -ErrorAction SilentlyContinue)) {
         throw 'Go is required when installing ctx from a source checkout.'
@@ -34,13 +53,34 @@ else {
         default { throw "Unsupported Windows architecture: $_" }
     }
     $release = if ($Version -eq 'latest') { 'latest/download' } else { "download/$Version" }
-    $url = "https://github.com/webong/ctx/releases/$release/ctx-windows-$architecture.exe"
-    Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $ctxTarget
+    $releaseBase = "https://github.com/webong/ctx/releases/$release"
+    $asset = "ctx-windows-$architecture.zip"
+    $downloadRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("ctx-install-" + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Force -Path $downloadRoot | Out-Null
+    $archive = Join-Path $downloadRoot $asset
+    $checksums = Join-Path $downloadRoot 'checksums.txt'
+    Invoke-WebRequest -UseBasicParsing -Uri "$releaseBase/$asset" -OutFile $archive
+    Invoke-WebRequest -UseBasicParsing -Uri "$releaseBase/checksums.txt" -OutFile $checksums
+    $escapedAsset = [regex]::Escape($asset)
+    $checksumLine = Get-Content $checksums | Where-Object { $_ -match "\s\*?$escapedAsset`$" } | Select-Object -First 1
+    if (-not $checksumLine) { throw "Release checksum is missing for $asset" }
+    $expected = ($checksumLine -split '\s+')[0].ToLowerInvariant()
+    $actual = (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant()
+    if ($actual -ne $expected) { throw "Release checksum verification failed for $asset" }
+    Expand-Archive -Path $archive -DestinationPath $downloadRoot
+    $bundleRoot = Join-Path $downloadRoot 'ctx'
+    Copy-Item (Join-Path $bundleRoot 'bin\ctx.exe') $ctxTarget
 }
 
 foreach ($engine in @('docker', 'podman', 'nerdctl')) {
-    $shim = "@echo off`r`nrem ctx native Windows shim for $engine`r`n`"%~dp0ctx.exe`" run $engine %*`r`nexit /b %ERRORLEVEL%`r`n"
-    Set-Content -Encoding ASCII -Path (Join-Path $BinDir "$engine.cmd") -Value $shim -NoNewline
+    $shimTarget = Join-Path $BinDir "$engine.cmd"
+    if ($bundleRoot) {
+        Copy-Item (Join-Path $bundleRoot "bin\$engine.cmd") $shimTarget
+    }
+    else {
+        $shim = "@echo off`r`nrem ctx native Windows shim for $engine`r`n`"%~dp0ctx.exe`" run $engine %*`r`nexit /b %ERRORLEVEL%`r`n"
+        Set-Content -Encoding ASCII -Path $shimTarget -Value $shim -NoNewline
+    }
 }
 
 $adaptersRoot = Join-Path $ConfigDir 'adapters'
@@ -54,24 +94,8 @@ foreach ($adapter in $firstPartyAdapters) {
         }
         Remove-Item -Recurse -Force $target
     }
-    if ($localSource) {
-        Copy-Item -Recurse -Path (Join-Path $repositoryRoot "adapters\$adapter") -Destination $target
-    }
-    else {
-        New-Item -ItemType Directory -Force -Path $target | Out-Null
-        $sourceRef = if ($Version -eq 'latest') { 'main' } else { $Version }
-        $sourceBase = "https://raw.githubusercontent.com/webong/ctx/$sourceRef/adapters/$adapter"
-        $manifestPath = Join-Path $target 'adapter.toml'
-        Invoke-WebRequest -UseBasicParsing -Uri "$sourceBase/adapter.toml" -OutFile $manifestPath
-        $manifest = Get-Content -Raw $manifestPath
-        foreach ($key in @('executable', 'executable_windows')) {
-            $match = [regex]::Match($manifest, "(?m)^$key\s*=\s*`"([^`"]+)`"\s*$")
-            if ($match.Success) {
-                $executable = $match.Groups[1].Value
-                Invoke-WebRequest -UseBasicParsing -Uri "$sourceBase/$executable" -OutFile (Join-Path $target $executable)
-            }
-        }
-    }
+    $adapterSource = if ($bundleRoot) { Join-Path $bundleRoot "adapters\$adapter" } else { Join-Path $repositoryRoot "adapters\$adapter" }
+    Copy-Item -Recurse -Path $adapterSource -Destination $target
 }
 
 $previousCtxHome = $env:CTX_HOME
@@ -101,4 +125,5 @@ Write-Host "Config: $configFile"
 if (($env:PATH -split ';') -notcontains $BinDir) {
     Write-Host "Add this directory before Docker, Podman, and nerdctl on PATH: $BinDir"
 }
-Write-Warning 'Native Windows support is a migration preview; shell integration and release packaging are still being completed.'
+if ($downloadRoot) { Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $downloadRoot }
+Write-Warning 'Native Windows support is a migration preview; richer PowerShell shell integration is still being completed.'

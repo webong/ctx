@@ -1,4 +1,4 @@
-.PHONY: install test test-shell test-native-integration test-go test-cross build-native
+.PHONY: install install-native test test-shell test-native-integration test-go test-cross build-native release
 
 GO_CACHE ?= /tmp/ctx-go-build-cache
 GO_MOD_CACHE ?= /tmp/ctx-go-mod-cache
@@ -6,8 +6,14 @@ GO_MOD_CACHE ?= /tmp/ctx-go-mod-cache
 install:
 	./install.sh
 
+install-native:
+	./install-native.sh
+
 build-native:
 	GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go build -o /tmp/ctx-native ./cmd/ctx
+
+release:
+	sh ./scripts/build-release.sh "$(VERSION)" "$(or $(DIST),dist)"
 
 test: test-shell test-native-integration test-go test-cross
 
