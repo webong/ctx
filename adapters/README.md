@@ -18,9 +18,11 @@ implementations themselves remain installed and trusted under
 `browser` context aggregates them while each provider owns application-specific
 profile discovery, validation, and launching.
 
-`kube`, `aws`, `gcloud`, `postgres`, and `mysql` are installed first-party
-selector adapters. Every installed adapter has an `adapter.toml` manifest and
-implements ctx adapter API v1. They are installed under `$CTX_HOME/adapters` and
-trusted by the ctx installer. A package can declare `executable_windows` alongside
-its default `executable`; the native core selects the platform implementation at
-runtime while keeping one manifest, capability set, and trust record.
+`kube`, `aws`, `gcloud`, `postgres`, and `mysql` are maintained selector
+adapters. Every adapter has an `adapter.toml` manifest and implements ctx adapter
+API v1. Native installers copy maintained packages into
+`$CTX_HOME/catalog/adapters`; `ctx setup` or `ctx adapter add` activates selected
+packages under `$CTX_HOME/adapters` and records their checksum trust. A package
+can declare `executable_windows` alongside its default executable; the native
+core selects the platform implementation at runtime while keeping one manifest,
+capability set, and trust record.

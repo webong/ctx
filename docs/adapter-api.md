@@ -99,6 +99,9 @@ context when launching their underlying tool.
 ## Lifecycle
 
 ~~~sh
+ctx adapter available
+ctx adapter add example
+ctx adapter refresh
 ctx adapter test ./example
 ctx adapter install ./example
 ctx adapter inspect example
@@ -107,6 +110,11 @@ ctx adapter doctor example
 ctx adapter remove example
 ~~~
 
-Installation does not imply trust. Trust records a checksum over every file in
-the adapter directory. Any subsequent change makes the adapter untrusted until the user
-reviews and trusts it again.
+The installer-provided catalog lives under `$CTX_HOME/catalog/adapters` (or
+`CTX_CATALOG_HOME`). `ctx setup` and `ctx adapter add` copy explicitly selected
+catalog packages into the active adapter store and trust their checksums. Catalog
+membership is installer metadata, not a privilege or manifest property.
+
+Direct `ctx adapter install ./directory` installation does not imply trust. Trust
+records a checksum over every file in the adapter directory. Any subsequent
+change makes the adapter untrusted until the user reviews and trusts it again.

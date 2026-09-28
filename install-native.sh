@@ -5,6 +5,18 @@ DST_BIN=${CTX_BIN_DIR:-$HOME/.local/bin}
 CONFIG_DIR=${CTX_HOME:-$HOME/.config/ctx}
 VERSION=${CTX_VERSION:-latest}
 BUNDLED_ADAPTERS='docker podman nerdctl apple firefox chrome chromium safari kube aws gcloud postgres mysql'
+SETUP_MODE=interactive
+SETUP_ADAPTERS=
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --all) [ "$SETUP_MODE" = interactive ] || { printf 'ctx: choose only one adapter selection mode\n' >&2; exit 2; }; SETUP_MODE=all ;;
+    --minimal) [ "$SETUP_MODE" = interactive ] || { printf 'ctx: choose only one adapter selection mode\n' >&2; exit 2; }; SETUP_MODE=minimal ;;
+    --adapters) [ "$SETUP_MODE" = interactive ] && [ "$#" -ge 2 ] || { printf 'ctx: --adapters needs a comma-separated value\n' >&2; exit 2; }; SETUP_MODE=selected; SETUP_ADAPTERS=$2; shift ;;
+    --adapters=*) [ "$SETUP_MODE" = interactive ] || { printf 'ctx: choose only one adapter selection mode\n' >&2; exit 2; }; SETUP_MODE=selected; SETUP_ADAPTERS=${1#--adapters=} ;;
+    *) printf 'ctx: unknown installer option: %s\n' "$1" >&2; exit 2 ;;
+  esac
+  shift
+done
 ROOT=
 if [ -f "$0" ]; then ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd); fi
 
@@ -16,7 +28,6 @@ if [ -n "$ROOT" ] && [ -f "$ROOT/cmd/ctx/main.go" ]; then
   command -v go >/dev/null 2>&1 || { printf 'ctx: Go is required when installing from source\n' >&2; exit 1; }
   mkdir -p "$bundle/bin" "$bundle/adapters"
   (cd "$ROOT" && go build -o "$bundle/bin/ctx" ./cmd/ctx)
-  for engine in docker podman nerdctl; do cp "$ROOT/adapters/$engine/$engine" "$bundle/bin/$engine"; done
   for adapter in $BUNDLED_ADAPTERS; do cp -R "$ROOT/adapters/$adapter" "$bundle/adapters/$adapter"; done
 else
   command -v curl >/dev/null 2>&1 || { printf 'ctx: curl is required for remote installation\n' >&2; exit 1; }
@@ -42,40 +53,42 @@ else
 fi
 
 [ -x "$bundle/bin/ctx" ] || { printf 'ctx: native bundle is missing ctx\n' >&2; exit 1; }
-for tool in ctx docker podman nerdctl; do
-  target="$DST_BIN/$tool"
-  if [ -e "$target" ] || [ -L "$target" ]; then
-    if [ "$tool" = ctx ]; then
-      "$target" version 2>/dev/null | grep -Eq '^ctx ' || { printf 'ctx: %s exists; choose another CTX_BIN_DIR\n' "$target" >&2; exit 1; }
-    elif ! (dd if="$target" bs=256 count=1 2>/dev/null | grep -Eq 'ctx wrapper|ctx native'); then
-      printf 'ctx: %s exists; choose another CTX_BIN_DIR\n' "$target" >&2; exit 1
-    fi
-  fi
-done
+target="$DST_BIN/ctx"
+if [ -e "$target" ] || [ -L "$target" ]; then
+  "$target" version 2>/dev/null | grep -Eq '^ctx ' || { printf 'ctx: %s exists; choose another CTX_BIN_DIR\n' "$target" >&2; exit 1; }
+fi
 
-mkdir -p "$DST_BIN" "$CONFIG_DIR/adapters"
+mkdir -p "$DST_BIN" "$CONFIG_DIR/adapters" "$CONFIG_DIR/catalog/adapters"
 cp "$bundle/bin/ctx" "$DST_BIN/ctx"
 chmod +x "$DST_BIN/ctx"
-for engine in docker podman nerdctl; do
-  cp "$bundle/bin/$engine" "$DST_BIN/$engine"
-  chmod +x "$DST_BIN/$engine"
-done
 for adapter in $BUNDLED_ADAPTERS; do
   source_adapter="$bundle/adapters/$adapter"
-  target_adapter="$CONFIG_DIR/adapters/$adapter"
+  target_adapter="$CONFIG_DIR/catalog/adapters/$adapter"
   if [ -e "$target_adapter" ]; then
     rm -rf "$target_adapter"
   fi
   cp -R "$source_adapter" "$target_adapter"
 done
-for adapter in $BUNDLED_ADAPTERS; do
-  CTX_HOME="$CONFIG_DIR" "$DST_BIN/ctx" adapter trust "$adapter" >/dev/null
-done
+CTX_HOME="$CONFIG_DIR" CTX_BIN_DIR="$DST_BIN" "$DST_BIN/ctx" adapter refresh >/dev/null
+
+case "$SETUP_MODE" in
+  all) CTX_HOME="$CONFIG_DIR" CTX_BIN_DIR="$DST_BIN" "$DST_BIN/ctx" setup --all ;;
+  minimal) CTX_HOME="$CONFIG_DIR" CTX_BIN_DIR="$DST_BIN" "$DST_BIN/ctx" setup --minimal ;;
+  selected) CTX_HOME="$CONFIG_DIR" CTX_BIN_DIR="$DST_BIN" "$DST_BIN/ctx" setup --adapters "$SETUP_ADAPTERS" ;;
+  interactive)
+    if ( : </dev/tty >/dev/tty ) 2>/dev/null; then
+      CTX_HOME="$CONFIG_DIR" CTX_BIN_DIR="$DST_BIN" "$DST_BIN/ctx" setup </dev/tty >/dev/tty
+    else
+      printf 'No interactive terminal detected; no new adapters were selected.\n'
+      printf 'Run %s/ctx setup when ready.\n' "$DST_BIN"
+    fi
+    ;;
+esac
 
 if [ ! -f "$CONFIG_DIR/config.toml" ]; then
   printf '%s\n' '# ctx native configuration' '# docker_default = "desktop-linux"' '# podman_default = "podman-machine-default"' '# nerdctl_default = "default"' > "$CONFIG_DIR/config.toml"
 fi
 
-printf 'Installed native ctx, container shims, and first-party adapters in %s\n' "$DST_BIN"
+printf 'Installed native ctx and adapter catalog in %s\n' "$DST_BIN"
 printf 'Config: %s/config.toml\n' "$CONFIG_DIR"
 case ":$PATH:" in *":$DST_BIN:"*) ;; *) printf 'Add %s before Docker, Podman, and nerdctl on PATH.\n' "$DST_BIN";; esac

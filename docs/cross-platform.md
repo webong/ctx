@@ -25,6 +25,8 @@ reaches command parity.
   provenance attestations and source installers for each platform.
 - Explicit `CTX_SHELL`/`--shell` selection and dynamic PowerShell completion for
   commands, adapters, profiles, selectors, and discovered context values.
+- A cross-platform adapter catalog and `ctx setup` selection flow, with
+  non-interactive `--adapters`, `--all`, and `--minimal` installation modes.
 
 Build the preview locally:
 

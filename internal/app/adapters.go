@@ -24,7 +24,7 @@ func adapterStore() *adapterpkg.Store {
 
 func adapterCommand(resolver *config.Resolver, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "ctx: adapter requires ls, inspect, install, trust, test, doctor, or remove")
+		fmt.Fprintln(stderr, "ctx: adapter requires ls, available, add, refresh, inspect, install, trust, test, doctor, or remove")
 		return 2
 	}
 	store := adapterStore()
@@ -86,6 +86,45 @@ func adapterCommand(resolver *config.Resolver, args []string, stdout, stderr io.
 		fmt.Fprintf(stdout, "executable:   %s\n", candidate.ExecutablePath())
 		fmt.Fprintf(stdout, "description:  %s\n", candidate.Manifest.Description)
 		return 0
+	case "available":
+		if len(args) != 1 {
+			fmt.Fprintln(stderr, "ctx: adapter available takes no arguments")
+			return 2
+		}
+		available, err := catalogStore().List()
+		if err != nil {
+			return reportError(stderr, err)
+		}
+		installed := installedAdapterNames()
+		for _, candidate := range available {
+			state := "available"
+			if installed[candidate.Manifest.Name] {
+				state = "installed"
+			}
+			fmt.Fprintf(stdout, "%-16s %-10s %-10s %s\n", candidate.Manifest.Name, candidate.Manifest.Kind, state, candidate.Manifest.Description)
+		}
+		return 0
+	case "add":
+		if len(args) < 2 {
+			fmt.Fprintln(stderr, "ctx: adapter add needs one or more catalog names")
+			return 2
+		}
+		for _, name := range args[1:] {
+			if _, err := addCatalogAdapter(name); err != nil {
+				return reportError(stderr, err)
+			}
+			fmt.Fprintf(stdout, "installed adapter %s\n", name)
+		}
+		return 0
+	case "refresh":
+		if len(args) != 1 {
+			fmt.Fprintln(stderr, "ctx: adapter refresh takes no arguments")
+			return 2
+		}
+		if err := refreshCatalogAdapters(stdout); err != nil {
+			return reportError(stderr, err)
+		}
+		return 0
 	case "install":
 		if len(args) != 2 {
 			fmt.Fprintln(stderr, "ctx: adapter install needs a source directory")
@@ -107,7 +146,13 @@ func adapterCommand(resolver *config.Resolver, args []string, stdout, stderr io.
 		if err != nil {
 			return reportError(stderr, err)
 		}
+		if err := checkShimConflicts(candidate); err != nil {
+			return reportError(stderr, err)
+		}
 		if err := store.Trust(candidate); err != nil {
+			return reportError(stderr, err)
+		}
+		if err := installAdapterShims(candidate); err != nil {
 			return reportError(stderr, err)
 		}
 		fmt.Fprintf(stdout, "trusted adapter %s\n", candidate.Manifest.Name)
@@ -149,13 +194,20 @@ func adapterCommand(resolver *config.Resolver, args []string, stdout, stderr io.
 			fmt.Fprintln(stderr, "ctx: adapter remove needs a name")
 			return 2
 		}
+		candidate, err := store.Load(args[1])
+		if err != nil {
+			return reportError(stderr, err)
+		}
+		if err := removeAdapterShims(candidate); err != nil {
+			return reportError(stderr, err)
+		}
 		if err := store.Remove(args[1]); err != nil {
 			return reportError(stderr, err)
 		}
 		fmt.Fprintf(stdout, "removed adapter %s\n", args[1])
 		return 0
 	default:
-		fmt.Fprintln(stderr, "ctx: adapter requires ls, inspect, install, trust, test, doctor, or remove")
+		fmt.Fprintln(stderr, "ctx: adapter requires ls, available, add, refresh, inspect, install, trust, test, doctor, or remove")
 		return 2
 	}
 }

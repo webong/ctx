@@ -274,6 +274,67 @@ func (s *Store) Install(source string) (*Adapter, error) {
 	return s.Load(loaded.Manifest.Name)
 }
 
+// Replace validates and stages an adapter before swapping it into the store.
+// If the final rename fails, the previous adapter is restored.
+func (s *Store) Replace(source string) (*Adapter, error) {
+	loaded, err := LoadDirectory(source)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(s.Home, 0o700); err != nil {
+		return nil, err
+	}
+	staging, err := os.MkdirTemp(s.Home, ".replace-")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(staging)
+	if err := copyDirectory(loaded.Directory, staging); err != nil {
+		return nil, err
+	}
+	if _, err := LoadDirectory(staging); err != nil {
+		return nil, err
+	}
+
+	target := filepath.Join(s.Home, loaded.Manifest.Name)
+	backupRoot, err := os.MkdirTemp(s.Home, ".backup-")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(backupRoot)
+	backup := filepath.Join(backupRoot, loaded.Manifest.Name)
+	hadTarget := false
+	if _, err := os.Lstat(target); err == nil {
+		if err := os.Rename(target, backup); err != nil {
+			return nil, err
+		}
+		hadTarget = true
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	if err := os.Rename(staging, target); err != nil {
+		if hadTarget {
+			if restoreErr := os.Rename(backup, target); restoreErr != nil {
+				return nil, errors.Join(err, fmt.Errorf("restore previous adapter: %w", restoreErr))
+			}
+		}
+		return nil, err
+	}
+	replaced, err := s.Load(loaded.Manifest.Name)
+	if err == nil {
+		return replaced, nil
+	}
+	if removeErr := os.RemoveAll(target); removeErr != nil {
+		return nil, errors.Join(err, fmt.Errorf("remove invalid replacement: %w", removeErr))
+	}
+	if hadTarget {
+		if restoreErr := os.Rename(backup, target); restoreErr != nil {
+			return nil, errors.Join(err, fmt.Errorf("restore previous adapter: %w", restoreErr))
+		}
+	}
+	return nil, err
+}
+
 func (s *Store) Remove(name string) error {
 	loaded, err := s.Load(name)
 	if err != nil {

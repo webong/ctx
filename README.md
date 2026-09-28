@@ -40,9 +40,17 @@ macOS, Linux, and Windows:
 
 ~~~sh
 ./install-native.sh
+./install-native.sh --adapters docker,kube,firefox
+./install-native.sh --all
 ~~~
 
-On Windows, run `./install.ps1` from PowerShell. Release bundles carry GitHub
+With a terminal, `install-native.sh` opens the adapter selection flow. A piped or
+non-interactive installation leaves the catalog available and prints `ctx setup`
+as the follow-up command. Use `--minimal` to select no new adapters; upgrades
+preserve any adapters that are already active.
+
+On Windows, run `./install.ps1 -Interactive`, or use `-Adapters
+docker,kube,firefox`, `-AllAdapters`, or `-Minimal`. Release bundles carry GitHub
 build-provenance attestations and inject the release tag into `ctx version`.
 The installer writes `ctx-completion.ps1` under the ctx configuration directory
 and prints the one-line command to load it from your PowerShell profile.
@@ -356,9 +364,24 @@ The bundled first-party adapters live under `adapters/` in this repository:
 - `postgres` owns PostgreSQL service profiles and client commands.
 - `mysql` owns MySQL login paths and client commands.
 
-The installer installs and trusts these packages alongside ctx. They use the same
-public adapter protocol as third-party additions, so integrations can evolve
-without adding another selector switch to the core.
+Native release bundles place these packages in the local adapter catalog. Users
+choose which packages to activate; selecting a catalog package installs and
+checksum-trusts it. They use the same public adapter protocol as third-party
+additions, so integrations can evolve without adding another selector switch to
+the core.
+
+~~~sh
+ctx setup
+ctx setup --adapters docker,kube,firefox
+ctx adapter available
+ctx adapter add podman postgres
+ctx adapter refresh
+ctx adapter remove firefox
+~~~
+
+Container shims follow their providers. Adding Docker, Podman, or nerdctl creates
+the corresponding managed launcher beside `ctx`; removal deletes it only when it
+still matches the ctx-owned launcher.
 
 ctx adapter API v1 lets a separately installed executable provide selector,
 browser-provider, or container-provider operations.

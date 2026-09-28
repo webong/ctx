@@ -27,14 +27,6 @@ build_bundle() {
     go build -trimpath -ldflags "-s -w -X github.com/webong/ctx/internal/app.Version=${VERSION#v}" \
     -o "$binary" ./cmd/ctx)
 
-  for engine in docker podman nerdctl; do
-    if [ "$os" = windows ]; then
-      cp "$ROOT/adapters/$engine/$engine.cmd" "$bundle/bin/$engine.cmd"
-    else
-      cp "$ROOT/adapters/$engine/$engine" "$bundle/bin/$engine"
-      chmod +x "$bundle/bin/$engine"
-    fi
-  done
   for adapter in $BUNDLED_ADAPTERS; do
     cp -R "$ROOT/adapters/$adapter" "$bundle/adapters/$adapter"
   done

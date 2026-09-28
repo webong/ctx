@@ -22,16 +22,23 @@ export PATH="$CTX_BIN_DIR:$TEST_ROOT/fake-bin:$PATH"
 
 GOCACHE=${GOCACHE:-/tmp/ctx-go-build-cache} GOMODCACHE=${GOMODCACHE:-/tmp/ctx-go-mod-cache} \
   go build -o "$CTX_BIN_DIR/ctx" "$ROOT/cmd/ctx"
-for engine in docker podman nerdctl; do
-  cp "$ROOT/adapters/$engine/$engine" "$CTX_BIN_DIR/$engine"
-  chmod +x "$CTX_BIN_DIR/$engine"
-done
 
+mkdir -p "$CTX_HOME/catalog/adapters"
 for adapter in docker podman nerdctl apple firefox kube aws gcloud postgres mysql; do
-  ctx adapter install "$ROOT/adapters/$adapter" >/dev/null
-  ctx adapter trust "$adapter" >/dev/null
+  cp -R "$ROOT/adapters/$adapter" "$CTX_HOME/catalog/adapters/$adapter"
+done
+ctx adapter available | grep -Eq '^docker[[:space:]]+container[[:space:]]+available'
+ctx setup --adapters docker,podman,nerdctl,apple,firefox,kube,aws,gcloud,postgres,mysql >/dev/null
+for adapter in docker podman nerdctl apple firefox kube aws gcloud postgres mysql; do
   ctx adapter ls | grep -Eq "^${adapter}[[:space:]]+trusted"
 done
+for engine in docker podman nerdctl; do test -x "$CTX_BIN_DIR/$engine"; done
+ctx adapter available | grep -Eq '^docker[[:space:]]+container[[:space:]]+installed'
+ctx adapter remove nerdctl >/dev/null
+test ! -e "$CTX_BIN_DIR/nerdctl"
+ctx adapter add nerdctl >/dev/null
+test -x "$CTX_BIN_DIR/nerdctl"
+ctx adapter refresh >/dev/null
 
 ctx adapter install "$ROOT/examples/adapters/echo" >/dev/null
 if ctx adapter doctor echo >/dev/null 2>&1; then

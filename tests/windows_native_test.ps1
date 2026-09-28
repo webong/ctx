@@ -29,7 +29,7 @@ try {
     }
     if ($parseFailures.Count -gt 0) { throw ($parseFailures -join "`n") }
 
-    & (Join-Path $root 'install.ps1') -BinDir $bin -ConfigDir $config
+    & (Join-Path $root 'install.ps1') -BinDir $bin -ConfigDir $config -AllAdapters
     Assert-Success 'source installation'
     $completionTokens = $null; $completionErrors = $null
     [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $config 'ctx-completion.ps1'), [ref]$completionTokens, [ref]$completionErrors) | Out-Null

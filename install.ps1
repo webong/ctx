@@ -2,7 +2,11 @@
 param(
     [string]$BinDir = $(if ($env:CTX_BIN_DIR) { $env:CTX_BIN_DIR } else { Join-Path $env:LOCALAPPDATA 'Programs\ctx\bin' }),
     [string]$ConfigDir = $(if ($env:CTX_HOME) { $env:CTX_HOME } else { Join-Path $env:APPDATA 'ctx' }),
-    [string]$Version = 'latest'
+    [string]$Version = 'latest',
+    [string]$Adapters,
+    [switch]$AllAdapters,
+    [switch]$Minimal,
+    [switch]$Interactive
 )
 
 $ErrorActionPreference = 'Stop'
@@ -11,6 +15,9 @@ $localSource = Test-Path (Join-Path $repositoryRoot 'cmd\ctx\main.go')
 $bundledAdapters = @('docker', 'podman', 'nerdctl', 'apple', 'firefox', 'chrome', 'chromium', 'safari', 'kube', 'aws', 'gcloud', 'postgres', 'mysql')
 $bundleRoot = $null
 $downloadRoot = $null
+
+$selectionModes = @($AllAdapters.IsPresent, $Minimal.IsPresent, $Interactive.IsPresent, [bool]$Adapters) | Where-Object { $_ }
+if ($selectionModes.Count -gt 1) { throw 'Choose only one of -Adapters, -AllAdapters, -Minimal, or -Interactive.' }
 
 New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
 New-Item -ItemType Directory -Force -Path $ConfigDir | Out-Null
@@ -24,14 +31,6 @@ if (Test-Path $ctxTarget) {
     }
     catch { $owned = $false }
     if (-not $owned) { throw "$ctxTarget exists; choose another BinDir" }
-}
-foreach ($engine in @('docker', 'podman', 'nerdctl')) {
-    $existingShim = Join-Path $BinDir "$engine.cmd"
-    if (Test-Path $existingShim) {
-        if (-not (Select-String -Quiet -Path $existingShim -Pattern 'ctx native Windows shim')) {
-            throw "$existingShim exists; choose another BinDir"
-        }
-    }
 }
 if ($localSource) {
     if (-not (Get-Command go -ErrorAction SilentlyContinue)) {
@@ -72,21 +71,11 @@ else {
     Copy-Item (Join-Path $bundleRoot 'bin\ctx.exe') $ctxTarget
 }
 
-foreach ($engine in @('docker', 'podman', 'nerdctl')) {
-    $shimTarget = Join-Path $BinDir "$engine.cmd"
-    if ($bundleRoot) {
-        Copy-Item (Join-Path $bundleRoot "bin\$engine.cmd") $shimTarget
-    }
-    else {
-        $shim = "@echo off`r`nrem ctx native Windows shim for $engine`r`n`"%~dp0ctx.exe`" run $engine %*`r`nexit /b %ERRORLEVEL%`r`n"
-        Set-Content -Encoding ASCII -Path $shimTarget -Value $shim -NoNewline
-    }
-}
-
 $adaptersRoot = Join-Path $ConfigDir 'adapters'
-New-Item -ItemType Directory -Force -Path $adaptersRoot | Out-Null
+$catalogRoot = Join-Path $ConfigDir 'catalog\adapters'
+New-Item -ItemType Directory -Force -Path $adaptersRoot, $catalogRoot | Out-Null
 foreach ($adapter in $bundledAdapters) {
-    $target = Join-Path $adaptersRoot $adapter
+    $target = Join-Path $catalogRoot $adapter
     if (Test-Path $target) {
         Remove-Item -Recurse -Force $target
     }
@@ -95,15 +84,24 @@ foreach ($adapter in $bundledAdapters) {
 }
 
 $previousCtxHome = $env:CTX_HOME
+$previousBinDir = $env:CTX_BIN_DIR
 try {
     $env:CTX_HOME = $ConfigDir
-    foreach ($adapter in $bundledAdapters) {
-        & $ctxTarget adapter trust $adapter | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw "Failed to trust bundled adapter: $adapter" }
+    $env:CTX_BIN_DIR = $BinDir
+    & $ctxTarget adapter refresh | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'Failed to refresh installed adapters.' }
+    if ($AllAdapters) { & $ctxTarget setup --all }
+    elseif ($Minimal) { & $ctxTarget setup --minimal }
+    elseif ($Adapters) { & $ctxTarget setup --adapters $Adapters }
+    elseif ($Interactive) { & $ctxTarget setup }
+    else {
+        Write-Host 'No new adapters selected. Run ctx setup, or reinstall with -Interactive or -Adapters.'
     }
+    if ($LASTEXITCODE -ne 0) { throw 'Adapter setup failed.' }
 }
 finally {
     $env:CTX_HOME = $previousCtxHome
+    $env:CTX_BIN_DIR = $previousBinDir
 }
 
 $configFile = Join-Path $ConfigDir 'config.toml'
@@ -120,7 +118,7 @@ $completionPath = Join-Path $ConfigDir 'ctx-completion.ps1'
 & $ctxTarget completion powershell | Set-Content -Encoding UTF8 $completionPath
 if ($LASTEXITCODE -ne 0) { throw 'Failed to generate PowerShell completion' }
 
-Write-Host "Installed ctx.exe, container shims, and first-party adapters in $BinDir"
+Write-Host "Installed ctx.exe and adapter catalog in $BinDir"
 Write-Host "Config: $configFile"
 Write-Host "PowerShell completion: add `. '$completionPath' to your PowerShell profile"
 if (($env:PATH -split ';') -notcontains $BinDir) {

@@ -19,7 +19,7 @@ Register-ArgumentCompleter -Native -CommandName ctx -ScriptBlock {
     param($wordToComplete, $commandAst, $cursorPosition)
 
     $words = @($commandAst.CommandElements | ForEach-Object { $_.Extent.Text })
-    $commands = @('status', 'resolve', 'explain', 'env', 'set', 'clear', 'profile', 'adapter', 'ls', 'open', 'doctor', 'build', 'image', 'volume', 'run', 'shell', 'real', 'completion', 'version')
+    $commands = @('status', 'resolve', 'explain', 'env', 'set', 'clear', 'profile', 'adapter', 'setup', 'ls', 'open', 'doctor', 'build', 'image', 'volume', 'run', 'shell', 'real', 'completion', 'version')
 
     function Emit-CtxCompletion([string[]]$values) {
         $values | Where-Object { $_ -and $_ -like "$wordToComplete*" } | Sort-Object -Unique | ForEach-Object {
@@ -33,6 +33,9 @@ Register-ArgumentCompleter -Native -CommandName ctx -ScriptBlock {
     }
     function Get-CtxContainerProviders {
         @(& ctx adapter ls container 2>$null | ForEach-Object { ($_ -split '\s+')[0] })
+    }
+    function Get-CtxAvailableAdapters {
+        @(& ctx adapter available 2>$null | Where-Object { $_ -match '\savailable\s' } | ForEach-Object { ($_ -split '\s+')[0] })
     }
     function Get-CtxProfiles { @(& ctx profile ls 2>$null) }
 
@@ -60,12 +63,14 @@ Register-ArgumentCompleter -Native -CommandName ctx -ScriptBlock {
             }
         }
         'adapter' {
-            $operations = @('ls', 'inspect', 'install', 'trust', 'test', 'doctor', 'remove')
+            $operations = @('ls', 'available', 'add', 'refresh', 'inspect', 'install', 'trust', 'test', 'doctor', 'remove')
             if ($words.Count -le 2) { Emit-CtxCompletion $operations; return }
             if ($words[2] -in @('inspect', 'trust', 'doctor', 'remove') -and $words.Count -le 3) {
                 Emit-CtxCompletion @(& ctx adapter ls 2>$null | ForEach-Object { ($_ -split '\s+')[0] }); return
             }
+            if ($words[2] -eq 'add') { Emit-CtxCompletion (Get-CtxAvailableAdapters); return }
         }
+        'setup' { if ($words.Count -le 2) { Emit-CtxCompletion @('adapters', '--all', '--minimal', '--adapters'); return } }
         'shell' { if ($words.Count -le 2) { Emit-CtxCompletion @('--shell', '--'); return } }
     }
 }

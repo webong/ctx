@@ -66,6 +66,26 @@ func TestStoreInstallTrustAndTamper(t *testing.T) {
 	}
 }
 
+func TestStoreReplace(t *testing.T) {
+	root := t.TempDir()
+	first := fixtureAdapter(t, filepath.Join(root, "first"), "echo", "selector")
+	second := fixtureAdapter(t, filepath.Join(root, "second"), "echo", "selector")
+	if err := os.WriteFile(filepath.Join(second, "extra"), []byte("updated\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store := NewStore(filepath.Join(root, "installed"))
+	if _, err := store.Install(first); err != nil {
+		t.Fatal(err)
+	}
+	replaced, err := store.Replace(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(replaced.Directory, "extra")); err != nil {
+		t.Fatalf("replacement did not install updated contents: %v", err)
+	}
+}
+
 func TestManifestDefaultsAndKinds(t *testing.T) {
 	root := t.TempDir()
 	directory := fixtureAdapter(t, root, "firefox", "browser")
