@@ -68,6 +68,12 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return openBrowser(resolver, args[1:], stdout, stderr)
 	case "doctor":
 		return doctor(resolver, stdout, stderr)
+	case "build":
+		return buildImage(resolver, args[1:], stdout, stderr)
+	case "image":
+		return imageCommand(resolver, args[1:], stdout, stderr)
+	case "volume":
+		return volumeCommand(args[1:], stdout, stderr)
 	case "run":
 		return runCommand(resolver, args[1:], stdout, stderr)
 	case "shell":
@@ -92,6 +98,9 @@ usage:
   ctx ls <selector>
   ctx open [URL...]
   ctx doctor
+  ctx build [docker|podman|nerdctl] --cache-ref <registry-ref> [--] <build arguments>
+  ctx image <sync|copy> [arguments...]
+  ctx volume <export|import|copy> [arguments...]
   ctx run <docker|podman|nerdctl> [arguments...]
   ctx run -- <command> [arguments...]
   ctx shell [-- <command> [arguments...]]

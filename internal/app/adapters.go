@@ -350,7 +350,11 @@ func invokeAdapter(resolver *config.Resolver, candidate *adapterpkg.Adapter, ope
 }
 
 func runPrepared(command *exec.Cmd, stdout, stderr io.Writer) int {
-	command.Stdin = os.Stdin
+	return runPreparedIO(command, os.Stdin, stdout, stderr)
+}
+
+func runPreparedIO(command *exec.Cmd, stdin io.Reader, stdout, stderr io.Writer) int {
+	command.Stdin = stdin
 	command.Stdout = stdout
 	command.Stderr = stderr
 	if err := command.Run(); err != nil {

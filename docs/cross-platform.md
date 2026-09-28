@@ -16,6 +16,8 @@ reaches command parity.
 - Selector adapters for Kubernetes, cloud CLIs, and databases.
 - Browser-provider aggregation, validation, launching, and diagnostics.
 - Atomic, lock-protected `set`, `clear`, and profile configuration mutations.
+- Registry-backed build caches plus image and named-volume transfers across
+  Docker, Podman, nerdctl/containerd, and Apple Container endpoints.
 
 Build the preview locally:
 
@@ -34,7 +36,6 @@ ctx.exe version
 ## Remaining parity work
 
 - Windows-native implementations of the bundled browser and selector adapters.
-- Build-cache, image, and volume transfer commands.
 - Native macOS/Linux installation and signed release artifacts.
 - PowerShell completion and richer Windows shell selection.
 
