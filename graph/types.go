@@ -23,6 +23,7 @@ var (
 	ErrLimitRequired = errors.New("query limit must be positive")
 	ErrSecretValue   = errors.New("secret-like values are not allowed in graph attributes")
 	ErrInvalidName   = errors.New("invalid namespace, kind, or relationship name")
+	ErrCursorExpired = errors.New("graph change cursor has expired; take a new snapshot")
 )
 
 var namePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._/-]{0,254}$`)
@@ -146,11 +147,13 @@ type Store interface {
 }
 
 type Snapshot struct {
-	Namespace string   `json:"namespace"`
-	Revision  uint64   `json:"revision"`
-	Cursor    uint64   `json:"cursor"`
-	Vertices  []Vertex `json:"vertices"`
-	Edges     []Edge   `json:"edges"`
+	Namespace string `json:"namespace"`
+	Revision  uint64 `json:"revision"`
+	Cursor    uint64 `json:"cursor"`
+	// HistoryFloor is the newest cursor that is no longer available from Changes or Watch.
+	HistoryFloor uint64   `json:"history_floor,omitempty"`
+	Vertices     []Vertex `json:"vertices"`
+	Edges        []Edge   `json:"edges"`
 }
 
 func validateName(value string) error {

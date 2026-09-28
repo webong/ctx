@@ -18,8 +18,9 @@ validator rejects them.
 
 The `supervisor` package owns local process mechanics. Callers decide why a
 process may run and pass an already-approved `Spec`. The supervisor starts,
-connects, observes, restarts, and stops that process. Its runtime facts describe
-observations and never imply consumer authority.
+observes, restarts, and stops that process. Endpoint and connection records are
+declarations; consumer hooks verify readiness and protocol handshakes. Runtime
+facts describe observations and never imply consumer authority.
 
 ## Graph API contract
 
@@ -51,10 +52,13 @@ snapshot returns a consistent namespace view and its revision.
 `Watch(ctx, namespace, afterCursor, buffer)` replays retained changes newer than
 the cursor and then streams later commits in cursor order. An empty namespace
 watches all namespaces. If its bounded channel fills, the stream closes; the
-consumer should reconnect from the last cursor it processed. This avoids
-unbounded memory growth and silent reordering. The current file backend retains
-its change history in the snapshot; deployments should compact or rotate the
-file as their event retention needs evolve.
+consumer should reconnect from the last cursor it processed. Stores retain at
+most 4096 commits or 16 MiB of serialized changes by default;
+`NewMemoryWithOptions` and `OpenFileWithOptions` can set `MaxChanges` and
+`MaxChangeBytes`. The latest commit is retained even if it alone exceeds the
+byte limit. Expired cursors return `ErrCursorExpired`, so consumers
+must take a fresh snapshot. `Snapshot.HistoryFloor` reports the oldest valid
+resume point. Idempotency records expire with their commits.
 
 ## Persistence and limits
 
@@ -66,7 +70,8 @@ long-lived local consumers do not overwrite each other's commits. File-backed
 watches poll the durable cursor every 150 ms and publish changes in order.
 Callers register their schema callback each time a store is opened; the durable
 file remembers the namespace schema version and rejects a version mismatch.
-The backend does not provide replication or partial history compaction.
+The backend does not provide replication. It compacts change history and
+idempotency records during commits; live graph records remain until deleted.
 
 The current implementation uses in-memory maps and bounded result slices, and
 rewrites the full JSON snapshot on every commit. It does not provide a
@@ -98,23 +103,55 @@ store only opaque scoped references and resolve them at the point of use.
 `SecretReferences` maps environment names to opaque `{scope, id}` references;
 an injected resolver materializes values only for the child environment. The
 resolver result is never returned in an `Instance`, log record, or graph fact.
-The supervisor projects artifact ID/revision/checksum, process state, health,
-crashes, runtime identity, endpoint and connection metadata, and generic relationships. Logs
-are an in-memory tail bounded by `Options.LogLimit`.
+If a process receives resolved secret references, CTX discards its stdout and
+stderr rather than attempting partial redaction. Other output is kept only as
+an in-memory tail bounded by `Options.LogLimit`. Hook errors are reduced to
+generic lifecycle reasons before graph projection. The supervisor projects
+artifact ID/revision/checksum, process state, health, crashes, runtime identity,
+endpoint and connection metadata, and generic relationships.
+
+## Process lifecycle contract
+
+When `Artifact.Checksum` is supplied, CTX verifies the selected executable's
+SHA-256 before launch. `Options.RequireChecksum` rejects unpinned executables.
+The artifact path must be protected against replacement by the embedding
+service or its installer; mutation between verification and `exec` remains an
+operating-system race.
+
+The default launcher creates an isolated Unix process group or a Windows Job
+Object with kill-on-close, and termination targets the process tree. A consumer
+can install platform resource or sandbox controls for each attempt through
+`Options.ProcessPolicyFactory`; these run before launch and immediately after
+start, while CTX still controls the process tree. Windows Job assignment occurs
+immediately after `exec.Cmd.Start`; a service requiring containment before the
+first instruction must supply a suspended-launch policy through that hook.
+
+Each active process has a renewable lease in `ctx.runtime` with a supervisor
+owner ID, expiration, PID, and process identity where the OS permits reading
+it. On restart, a live unexpired lease returns `ErrRuntimeLeased`. Expired
+leases follow `Options.OrphanPolicy`: the default marks the process orphaned
+and blocks new starts until `ResolveOrphan` terminates it; `OrphanTerminate`
+automatically terminates identity-matched process trees. CTX never kills a PID
+whose identity cannot be verified. A dead process is marked stopped. The
+supervisor retains 256 terminal instance vertices per runtime by default;
+`Options.RetainTerminal` changes that bound.
+
+`EndpointReady` and `ProtocolHandshake` run in order with a bounded context.
+The process enters `ready` only after both succeed. Failure stops the process
+tree and follows its restart policy. `Health` is false before readiness and
+after stopping, crashing, or process exit, even without a custom probe.
 
 ## Consumer integration: Xallet
 
-Xallet should own and register `xallet.io` schema version `1`, including its
-Package, Pack, Packet kinds, its exact relationship vocabulary, and all semantic
-chain constraints. Its validator should enforce its own role/type combinations
-using the proposed transaction and `View`. It should keep authorization and all
-other product decisions outside CTX. See `examples/xallet-shaped` for a small
-consumer-owned example.
+Xallet's existing `kernel/ctxgraph` adapter registers `xallet.computer` schema
+version `1`, including its Package, Pack, Packet kinds and exact relationship
+vocabulary. Its validator enforces those semantics using the proposed
+transaction and `View`. Authorization and product decisions remain in Xallet.
+See `examples/xallet-shaped` for a smaller consumer-owned example.
 
-Xallet's adapter should:
+The integration boundary is:
 
-1. Open a `graph.Store` (initially `graph.OpenFile` or `graph.NewMemory`) and
-   register its own schema version and validator.
+1. Open a `graph.Store` and register the Xallet schema and validator.
 2. Translate Xallet-owned entities to stable vertex IDs and namespace-qualified
    kinds; translate relationships to namespace-qualified edge types.
 3. Apply related changes in one `Transaction`, setting `ExpectedRevision` for
@@ -123,13 +160,15 @@ Xallet's adapter should:
    reads and projections; revalidate/authorize in Xallet at the product boundary.
 5. Start only processes Xallet has already authorized. Translate selected
    binary identity/revision/checksum, ordinary environment, opaque secret
-   references, endpoints, and dependencies to `supervisor.Spec`; consume
-   lifecycle and health observations without interpreting them as permission.
+   references, endpoints, and dependencies to `supervisor.Spec`. Supply Xallet
+   IPC readiness and handshake hooks, an orphan policy, and any platform
+   resource controls; consume lifecycle and health observations without
+   interpreting them as permission.
 6. Keep Xallet IDs, roles, vocabulary, validation, graph migration, trust,
    approvals, and authorization out of CTX core.
 
-CTX has no database migrations to run for Xallet. Xallet needs a bootstrap and
-migration layer for its schema version, an adapter that maps its existing
-product records to/from graph snapshots and transactions, a policy validator,
-and a supervisor bridge for approved Package binaries. Existing Xallet storage
-remains authoritative until that adapter is deliberately switched over.
+CTX has no database migrations to run for Xallet. Xallet's Computer graph
+adapter already supplies its semantic validation and projection. Xallet's
+process host continues to own Package supervision until its separate adapter
+maps admission, Host Broker permits, IPC hooks, and lifecycle projections to
+the generic CTX supervisor.

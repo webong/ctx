@@ -270,6 +270,14 @@ public `github.com/webong/ctx/graph` package supports other services registering
 their own namespaces and validators. The CTX namespace records CTX observations;
 it does not grant permissions or trust to other services.
 
+Services can also import `github.com/webong/ctx/supervisor` for approved local
+processes. It verifies declared executable checksums, isolates process trees,
+tracks leases and orphan recovery, gates readiness on caller-supplied endpoint
+and protocol checks, and projects bounded lifecycle history into the graph.
+Callers retain their own authorization, process admission, and protocol rules.
+See [the graph and supervisor contract](docs/adr-graph-runtime.md) for the API
+and recovery behavior.
+
 To update shell location context after each prompt, opt in to a prompt hook:
 
 ```sh

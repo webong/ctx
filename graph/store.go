@@ -23,20 +23,36 @@ type diskState struct {
 	Idempotency   map[string]idemRecord `json:"idempotency"`
 	Changes       []Change              `json:"changes"`
 	Cursor        uint64                `json:"cursor"`
+	HistoryFloor  uint64                `json:"history_floor,omitempty"`
 }
+
+// Options controls how much replay history a store retains. Zero values use
+// defaults of 4096 commits and 16 MiB of serialized changes. The latest commit
+// is always kept, even when it alone exceeds MaxChangeBytes. Idempotency
+// records older than the floor expire with their commit.
+type Options struct {
+	MaxChanges     int
+	MaxChangeBytes int
+}
+
+const defaultMaxChanges = 4096
+const defaultMaxChangeBytes = 16 << 20
+
 type idemRecord struct {
 	Fingerprint string `json:"fingerprint"`
 	Commit      Commit `json:"commit"`
 }
 
 type memoryStore struct {
-	mu          sync.RWMutex
-	path        string
-	state       diskState
-	schemas     map[string]Schema
-	watchers    map[uint64]*watcher
-	nextWatcher uint64
-	closed      bool
+	mu             sync.RWMutex
+	path           string
+	state          diskState
+	schemas        map[string]Schema
+	watchers       map[uint64]*watcher
+	nextWatcher    uint64
+	maxChanges     int
+	maxChangeBytes int
+	closed         bool
 }
 type watcher struct {
 	namespace string
@@ -46,18 +62,24 @@ type watcher struct {
 }
 
 // NewMemory creates an in-memory graph store.
-func NewMemory() Store { return newStore("") }
+func NewMemory() Store { return NewMemoryWithOptions(Options{}) }
+
+func NewMemoryWithOptions(options Options) Store { return newStore("", options) }
 
 // OpenFile opens or creates a durable JSON snapshot store. Commits are written
 // through a temporary file and atomically renamed before they become visible.
 func OpenFile(path string) (Store, error) {
+	return OpenFileWithOptions(path, Options{})
+}
+
+func OpenFileWithOptions(path string, options Options) (Store, error) {
 	if path == "" {
 		return nil, fmt.Errorf("graph file path is required")
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return nil, err
 	}
-	s := newStore(path)
+	s := newStore(path, options)
 	lock, err := acquireFileLock(path + ".lock")
 	if err != nil {
 		return nil, err
@@ -66,11 +88,26 @@ func OpenFile(path string) (Store, error) {
 	if err := s.readDiskLocked(); err != nil {
 		return nil, err
 	}
+	oldFloor := s.state.HistoryFloor
+	if err := s.compactHistory(&s.state); err != nil {
+		return nil, err
+	}
+	if s.state.HistoryFloor != oldFloor {
+		if err := s.persistWith(s.state); err != nil {
+			return nil, err
+		}
+	}
 	return s, nil
 }
 
-func newStore(path string) *memoryStore {
-	return &memoryStore{path: path, state: diskState{FormatVersion: 1, Vertices: map[string]Vertex{}, Edges: map[string]Edge{}, Revisions: map[string]uint64{}, Schemas: map[string]string{}, Idempotency: map[string]idemRecord{}, Changes: []Change{}}, schemas: map[string]Schema{}, watchers: map[uint64]*watcher{}}
+func newStore(path string, options Options) *memoryStore {
+	if options.MaxChanges <= 0 {
+		options.MaxChanges = defaultMaxChanges
+	}
+	if options.MaxChangeBytes <= 0 {
+		options.MaxChangeBytes = defaultMaxChangeBytes
+	}
+	return &memoryStore{path: path, maxChanges: options.MaxChanges, maxChangeBytes: options.MaxChangeBytes, state: diskState{FormatVersion: 1, Vertices: map[string]Vertex{}, Edges: map[string]Edge{}, Revisions: map[string]uint64{}, Schemas: map[string]string{}, Idempotency: map[string]idemRecord{}, Changes: []Change{}}, schemas: map[string]Schema{}, watchers: map[uint64]*watcher{}}
 }
 func (s *memoryStore) normalize() {
 	if s.state.Vertices == nil {
@@ -288,6 +325,9 @@ func (s *memoryStore) Apply(ctx context.Context, tx Transaction) (Commit, error)
 	if idemKey != "" {
 		next.Idempotency[idemKey] = idemRecord{Fingerprint: fingerprint, Commit: commit}
 	}
+	if err := s.compactHistory(&next); err != nil {
+		return Commit{}, err
+	}
 	if err := s.persistWith(next); err != nil {
 		return Commit{}, err
 	}
@@ -296,8 +336,41 @@ func (s *memoryStore) Apply(ctx context.Context, tx Transaction) (Commit, error)
 	return commit, nil
 }
 
+func (s *memoryStore) compactHistory(st *diskState) error {
+	changeBytes := 0
+	changeSizes := make([]int, len(st.Changes))
+	for i, item := range st.Changes {
+		encoded, err := json.Marshal(item)
+		if err != nil {
+			return err
+		}
+		changeSizes[i] = len(encoded)
+		changeBytes += len(encoded)
+	}
+	removed := 0
+	for len(st.Changes)-removed > 1 && (len(st.Changes)-removed > s.maxChanges || changeBytes > s.maxChangeBytes) {
+		changeBytes -= changeSizes[removed]
+		st.HistoryFloor = st.Changes[removed].Cursor
+		removed++
+	}
+	if removed > 0 {
+		st.Changes = append([]Change(nil), st.Changes[removed:]...)
+		for key, record := range st.Idempotency {
+			if record.Commit.Cursor <= st.HistoryFloor {
+				delete(st.Idempotency, key)
+			}
+		}
+	}
+	return nil
+}
+
 func (s *memoryStore) publishLocked(change Change) {
 	for id, w := range s.watchers {
+		if w.cursor < s.state.HistoryFloor {
+			close(w.ch)
+			delete(s.watchers, id)
+			continue
+		}
 		if w.namespace != "" && w.namespace != change.Namespace {
 			continue
 		}
@@ -466,7 +539,7 @@ func (s *memoryStore) Snapshot(ctx context.Context, ns string) (Snapshot, error)
 	if err := s.refreshLocked(true); err != nil {
 		return Snapshot{}, err
 	}
-	snap := Snapshot{Namespace: ns, Revision: s.state.Revisions[ns], Cursor: s.state.Cursor, Vertices: []Vertex{}, Edges: []Edge{}}
+	snap := Snapshot{Namespace: ns, Revision: s.state.Revisions[ns], Cursor: s.state.Cursor, HistoryFloor: s.state.HistoryFloor, Vertices: []Vertex{}, Edges: []Edge{}}
 	for _, v := range s.state.Vertices {
 		if v.Namespace == ns {
 			snap.Vertices = append(snap.Vertices, cloneVertex(v))
@@ -496,6 +569,9 @@ func (s *memoryStore) Changes(ctx context.Context, ns string, after uint64, limi
 	if err := s.refreshLocked(true); err != nil {
 		return nil, err
 	}
+	if after < s.state.HistoryFloor {
+		return nil, ErrCursorExpired
+	}
 	out := []Change{}
 	for _, change := range s.state.Changes {
 		if change.Cursor > after && (ns == "" || change.Namespace == ns) {
@@ -519,6 +595,9 @@ func (s *memoryStore) Watch(ctx context.Context, ns string, after uint64, buffer
 	}
 	if err := s.refreshLocked(true); err != nil {
 		return nil, err
+	}
+	if after < s.state.HistoryFloor {
+		return nil, ErrCursorExpired
 	}
 	ch := make(chan Change, buffer)
 	for _, change := range s.state.Changes {
@@ -690,6 +769,12 @@ func (s *memoryStore) refreshDiskLocked(publish bool) error {
 	oldCursor := s.state.Cursor
 	if err := s.readDiskLocked(); err != nil {
 		return err
+	}
+	for id, w := range s.watchers {
+		if w.cursor < s.state.HistoryFloor {
+			close(w.ch)
+			delete(s.watchers, id)
+		}
 	}
 	if publish && s.state.Cursor > oldCursor {
 		for _, change := range s.state.Changes {

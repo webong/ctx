@@ -20,6 +20,66 @@ func testStore(t *testing.T) Store {
 	}
 	return s
 }
+
+func TestDurableHistoryRetentionRequiresResnapshot(t *testing.T) {
+	path := t.TempDir() + "/graph.json"
+	store, err := OpenFileWithOptions(path, Options{MaxChanges: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Register(Schema{Namespace: testNS, Version: "1"}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		_, err := store.Apply(context.Background(), Transaction{Namespace: testNS, Vertices: []Vertex{vertex(fmt.Sprintf("node-%d", i), "node")}})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = OpenFileWithOptions(path, Options{MaxChanges: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	snapshot, err := store.Snapshot(context.Background(), testNS)
+	if err != nil || snapshot.Cursor != 3 || snapshot.HistoryFloor != 1 || len(snapshot.Vertices) != 3 {
+		t.Fatalf("snapshot after compaction: %+v, %v", snapshot, err)
+	}
+	if _, err := store.Changes(context.Background(), testNS, 0, 2); !errors.Is(err, ErrCursorExpired) {
+		t.Fatalf("expired change cursor: %v", err)
+	}
+	if _, err := store.Watch(context.Background(), testNS, 0, 2); !errors.Is(err, ErrCursorExpired) {
+		t.Fatalf("expired watch cursor: %v", err)
+	}
+	changes, err := store.Changes(context.Background(), testNS, 1, 2)
+	if err != nil || len(changes) != 2 || changes[0].Cursor != 2 || changes[1].Cursor != 3 {
+		t.Fatalf("retained history: %+v, %v", changes, err)
+	}
+}
+
+func TestHistoryByteLimitRetainsLatestCommit(t *testing.T) {
+	store := NewMemoryWithOptions(Options{MaxChanges: 10, MaxChangeBytes: 1})
+	defer store.Close()
+	if err := store.Register(Schema{Namespace: testNS, Version: "1"}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		if _, err := store.Apply(context.Background(), Transaction{Namespace: testNS, Vertices: []Vertex{vertex(fmt.Sprintf("node-%d", i), "node")}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	snapshot, err := store.Snapshot(context.Background(), testNS)
+	if err != nil || snapshot.HistoryFloor != 2 {
+		t.Fatalf("byte-limited history floor: %+v, %v", snapshot, err)
+	}
+	changes, err := store.Changes(context.Background(), testNS, 2, 10)
+	if err != nil || len(changes) != 1 || changes[0].Cursor != 3 {
+		t.Fatalf("latest change unavailable: %+v, %v", changes, err)
+	}
+}
 func vertex(id, kind string) Vertex { return Vertex{ID: id, Kind: testNS + "/" + kind} }
 func edge(id, from, to, rel string) Edge {
 	return Edge{ID: id, From: from, To: to, Type: testNS + "/" + rel}
