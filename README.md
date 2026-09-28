@@ -247,8 +247,41 @@ See [Adapters](adapters/README.md) for the bundled packages and
 | `ctx shell` | Start a child shell with the profile environment |
 | `ctx open <url>` | Open a URL with the selected browser profile |
 | `ctx doctor` | Validate configured selections and adapters |
+| `ctx hook <bash|zsh|powershell>` | Generate an optional shell prompt observer |
+| `ctx graph status` | Show the local system graph revision and size |
+| `ctx graph vertices [kind]` | Inspect observed graph vertices |
+| `ctx graph edges [relationship]` | Inspect observed graph relationships |
+| `ctx graph snapshot` | Export the CTX system graph as JSON |
+| `ctx graph changes [cursor]` | Read graph changes after a cursor |
 
 Run `ctx` without arguments for the complete command list.
+
+## System graph
+
+CTX stores observed system context in `$CTX_HOME/graph.json` (by default,
+`$HOME/.config/ctx/graph.json`). A CTX command records the invoking shell's
+parent process, current directory, detected project, and active profile.
+Successful `ctx open` calls record the browser provider, profile, and URL
+origin; paths, query strings, and fragments are omitted. Environment values,
+shell history, and browser credentials are not collected.
+
+The `ctx graph` commands are short-lived readers of this durable graph. The
+public `github.com/webong/ctx/graph` package supports other services registering
+their own namespaces and validators. The CTX namespace records CTX observations;
+it does not grant permissions or trust to other services.
+
+To update shell location context after each prompt, opt in to a prompt hook:
+
+```sh
+eval "$(ctx hook bash)" # or: eval "$(ctx hook zsh)"
+```
+
+In PowerShell, add `ctx hook powershell | Out-String | Invoke-Expression` to
+your PowerShell profile.
+
+The hook starts a short-lived observation command. Browser activity is currently
+observed when URLs are opened through `ctx open`; direct navigation in other
+browser windows is not collected yet.
 
 ## Configuration
 

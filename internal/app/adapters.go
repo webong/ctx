@@ -333,7 +333,11 @@ func openBrowser(resolver *config.Resolver, args []string, stdout, stderr io.Wri
 		fmt.Fprintf(stderr, "ctx: invalid browser provider %s\n", provider)
 		return 1
 	}
-	return invokeAdapter(resolver, candidate, "open", profile, args, "", stdout, stderr)
+	code := invokeAdapter(resolver, candidate, "open", profile, args, "", stdout, stderr)
+	if code == 0 {
+		recordWebContext(provider, profile, args, stderr)
+	}
+	return code
 }
 
 func doctor(resolver *config.Resolver, stdout, stderr io.Writer) int {

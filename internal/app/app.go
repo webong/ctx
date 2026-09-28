@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"github.com/webong/ctx/internal/config"
 	"github.com/webong/ctx/internal/launch"
 	"github.com/webong/ctx/internal/platform"
+	"github.com/webong/ctx/internal/systemgraph"
 )
 
 var Version = "0.8.0-dev"
@@ -40,11 +42,37 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	if args[0] == "completion" {
 		return completion(args[1:], stdout, stderr)
 	}
+	if args[0] == "hook" {
+		return shellHook(args[1:], stdout, stderr)
+	}
+	if args[0] == "__observe-shell" {
+		resolver, err := newResolver()
+		if err != nil {
+			fmt.Fprintf(stderr, "ctx: %v\n", err)
+			return 1
+		}
+		profile, _, _ := resolver.ActiveProfile()
+		system, err := systemgraph.Open(configHomePath())
+		if err != nil {
+			fmt.Fprintf(stderr, "ctx: %v\n", err)
+			return 1
+		}
+		defer system.Close()
+		if err := system.ObserveShell(context.Background(), currentDirectory(), profile, observedSelections(resolver)); err != nil {
+			fmt.Fprintf(stderr, "ctx: %v\n", err)
+			return 1
+		}
+		return 0
+	}
+	if args[0] == "graph" {
+		return graphCommand(args[1:], stdout, stderr)
+	}
 	resolver, err := newResolver()
 	if err != nil {
 		fmt.Fprintf(stderr, "ctx: %v\n", err)
 		return 1
 	}
+	recordSystemContext(resolver, stderr)
 	switch args[0] {
 	case "resolve":
 		if len(args) != 2 {
@@ -96,12 +124,43 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	}
 }
 
+func shellHook(args []string, stdout, stderr io.Writer) int {
+	if len(args) != 1 {
+		fmt.Fprintln(stderr, "ctx: hook needs bash, zsh, or powershell")
+		return 2
+	}
+	switch args[0] {
+	case "bash":
+		fmt.Fprintln(stdout, `__ctx_observe() { command ctx __observe-shell >/dev/null 2>&1; }
+if [[ ";${PROMPT_COMMAND-};" != *";__ctx_observe;"* ]]; then
+  PROMPT_COMMAND="${PROMPT_COMMAND:+${PROMPT_COMMAND}; }__ctx_observe"
+fi`)
+	case "zsh":
+		fmt.Fprintln(stdout, `autoload -Uz add-zsh-hook
+__ctx_observe() { command ctx __observe-shell >/dev/null 2>&1; }
+add-zsh-hook precmd __ctx_observe`)
+	case "powershell":
+		fmt.Fprintln(stdout, `if (-not (Test-Path variable:global:__ctx_original_prompt)) {
+  $global:__ctx_original_prompt = (Get-Item Function:prompt).ScriptBlock
+}
+function global:prompt {
+  & ctx __observe-shell *> $null
+  & $global:__ctx_original_prompt
+}`)
+	default:
+		fmt.Fprintf(stderr, "ctx: unsupported shell %s\n", args[0])
+		return 2
+	}
+	return 0
+}
+
 func usage(output io.Writer) {
 	fmt.Fprintln(output, `ctx — project-local contexts for development tools
 usage:
   ctx status [selector]
   ctx real <command>
   ctx completion powershell
+  ctx hook <bash|zsh|powershell>
   ctx resolve <key>
   ctx explain
   ctx env
@@ -119,6 +178,7 @@ usage:
   ctx run <provider-or-adapter-command> [arguments...]
   ctx run -- <command> [arguments...]
   ctx shell [--shell <executable>] [-- <command> [arguments...]]
+  ctx graph <status|vertices|edges|snapshot|changes> [arguments...]
   ctx version`)
 }
 
