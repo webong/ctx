@@ -1,10 +1,10 @@
-# Native cross-platform migration
+# Cross-platform support
 
-ctx is migrating from its POSIX shell core to a native Go executable. The shell
-release remains the default on macOS and Linux until the native implementation
-reaches command parity.
+ctx uses a native Go core on macOS, Linux, and Windows. Tool-specific behavior
+lives in adapter packages, with POSIX implementations for macOS and Linux and
+PowerShell implementations where Windows needs them.
 
-## Available in the native preview
+## Supported capabilities
 
 - Project `.ctx`, central project map, fallback, and named-profile resolution.
 - `ctx status`, `ctx resolve`, `ctx explain`, and `ctx version`.
@@ -28,7 +28,7 @@ reaches command parity.
 - A cross-platform adapter catalog and `ctx setup` selection flow, with
   non-interactive `--adapters`, `--all`, and `--minimal` installation modes.
 
-Build the preview locally:
+Build ctx locally:
 
 ~~~sh
 go build -o ./ctx-native ./cmd/ctx
@@ -44,9 +44,9 @@ ctx.exe version
 
 ## Release readiness
 
-The intended 0.8 native command surface is implemented. The remaining work is
-release-candidate soak testing on real Windows, macOS, and Linux setups before
-making the native executable the default installer target.
+The intended 0.8 command surface is implemented and the native executable is the
+default installer target. Release candidates must still pass real-machine soak
+testing on Windows, macOS, and Linux before a stable tag is published.
 
 The target architecture keeps `shell`, `browser`, and `container` as ctx context
 families. Individual applications are first-party or external providers, so

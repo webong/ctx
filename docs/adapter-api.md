@@ -48,7 +48,7 @@ and container adapters and lets `ctx run` route native command names to the
 adapter. `override_env` declares native environment variables, in precedence
 order, that `ctx status` should report instead of the stored selection. The
 provider remains responsible for honoring them during `run`. `default_provider`
-lets legacy unqualified build, image-sync, and
+lets backward-compatible unqualified build, image-sync, and
 volume endpoints choose a provider without hard-coding an engine in the core;
 multiple trusted defaults are reported as an error.
 

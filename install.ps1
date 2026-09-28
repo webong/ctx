@@ -107,7 +107,7 @@ finally {
 $configFile = Join-Path $ConfigDir 'config.toml'
 if (-not (Test-Path $configFile)) {
     @'
-# ctx native configuration
+# ctx configuration
 # docker_default = "desktop-linux"
 # podman_default = "podman-machine-default"
 # nerdctl_default = "default"
@@ -125,4 +125,3 @@ if (($env:PATH -split ';') -notcontains $BinDir) {
     Write-Host "Add this directory before Docker, Podman, and nerdctl on PATH: $BinDir"
 }
 if ($downloadRoot) { Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $downloadRoot }
-Write-Warning 'Native Windows support is a migration preview; validate it with your local CLI and credential setup before replacing an existing installation.'

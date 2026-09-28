@@ -28,13 +28,17 @@ jobs:
         shell: pwsh
         run: ./tests/windows_native_test.ps1
 
-  legacy-shell:
-    runs-on: ubuntu-latest
+  native-integration:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - run: ./tests/test.sh
       - uses: actions/setup-go@v5
         with:
           go-version: '1.23.x'
           cache: true
       - run: ./tests/native_test.sh
+      - run: ./tests/native_installer_test.sh

@@ -1,448 +1,287 @@
 # ctx
 
-ctx chooses tool contexts per project. Its core owns shell environments and the
-generic browser and container families. Docker, Podman, nerdctl/containerd,
-Apple Container, Firefox, Chrome, Chromium, and Safari are first-party provider
-adapters developed in this repository. Kubernetes, AWS, gcloud, PostgreSQL, and
-MySQL are first-party selector adapters. Named profiles bundle these choices
-without changing a tool's global default, and external adapters can add providers
-or selectors without changing ctx itself.
+Project-local contexts for the tools you already use.
 
-> **Cross-platform migration:** a native Go core is now under development in
-> `cmd/ctx`. It already provides cross-platform context resolution, shell/profile
-> environments, trusted adapter execution, browser providers, configuration
-> mutations, container transfers, and container command routing. It cross-compiles
-> for Windows and ships native PowerShell implementations of bundled providers.
-> The POSIX implementation remains the default release until native command
-> parity is complete. See [the migration status](docs/cross-platform.md).
+`ctx` lets each project choose its own Docker context, Podman connection,
+Kubernetes context, cloud profile, browser profile, database profile, and shell
+environment—without changing global defaults.
+
+```sh
+cd my-project
+
+ctx set docker orbstack
+ctx set kube development --namespace payments
+ctx set aws client-a
+ctx set browser firefox:client-a
+
+docker ps
+ctx run kubectl get pods
+ctx run aws sts get-caller-identity
+ctx open http://localhost:3000
+```
+
+Selections are stored in a local `.ctx` file and automatically applied when a
+command runs through ctx or one of its container shims.
+
+## Why ctx?
+
+- Keep development, client, and personal environments separate.
+- Switch tool contexts per project instead of globally.
+- Bundle several selections into a reusable profile.
+- Use Docker, Podman, nerdctl, and Apple Container through one interface.
+- Open URLs in the browser profile selected for the project.
+- Extend ctx with trusted adapters instead of adding tool-specific logic to the
+  core.
+- Keep credentials in the native tools; ctx stores selectors, not secrets.
 
 ## Install
 
-You need curl and at least one of the Docker, Podman, or nerdctl CLIs. kubectl and
-the AWS CLI, gcloud, database clients, and browsers are optional and only needed
-for their adapters. The installer downloads ctx, its three container wrappers,
-and the bundled first-party adapters when run as a stream:
+### macOS and Linux
 
-~~~sh
+Install the latest native release:
+
+```sh
 curl -fsSL https://raw.githubusercontent.com/webong/ctx/main/install.sh | sh
-~~~
+```
 
-To install from a local checkout instead, use Git:
+Ensure the install directory comes before the real container CLIs on `PATH`:
 
-~~~sh
-git clone https://github.com/webong/ctx.git "$HOME/.local/share/ctx"
-"$HOME/.local/share/ctx/install.sh"
-~~~
-
-To preview the native Go core on macOS or Linux, use the native installer from a
-checkout. Tagged releases also publish checksum-verified native bundles for
-macOS, Linux, and Windows:
-
-~~~sh
-./install-native.sh
-./install-native.sh --adapters docker,kube,firefox
-./install-native.sh --all
-~~~
-
-With a terminal, `install-native.sh` opens the adapter selection flow. A piped or
-non-interactive installation leaves the catalog available and prints `ctx setup`
-as the follow-up command. Use `--minimal` to select no new adapters; upgrades
-preserve any adapters that are already active.
-
-On Windows, run `./install.ps1 -Interactive`, or use `-Adapters
-docker,kube,firefox`, `-AllAdapters`, or `-Minimal`. Release bundles carry GitHub
-build-provenance attestations and inject the release tag into `ctx version`.
-The installer writes `ctx-completion.ps1` under the ctx configuration directory
-and prints the one-line command to load it from your PowerShell profile.
-
-Put $HOME/.local/bin before the real Docker, Podman, and nerdctl commands on your PATH. For example, add this to ~/.zshrc or ~/.bashrc:
-
-~~~sh
+```sh
 export PATH="$HOME/.local/bin:$PATH"
-~~~
+```
 
-Open a new shell and check `command -v ctx`, `command -v docker`, `command -v podman`, and `command -v nerdctl`. The installer leaves an existing config in place and refuses to replace an unrelated command. Set CTX_BIN_DIR and CTX_HOME to change installation locations.
+The installer verifies the release checksum and opens the adapter selection flow
+when attached to a terminal. From a source checkout, it builds ctx locally:
 
-If you previously installed dctx, remove any `eval "$(dctx hook zsh)"` or `eval "$(dctx hook bash)"` line from your shell startup file. That older hook can export DOCKER_CONTEXT and override .ctx. Set your project choices again with `ctx set`; the old .docker-context and dctx config are not read by ctx.
+```sh
+./install.sh
+```
 
-## Choose connections
+For unattended installation:
 
-Run these in a project directory:
+```sh
+./install.sh --adapters docker,kube,firefox
+./install.sh --all
+./install.sh --minimal
+```
 
-~~~sh
+On Windows:
+
+```powershell
+.\install.ps1 -Interactive
+.\install.ps1 -Adapters docker,kube,firefox
+.\install.ps1 -AllAdapters
+```
+
+See [Cross-platform support](docs/cross-platform.md) for platform details. Set
+`CTX_BIN_DIR` and `CTX_HOME` to use custom installation locations.
+
+## Quick start
+
+List the contexts available for a tool, select one in the current project, and
+inspect the result:
+
+```sh
 ctx ls container
 ctx ls docker
-ctx ls podman
-ctx ls nerdctl
-ctx set docker my-docker-context
-ctx set podman my-podman-connection
-ctx set nerdctl k8s.io
+ctx set docker orbstack
 ctx status
-~~~
+ctx explain
+```
 
-`ctx ls container` aggregates every available container provider and prints
-qualified values such as `docker:orbstack`, `podman:podman-machine-default`,
-`nerdctl:k8s.io`, and `apple:local`. `ctx ls docker` (or another provider name)
-lists only that provider. OrbStack and Docker Desktop are Docker contexts, so they
-remain selections of the Docker provider rather than separate adapters.
-Docker's manifest marks it as the default provider for backward-compatible
-unqualified `ctx build`, `ctx image sync`, and `ctx volume` commands.
+With the Docker, Podman, and nerdctl shims installed, normal commands use the
+project selection:
 
-This creates a local .ctx file:
-
-~~~toml
-docker = "my-docker-context"
-podman = "my-podman-connection"
-nerdctl = "k8s.io"
-~~~
-
-Kubernetes and AWS selections are also stored locally:
-
-~~~sh
-ctx ls kube
-ctx set kube client-a-dev --namespace payments
-ctx ls aws
-ctx set aws client-a
-ctx ls gcloud
-ctx set gcloud client-a
-
-ctx run kubectl get pods
-ctx run aws sts get-caller-identity
-ctx run gcloud projects list
-~~~
-
-`ctx run kubectl` supplies `--context` and `--namespace`. Explicit kubectl flags
-take priority. `ctx run aws` supplies `--profile`; AWS_PROFILE,
-AWS_DEFAULT_PROFILE, or an explicit `--profile` takes priority. Use
-`--kubeconfig /absolute/path` with `ctx set kube` when the context is in a
-non-default kubeconfig. `ctx run gcloud` similarly applies `--configuration`;
-CLOUDSDK_ACTIVE_CONFIG_NAME or an explicit `--configuration` takes priority.
-
-Select a browser profile and open project URLs without mixing client, admin, and
-personal sessions:
-
-~~~sh
-ctx ls browser
-ctx set browser firefox:client-a
-ctx open http://localhost:3000
-
-ctx set browser 'chrome:Profile 1'
-ctx open https://client-a.example
-~~~
-
-Firefox values are Firefox profile names. Chrome and Chromium values are profile
-directory names such as `Default` or `Profile 1`; Safari currently exposes
-`safari:default`. `ctx ls browser` asks every installed browser provider for its
-available selections and prints values ready for `ctx set browser`. On macOS the
-providers launch a new app instance through `open`; on other systems they invoke
-the browser executable. `CTX_BROWSER` temporarily overrides the project selection.
-
-Database adapters use native client-side profiles and do not copy connection
-secrets into `.ctx`:
-
-~~~sh
-ctx set postgres client-a-dev
-ctx run psql
-ctx run pg_dump app > app.sql
-
-ctx set mysql client-a
-ctx run mysql app
-ctx run mysqldump app > app.sql
-~~~
-
-PostgreSQL selections become `PGSERVICE` and can include `--service-file`.
-Existing PGSERVICE and PGSERVICEFILE values take priority. MySQL selections use
-login paths created separately with `mysql_config_editor`.
-
-ctx set verifies that the named Docker context, Podman system connection, or nerdctl namespace exists. In a Git repository, it excludes .ctx through the local .git/info/exclude file. The choice stays on your machine, without modifying the project's tracked .gitignore. Use `ctx clear TOOL` or `ctx clear` to remove choices.
-
-~~~sh
+```sh
 docker ps
 podman ps
 nerdctl ps
-docker build -f Containerfile .
-podman build -f Containerfile .
-nerdctl build -f Containerfile .
-~~~
+```
 
-The build commands use the selected connection or namespace. A Containerfile describes the image build; it does not select the engine.
+Use `ctx run` for tools that do not have transparent shims:
 
-## Build caches and transfers
+```sh
+ctx set kube development --namespace payments
+ctx run kubectl get pods
 
-Docker builders keep their local caches separate. Use `ctx build` to build through the
-project's resolved Docker context while importing and exporting a BuildKit registry
-cache. The registry reference must be writable by the caller. Give branches or
-concurrent builders distinct cache references so they do not overwrite each other.
+ctx set aws client-a
+ctx run aws sts get-caller-identity
 
-~~~sh
-ctx build docker --cache-ref ghcr.io/acme/api:docker-cache -- --tag ghcr.io/acme/api:dev .
-ctx build podman --cache-ref ghcr.io/acme/api:podman-cache -- --tag ghcr.io/acme/api:dev .
-ctx build nerdctl --cache-ref ghcr.io/acme/api:nerdctl-cache -- --tag ghcr.io/acme/api:dev .
-~~~
+ctx set gcloud client-a
+ctx run gcloud projects list
+```
 
-Omitting the engine keeps the original Docker behavior. Use distinct cache references:
-Docker BuildKit, Podman/Buildah, and nerdctl BuildKit do not share one portable cache
-format even though each can store cache data in a registry.
+Explicit CLI flags and environment variables still take priority over ctx.
 
-Images also belong to the Docker daemon selected by a context. Copy a tagged image
-between contexts with a registry, or use `--tar` for a temporary local archive when
-both contexts are reachable from the same machine:
+## Browser and database contexts
 
-~~~sh
-ctx image sync orbstack desktop-linux ghcr.io/acme/api:dev
-ctx image sync --tar orbstack desktop-linux acme/api:dev
-~~~
+Choose a browser profile and open project URLs in it:
 
-Use `ctx image copy` to bridge Docker, Podman, nerdctl, and Apple Container through a
-temporary image archive. Endpoints use `docker:<context>`, `podman:<connection>`,
-`nerdctl:<namespace>`, or `apple:local`. The archive passes through the machine
-running ctx, so both endpoints must be reachable there.
+```sh
+ctx ls browser
+ctx set browser 'chrome:Profile 1'
+ctx open http://localhost:3000
+```
 
-~~~sh
-ctx image copy docker:orbstack podman:podman-machine-default acme/api:dev
-ctx image copy podman:podman-machine-default docker:orbstack acme/api:dev
-ctx image copy docker:orbstack nerdctl:k8s.io acme/api:dev
-ctx image copy nerdctl:default apple:local acme/api:dev
-~~~
+Database adapters use profiles maintained by the database clients. Passwords are
+not copied into `.ctx`.
 
-For safety, imports into Apple Container require a version newer than 1.3.0. Older
-versions have known image-loading vulnerabilities; update Apple Container before
-using it as a copy target. See [GHSA-r3h2-rgqf-9hv9](https://github.com/apple/containerization/security/advisories/GHSA-r3h2-rgqf-9hv9).
+```sh
+ctx set postgres client-a-dev
+ctx run psql app
 
-Named volumes are likewise private to each daemon. `ctx volume export` writes a tar
-archive to standard output, and `ctx volume import` reads one from standard input.
-Import refuses an existing target volume so it cannot silently merge data. Stop or
-quiesce databases before export; this is a migration/backup tool, not live shared
-storage.
+ctx set mysql client-a
+ctx run mysql app
+```
 
-~~~sh
-ctx volume export orbstack postgres-data > postgres-data.tar
-ctx volume import desktop-linux postgres-data < postgres-data.tar
-~~~
+## Profiles and shell environments
 
-`ctx volume copy` applies the same export/import approach between Docker, Podman,
-nerdctl, and Apple Container.
-It creates the target volume and refuses to merge into an existing one. It is still a
-point-in-time migration, never live shared storage.
+A profile groups several context selections and non-secret environment values:
 
-~~~sh
-ctx volume copy docker:orbstack podman:podman-machine-default postgres-data postgres-data
-ctx volume copy podman:podman-machine-default docker:orbstack postgres-data postgres-data
-ctx volume copy docker:orbstack nerdctl:default postgres-data postgres-data
-ctx volume copy nerdctl:default apple:local postgres-data postgres-data
-~~~
-
-For another machine, stream the archive through a secure transport and run the
-import command there. These commands use a short-lived Alpine container; set
-`CTX_VOLUME_IMAGE` if your environment requires a different approved image.
-
-## Optional central config
-
-You can set fallbacks or map project paths in $HOME/.config/ctx/config.toml:
-
-~~~toml
-docker_default = "my-docker-context"
-podman_default = "my-podman-connection"
-nerdctl_default = "default"
-
-[projects."/absolute/path/to/project"]
-docker = "another-docker-context"
-podman = "another-podman-connection"
-nerdctl = "k8s.io"
-~~~
-
-Mappings apply to the named directory and its descendants. Set a fallback with `ctx set TOOL NAME --global`. If no Podman connection or nerdctl namespace is selected, that CLI keeps its own default behavior.
-
-## Selection order
-
-1. Explicit command flags or connection environment variables take priority.
-2. The nearest .ctx entry or central project mapping is used.
-3. Docker can detect a running OrbStack or Docker Desktop daemon on macOS. Podman and nerdctl have no automatic endpoint selection.
-4. The optional per-tool fallback is used.
-5. The unmodified CLI chooses its own default.
-
-`docker context ...`, `podman system connection ...`, `podman machine ...`, and `nerdctl namespace ...` pass through to the real CLI. The wrappers affect commands launched through them; other applications may use their own connection settings.
-
-Podman connection selection uses its [--connection option](https://docs.podman.io/en/latest/markdown/podman.1.html). nerdctl selection uses [containerd namespaces](https://github.com/containerd/nerdctl/blob/main/docs/command-reference.md#namespace-management). Apple Container transfer support follows its [image and volume commands](https://github.com/apple/container/blob/main/docs/command-reference.md).
-
-## Profile bundles
-
-Put reusable bundles in `$HOME/.config/ctx/config.toml`:
-
-~~~toml
-[profiles."client-a"]
-docker = "orbstack"
-podman = "podman-machine-default"
-nerdctl = "k8s.io"
-kube_context = "client-a-dev"
-kube_namespace = "payments"
-aws_profile = "client-a"
-gcloud_configuration = "client-a"
-browser = "firefox:client-a"
-postgres_service = "client-a-dev"
-mysql_login_path = "client-a"
-shell_path = "/opt/client-a/bin"
-
-[profiles."client-a".env]
-APP_ENV = "development"
-AWS_REGION = "eu-west-1"
-~~~
-
-You can also create or update bundle entries from the CLI:
-
-~~~sh
+```sh
 ctx profile set client-a docker orbstack
 ctx profile set client-a kube_context client-a-dev
 ctx profile set client-a kube_namespace payments
 ctx profile set client-a aws_profile client-a
-ctx profile set client-a gcloud_configuration client-a
 ctx profile set client-a browser firefox:client-a
-ctx profile set client-a postgres_service client-a-dev
-ctx profile set client-a mysql_login_path client-a
-ctx profile set client-a shell_path /opt/client-a/bin
 ctx profile env client-a APP_ENV development
-ctx profile show client-a
-~~~
 
-Select a bundle for the current project:
-
-~~~sh
-ctx profile ls
 ctx profile use client-a
-ctx explain
+ctx profile show client-a
 ctx doctor
-~~~
+```
 
-The project `.ctx` contains only `profile = "client-a"`. Direct values in the
-same `.ctx` override bundle values, so `ctx set docker desktop-linux` can make a
-local exception. `ctx explain` shows the resolved value and its source. `ctx
-doctor` checks that selected profiles and contexts still exist without making
-network calls.
+Apply the profile environment to one command or start a child shell:
 
-The same bundle can provide a declarative child-shell environment:
-
-~~~sh
-ctx env
+```sh
 ctx run -- npm test
 ctx shell
-CTX_SHELL=pwsh ctx shell
-ctx shell --shell pwsh
 ctx shell -- npm test
-~~~
+```
 
-`ctx run --` applies the profile to one command. `ctx shell` starts the user's
-shell with those values and restores the original environment when it exits.
-`CTX_SHELL` changes the preferred shell, while `--shell` overrides it for one
-invocation. On Windows, ctx otherwise prefers PowerShell 7, then Windows
-PowerShell, then `COMSPEC`. `CTX_SHELL` may also be stored in a named profile's
-environment when different projects need different shells.
-Existing environment variables take priority over profile values. `shell_path`
-is prepended to PATH. ctx does not source startup fragments or execute profile
-hooks.
+Environment values are stored as plain text. Use them for ordinary configuration,
+not passwords, tokens, or private keys.
 
-Profiles contain selectors, not credentials. Cloud keys, Kubernetes credentials,
-database passwords, browser data, and tokens remain in each tool's native config
-or credential store. Environment entries are plain text, so they are intended for
-non-secret settings only.
+## Images, volumes, and build caches
 
-## First-party and external adapters
+Share a registry-backed build cache while keeping each engine's cache format
+separate:
 
-The bundled first-party adapters live under `adapters/` in this repository:
+```sh
+ctx build docker \
+  --cache-ref ghcr.io/acme/api:docker-cache \
+  -- --tag ghcr.io/acme/api:dev .
+```
 
-- `docker`, `podman`, `nerdctl`, and `apple` are `kind = "container"` providers.
-  They own engine-specific discovery, validation, command routing, builds, image
-  transfer, and volume transfer. The core only orchestrates generic capabilities.
-- The Docker, Podman, and nerdctl packages also contain tiny transparent shims.
-  The installer places only those launchers in the binary directory under the
-  native command names; they delegate immediately to the installed providers.
-- `firefox`, `chrome`, `chromium`, and `safari` are browser providers used by the
-  built-in `browser` context. Each provider owns application-specific profile
-  discovery, validation, and launch behavior.
-- `kube` owns `kubectl` contexts, namespaces, and kubeconfig selection.
-- `aws` owns AWS CLI profiles.
-- `gcloud` owns Google Cloud configurations.
-- `postgres` owns PostgreSQL service profiles and client commands.
-- `mysql` owns MySQL login paths and client commands.
+Copy images between supported engines through a temporary archive:
 
-Native release bundles place these packages in the local adapter catalog. Users
-choose which packages to activate; selecting a catalog package installs and
-checksum-trusts it. They use the same public adapter protocol as third-party
-additions, so integrations can evolve without adding another selector switch to
-the core.
+```sh
+ctx image copy \
+  docker:orbstack \
+  podman:podman-machine-default \
+  acme/api:dev
+```
 
-~~~sh
+Copy a named volume between engines:
+
+```sh
+ctx volume copy \
+  docker:orbstack \
+  podman:podman-machine-default \
+  postgres-data \
+  postgres-data
+```
+
+Volume copy is a point-in-time migration, not live synchronization. Stop or
+quiesce databases first. ctx refuses to import into an existing target volume.
+
+Apple Container image imports require a version newer than 1.3.0 because of
+[GHSA-r3h2-rgqf-9hv9](https://github.com/apple/containerization/security/advisories/GHSA-r3h2-rgqf-9hv9).
+
+## Adapters
+
+ctx ships maintained adapters for:
+
+| Family | Adapters |
+| --- | --- |
+| Containers | Docker, Podman, nerdctl/containerd, Apple Container |
+| Browsers | Firefox, Chrome, Chromium, Safari |
+| Cloud and orchestration | Kubernetes, AWS, gcloud |
+| Databases | PostgreSQL, MySQL |
+
+The native installer places bundled adapters in a local catalog. Install only
+what you need:
+
+```sh
 ctx setup
-ctx setup --adapters docker,kube,firefox
 ctx adapter available
 ctx adapter add podman postgres
-ctx adapter refresh
 ctx adapter remove firefox
-~~~
+ctx adapter refresh
+```
 
-Container shims follow their providers. Adding Docker, Podman, or nerdctl creates
-the corresponding managed launcher beside `ctx`; removal deletes it only when it
-still matches the ctx-owned launcher.
+External adapters use the same API and are untrusted until explicitly reviewed
+and trusted:
 
-ctx adapter API v1 lets a separately installed executable provide selector,
-browser-provider, or container-provider operations.
-Adapters are loaded only from `$CTX_HOME/adapters`; ctx never sources them or
-discovers code in the current directory or arbitrary PATH entries.
-
-Test, install, review, and trust an adapter explicitly:
-
-~~~sh
+```sh
 ctx adapter test ./ctx-azure
 ctx adapter install ./ctx-azure
 ctx adapter inspect azure
 ctx adapter trust azure
-ctx adapter ls
-~~~
+```
 
-`ctx adapter test` executes the adapter's `doctor` operation, so review unknown
-adapter code before testing it. `ctx adapter install` only copies a structurally
-valid package and does not execute it.
+See [Adapters](adapters/README.md) for the bundled packages and
+[Adapter API v1](docs/adapter-api.md) to build an integration.
 
-Installation alone does not permit execution. Trust records a checksum of every
-file in the installed adapter. Editing any file revokes trust until the user
-reviews it and runs `ctx adapter trust` again.
+## Command reference
 
-Once trusted, an external adapter behaves like a built-in selector:
+| Command | Purpose |
+| --- | --- |
+| `ctx ls <selector>` | List available contexts |
+| `ctx set <selector> <name>` | Select a context for the current project |
+| `ctx clear [selector]` | Remove one or all project selections |
+| `ctx status` | Show active selections |
+| `ctx explain` | Show resolved values and their sources |
+| `ctx run <tool> ...` | Run a tool with its selected context |
+| `ctx run -- <command> ...` | Run any command with the profile environment |
+| `ctx shell` | Start a child shell with the profile environment |
+| `ctx open <url>` | Open a URL with the selected browser profile |
+| `ctx doctor` | Validate configured selections and adapters |
 
-~~~sh
-ctx ls azure
-ctx set azure client-a-subscription
-ctx run azure account show
-ctx adapter doctor azure
-ctx explain
-~~~
+Run `ctx` without arguments for the complete command list.
 
-External selections also work in bundles:
+## Configuration
 
-~~~sh
-ctx profile set client-a azure client-a-subscription
-~~~
+Project selections live in `.ctx`. In Git repositories, ctx adds that file to
+the repository's local exclude list instead of modifying `.gitignore`.
 
-Adapters with the `open` capability can be invoked with `ctx open --adapter
-NAME`. Use `ctx adapter remove NAME` to remove an installed adapter and its trust
-record. The repository includes an executable reference adapter under
-`examples/adapters/echo`. See the [adapter API v1 specification](docs/adapter-api.md)
-to implement an adapter in any language.
+Global defaults, project mappings, profiles, and profile environments live in:
 
-An adapter with `kind = "browser"` extends the built-in browser context instead
-of creating another top-level selector. Its name becomes the prefix in values
-such as `brave:Default`; `ctx ls browser`, `ctx set browser`, `ctx open`, and
-`ctx doctor` route through it automatically.
+```text
+$HOME/.config/ctx/config.toml
+```
 
-An adapter with `kind = "container"` extends the container family. Its name is
-accepted by `ctx ls`, `ctx set`, `ctx run`, and `ctx build`, and it can declare
-image and volume transfer capabilities. Qualified endpoints use
-`provider:selection`, so a newly installed provider participates in `ctx image
-copy` and `ctx volume copy` without a core release.
+Resolution follows this order:
 
-## Remove
+1. Explicit CLI flags or tool-specific environment variables.
+2. The nearest `.ctx` file or central project mapping.
+3. Automatic Docker runtime detection on macOS.
+4. A configured global fallback.
+5. The underlying tool's own default.
 
-Remove the installed ctx, docker, podman, and nerdctl wrappers from $HOME/.local/bin after checking they belong to ctx. Your config and installed adapters are in $HOME/.config/ctx. If you added the PATH line solely for ctx, remove that line from your shell startup file.
+## Migrating from dctx
+
+Remove any old `eval "$(dctx hook zsh)"` or `eval "$(dctx hook bash)"` line
+from your shell startup file. The old hook may export `DOCKER_CONTEXT` and
+override ctx. Recreate project selections with `ctx set`; dctx configuration is
+not imported automatically.
+
+## Uninstall
+
+Remove the ctx-owned executables from `$HOME/.local/bin`. Configuration and
+installed adapters are stored under `$HOME/.config/ctx` unless `CTX_HOME` was
+changed.
 
 ## License
 
-MIT
+[MIT](LICENSE)

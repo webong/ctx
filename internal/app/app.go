@@ -91,13 +91,13 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	case "shell":
 		return shell(resolver, args[1:], stdout, stderr)
 	default:
-		fmt.Fprintf(stderr, "ctx: %s is not migrated to the native core yet\n", args[0])
+		fmt.Fprintf(stderr, "ctx: unknown command %s\n", args[0])
 		return 2
 	}
 }
 
 func usage(output io.Writer) {
-	fmt.Fprintln(output, `ctx — native cross-platform context core (migration preview)
+	fmt.Fprintln(output, `ctx — project-local contexts for development tools
 usage:
   ctx status [selector]
   ctx real <command>

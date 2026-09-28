@@ -3,128 +3,114 @@ set -eu
 
 DST_BIN=${CTX_BIN_DIR:-$HOME/.local/bin}
 CONFIG_DIR=${CTX_HOME:-$HOME/.config/ctx}
-CORE_ENGINE_ADAPTERS='docker podman nerdctl'
-BUNDLED_ADAPTERS='firefox chrome chromium safari kube aws gcloud postgres mysql'
-
-for tool in ctx $CORE_ENGINE_ADAPTERS; do
-  target="$DST_BIN/$tool"
-  if [ -e "$target" ] || [ -L "$target" ]; then
-    if [ "$tool" = ctx ]; then marker='ctx command'; else marker='ctx wrapper|dctx shim'; fi
-    if ! (dd if="$target" bs=256 count=1 2>/dev/null | grep -Eq "$marker"); then
-      printf 'ctx: %s exists; choose another CTX_BIN_DIR\n' "$target" >&2
-      exit 1
-    fi
-  fi
+VERSION=${CTX_VERSION:-latest}
+BUNDLED_ADAPTERS='docker podman nerdctl apple firefox chrome chromium safari kube aws gcloud postgres mysql'
+SETUP_MODE=interactive
+SETUP_ADAPTERS=
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --all) [ "$SETUP_MODE" = interactive ] || { printf 'ctx: choose only one adapter selection mode\n' >&2; exit 2; }; SETUP_MODE=all ;;
+    --minimal) [ "$SETUP_MODE" = interactive ] || { printf 'ctx: choose only one adapter selection mode\n' >&2; exit 2; }; SETUP_MODE=minimal ;;
+    --adapters) [ "$SETUP_MODE" = interactive ] && [ "$#" -ge 2 ] || { printf 'ctx: --adapters needs a comma-separated value\n' >&2; exit 2; }; SETUP_MODE=selected; SETUP_ADAPTERS=$2; shift ;;
+    --adapters=*) [ "$SETUP_MODE" = interactive ] || { printf 'ctx: choose only one adapter selection mode\n' >&2; exit 2; }; SETUP_MODE=selected; SETUP_ADAPTERS=${1#--adapters=} ;;
+    *) printf 'ctx: unknown installer option: %s\n' "$1" >&2; exit 2 ;;
+  esac
+  shift
 done
 
-SRC_DIR=
-if [ -f "$0" ]; then
+ROOT=
+if [ -z "${CTX_RELEASE_BASE:-}" ] && [ -f "$0" ]; then
   candidate=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-  if [ -f "$candidate/bin/ctx" ]; then
-    source_complete=1
-    for tool in $CORE_ENGINE_ADAPTERS; do
-      [ -f "$candidate/adapters/$tool/$tool" ] || source_complete=0
-    done
-    [ "$source_complete" -eq 1 ] && SRC_DIR=$candidate
-  fi
+  if [ -f "$candidate/cmd/ctx/main.go" ]; then ROOT=$candidate; fi
 fi
 
-if [ -z "$SRC_DIR" ]; then
-  if ! command -v curl >/dev/null 2>&1; then
-    printf 'ctx: curl is required for streamed installation\n' >&2
-    exit 1
+temporary=$(mktemp -d "${TMPDIR:-/tmp}/ctx-install.XXXXXX")
+trap 'rm -rf "$temporary"' EXIT HUP INT TERM
+bundle="$temporary/ctx"
+
+if [ -n "$ROOT" ]; then
+  command -v go >/dev/null 2>&1 || { printf 'ctx: Go is required when installing from source\n' >&2; exit 1; }
+  mkdir -p "$bundle/bin" "$bundle/adapters"
+  (cd "$ROOT" && go build -o "$bundle/bin/ctx" ./cmd/ctx)
+  for adapter in $BUNDLED_ADAPTERS; do cp -R "$ROOT/adapters/$adapter" "$bundle/adapters/$adapter"; done
+else
+  command -v curl >/dev/null 2>&1 || { printf 'ctx: curl is required for remote installation\n' >&2; exit 1; }
+  os=$(uname -s)
+  case "$os" in Darwin) os=darwin;; Linux) os=linux;; *) printf 'ctx: unsupported operating system: %s\n' "$os" >&2; exit 1;; esac
+  arch=$(uname -m)
+  case "$arch" in x86_64|amd64) arch=amd64;; arm64|aarch64) arch=arm64;; *) printf 'ctx: unsupported architecture: %s\n' "$arch" >&2; exit 1;; esac
+  asset="ctx-$os-$arch.tar.gz"
+  if [ -n "${CTX_RELEASE_BASE:-}" ]; then
+    release_base=${CTX_RELEASE_BASE%/}
+  else
+    release=latest/download
+    [ "$VERSION" = latest ] || release="download/$VERSION"
+    release_base="https://github.com/webong/ctx/releases/$release"
   fi
-  FETCH_DIR=$(mktemp -d)
-  trap 'rm -rf "$FETCH_DIR"' 0
-  SOURCE_BASE=${CTX_SOURCE_BASE:-https://raw.githubusercontent.com/webong/ctx/${CTX_REF:-main}}
-  mkdir -p "$FETCH_DIR/bin" "$FETCH_DIR/adapters"
-  curl -fsSL "$SOURCE_BASE/bin/ctx" -o "$FETCH_DIR/bin/ctx"
-  [ -s "$FETCH_DIR/bin/ctx" ] || { printf 'ctx: empty download for ctx\n' >&2; exit 1; }
-  sh -n "$FETCH_DIR/bin/ctx"
-  for tool in $CORE_ENGINE_ADAPTERS; do
-    mkdir -p "$FETCH_DIR/adapters/$tool"
-    curl -fsSL "$SOURCE_BASE/adapters/$tool/$tool" -o "$FETCH_DIR/adapters/$tool/$tool"
-    if [ ! -s "$FETCH_DIR/adapters/$tool/$tool" ]; then
-      printf 'ctx: empty download for %s adapter\n' "$tool" >&2
-      exit 1
-    fi
-    sh -n "$FETCH_DIR/adapters/$tool/$tool"
-    chmod +x "$FETCH_DIR/adapters/$tool/$tool"
-  done
-  for adapter in $BUNDLED_ADAPTERS; do
-    mkdir -p "$FETCH_DIR/adapters/$adapter"
-    curl -fsSL "$SOURCE_BASE/adapters/$adapter/adapter.toml" -o "$FETCH_DIR/adapters/$adapter/adapter.toml"
-    executable=$(awk -F '"' '/^executable[[:space:]]*=/{ print $2; exit }' "$FETCH_DIR/adapters/$adapter/adapter.toml")
-    [ -n "$executable" ] || { printf 'ctx: invalid first-party adapter manifest for %s\n' "$adapter" >&2; exit 1; }
-    for manifest_key in executable executable_windows; do
-      adapter_file=$(awk -F '"' -v key="$manifest_key" '$1 ~ "^" key "[[:space:]]*=" { print $2; exit }' "$FETCH_DIR/adapters/$adapter/adapter.toml")
-      [ -n "$adapter_file" ] || continue
-      curl -fsSL "$SOURCE_BASE/adapters/$adapter/$adapter_file" -o "$FETCH_DIR/adapters/$adapter/$adapter_file"
-    done
-    chmod +x "$FETCH_DIR/adapters/$adapter/$executable"
-  done
-  SRC_DIR=$FETCH_DIR
+  archive="$temporary/$asset"
+  curl -fsSL "$release_base/$asset" -o "$archive"
+  curl -fsSL "$release_base/checksums.txt" -o "$temporary/checksums.txt"
+  expected=$(awk -v asset="$asset" '$2 == asset || $2 == "*" asset { print $1; exit }' "$temporary/checksums.txt")
+  [ -n "$expected" ] || { printf 'ctx: release checksum is missing for %s\n' "$asset" >&2; exit 1; }
+  if command -v shasum >/dev/null 2>&1; then actual=$(shasum -a 256 "$archive" | awk '{print $1}')
+  elif command -v sha256sum >/dev/null 2>&1; then actual=$(sha256sum "$archive" | awk '{print $1}')
+  else printf 'ctx: shasum or sha256sum is required to verify the release\n' >&2; exit 1
+  fi
+  [ "$actual" = "$expected" ] || { printf 'ctx: release checksum verification failed for %s\n' "$asset" >&2; exit 1; }
+  tar -xzf "$archive" -C "$temporary"
 fi
 
-mkdir -p "$DST_BIN" "$CONFIG_DIR" "$CONFIG_DIR/adapters"
-cp "$SRC_DIR/bin/ctx" "$DST_BIN/ctx"
+[ -x "$bundle/bin/ctx" ] || { printf 'ctx: native bundle is missing ctx\n' >&2; exit 1; }
+target="$DST_BIN/ctx"
+if [ -e "$target" ] || [ -L "$target" ]; then
+  "$target" version 2>/dev/null | grep -Eq '^ctx ' || { printf 'ctx: %s exists; choose another CTX_BIN_DIR\n' "$target" >&2; exit 1; }
+fi
+
+MIGRATE_ADAPTERS=
+for adapter in docker podman nerdctl; do
+  shim="$DST_BIN/$adapter"
+  if { [ -e "$shim" ] || [ -L "$shim" ]; } && \
+    dd if="$shim" bs=256 count=1 2>/dev/null | grep -Eq 'ctx wrapper|dctx shim'; then
+    MIGRATE_ADAPTERS="$MIGRATE_ADAPTERS $adapter"
+  fi
+done
+
+mkdir -p "$DST_BIN" "$CONFIG_DIR/adapters" "$CONFIG_DIR/catalog/adapters"
+cp "$bundle/bin/ctx" "$DST_BIN/ctx"
 chmod +x "$DST_BIN/ctx"
-for tool in $CORE_ENGINE_ADAPTERS; do
-  cp "$SRC_DIR/adapters/$tool/$tool" "$DST_BIN/$tool"
-  chmod +x "$DST_BIN/$tool"
+for adapter in $BUNDLED_ADAPTERS; do
+  source_adapter="$bundle/adapters/$adapter"
+  target_adapter="$CONFIG_DIR/catalog/adapters/$adapter"
+  if [ -e "$target_adapter" ]; then rm -rf "$target_adapter"; fi
+  cp -R "$source_adapter" "$target_adapter"
+done
+CTX_HOME="$CONFIG_DIR" CTX_BIN_DIR="$DST_BIN" "$DST_BIN/ctx" adapter refresh >/dev/null
+for adapter in $MIGRATE_ADAPTERS; do
+  rm -f "$DST_BIN/$adapter"
+  CTX_HOME="$CONFIG_DIR" CTX_BIN_DIR="$DST_BIN" "$DST_BIN/ctx" adapter add "$adapter" >/dev/null
 done
 
-for adapter in $BUNDLED_ADAPTERS; do
-  source_adapter="$SRC_DIR/adapters/$adapter"
-  target_adapter="$CONFIG_DIR/adapters/$adapter"
-  [ -f "$source_adapter/adapter.toml" ] || { printf 'ctx: bundled adapter %s is missing\n' "$adapter" >&2; exit 1; }
-  if [ -e "$target_adapter" ]; then
-    rm -rf "$target_adapter"
-  fi
-  mkdir -p "$target_adapter"
-  cp -R "$source_adapter/." "$target_adapter/"
-done
-
-for adapter in $BUNDLED_ADAPTERS; do
-  CTX_HOME="$CONFIG_DIR" "$DST_BIN/ctx" adapter trust "$adapter" >/dev/null
-done
+case "$SETUP_MODE" in
+  all) CTX_HOME="$CONFIG_DIR" CTX_BIN_DIR="$DST_BIN" "$DST_BIN/ctx" setup --all ;;
+  minimal) CTX_HOME="$CONFIG_DIR" CTX_BIN_DIR="$DST_BIN" "$DST_BIN/ctx" setup --minimal ;;
+  selected) CTX_HOME="$CONFIG_DIR" CTX_BIN_DIR="$DST_BIN" "$DST_BIN/ctx" setup --adapters "$SETUP_ADAPTERS" ;;
+  interactive)
+    if ( : </dev/tty >/dev/tty ) 2>/dev/null; then
+      CTX_HOME="$CONFIG_DIR" CTX_BIN_DIR="$DST_BIN" "$DST_BIN/ctx" setup </dev/tty >/dev/tty
+    else
+      printf 'No interactive terminal detected; no new adapters were selected.\n'
+      printf 'Run %s/ctx setup when ready.\n' "$DST_BIN"
+    fi
+    ;;
+esac
 
 if [ ! -f "$CONFIG_DIR/config.toml" ]; then
-  cat > "$CONFIG_DIR/config.toml" <<'TOML'
-# Optional fallbacks when a project has no .ctx choice.
-# docker_default = "my-docker-context"
-# podman_default = "my-podman-connection"
-# nerdctl_default = "default"
-
-# Optional named bundle:
-# [profiles."client-a"]
-# docker = "my-docker-context"
-# kube_context = "client-a-dev"
-# kube_namespace = "payments"
-# aws_profile = "client-a"
-# gcloud_configuration = "client-a"
-# browser = "firefox:client-a"
-# postgres_service = "client-a-dev"
-# mysql_login_path = "client-a"
-# shell_path = "/opt/client-a/bin"
-# [profiles."client-a".env]
-# APP_ENV = "development"
-
-# Optional project mapping:
-# [projects."/absolute/path/to/project"]
-# docker = "my-docker-context"
-# podman = "my-podman-connection"
-# nerdctl = "default"
-TOML
+  printf '%s\n' '# ctx configuration' '# docker_default = "desktop-linux"' '# podman_default = "podman-machine-default"' '# nerdctl_default = "default"' > "$CONFIG_DIR/config.toml"
 fi
 
-printf 'Installed ctx, docker, podman, and nerdctl wrappers in %s\n' "$DST_BIN"
-case ":$PATH:" in
-  *":$DST_BIN:"*) ;;
-  *) printf 'Add this directory before Docker, Podman, and nerdctl on PATH: export PATH="%s:$PATH"\n' "$DST_BIN" ;;
-esac
+printf 'Installed ctx and adapter catalog in %s\n' "$DST_BIN"
 printf 'Config: %s/config.toml\n' "$CONFIG_DIR"
-printf 'Adapters: %s/adapters\n' "$CONFIG_DIR"
+case ":$PATH:" in *":$DST_BIN:"*) ;; *) printf 'Add %s before Docker, Podman, and nerdctl on PATH.\n' "$DST_BIN";; esac
 for rc in "$HOME/.zshrc" "$HOME/.bashrc"; do
   if [ -f "$rc" ] && grep -q 'dctx hook' "$rc"; then
     printf 'Old dctx shell hook found in %s; remove that line so it cannot override ctx.\n' "$rc"

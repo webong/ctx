@@ -9,7 +9,11 @@ export HOME="$TEST_ROOT/home"
 export CTX_HOME="$HOME/.config/ctx"
 export CTX_BIN_DIR="$TEST_ROOT/bin"
 export CTX_PLATFORM=Darwin
-mkdir -p "$HOME" "$CTX_BIN_DIR" "$TEST_ROOT/fake-bin" "$TEST_ROOT/project"
+mkdir -p "$HOME" "$CTX_BIN_DIR" "$TEST_ROOT/fake-bin" "$TEST_ROOT/project" \
+  "$TEST_ROOT/mapped" "$HOME/Library/Application Support/Google/Chrome/Default" \
+  "$HOME/Library/Application Support/Google/Chrome/Profile 1"
+printf '{}\n' > "$HOME/Library/Application Support/Google/Chrome/Default/Preferences"
+printf '{}\n' > "$HOME/Library/Application Support/Google/Chrome/Profile 1/Preferences"
 
 for tool in docker podman nerdctl container kubectl aws gcloud open shell; do
   cp "$ROOT/tests/fake-$tool" "$TEST_ROOT/fake-bin/$tool"
@@ -24,12 +28,12 @@ GOCACHE=${GOCACHE:-/tmp/ctx-go-build-cache} GOMODCACHE=${GOMODCACHE:-/tmp/ctx-go
   go build -o "$CTX_BIN_DIR/ctx" "$ROOT/cmd/ctx"
 
 mkdir -p "$CTX_HOME/catalog/adapters"
-for adapter in docker podman nerdctl apple firefox kube aws gcloud postgres mysql; do
+for adapter in docker podman nerdctl apple firefox chrome kube aws gcloud postgres mysql; do
   cp -R "$ROOT/adapters/$adapter" "$CTX_HOME/catalog/adapters/$adapter"
 done
 ctx adapter available | grep -Eq '^docker[[:space:]]+container[[:space:]]+available'
-ctx setup --adapters docker,podman,nerdctl,apple,firefox,kube,aws,gcloud,postgres,mysql >/dev/null
-for adapter in docker podman nerdctl apple firefox kube aws gcloud postgres mysql; do
+ctx setup --adapters docker,podman,nerdctl,apple,firefox,chrome,kube,aws,gcloud,postgres,mysql >/dev/null
+for adapter in docker podman nerdctl apple firefox chrome kube aws gcloud postgres mysql; do
   ctx adapter ls | grep -Eq "^${adapter}[[:space:]]+trusted"
 done
 for engine in docker podman nerdctl; do test -x "$CTX_BIN_DIR/$engine"; done
@@ -40,16 +44,20 @@ ctx adapter add nerdctl >/dev/null
 test -x "$CTX_BIN_DIR/nerdctl"
 ctx adapter refresh >/dev/null
 
+ctx adapter test "$ROOT/examples/adapters/echo" | grep -Fq 'adapter echo satisfies ctx adapter API v1'
 ctx adapter install "$ROOT/examples/adapters/echo" >/dev/null
 if ctx adapter doctor echo >/dev/null 2>&1; then
   printf 'native core executed an untrusted adapter\n' >&2
   exit 1
 fi
 ctx adapter trust echo >/dev/null
+ctx adapter inspect echo | grep -Fq 'api:          1'
+ctx adapter inspect echo | grep -Fq 'state:        trusted'
 
 mkdir -p "$HOME/Library/Application Support/Firefox"
 printf '%s\n' '[Profile0]' 'Name=client-a' > "$HOME/Library/Application Support/Firefox/profiles.ini"
 
+git init -q "$TEST_ROOT/project"
 cd "$TEST_ROOT/project"
 ctx set docker alpha >/dev/null
 ctx set podman red >/dev/null
@@ -62,6 +70,10 @@ ctx set browser firefox:client-a >/dev/null
 ctx set postgres client-a-dev >/dev/null
 ctx set mysql client-a >/dev/null
 ctx set echo staging >/dev/null
+grep -Fxq 'docker = "alpha"' .ctx
+grep -Fxq 'podman = "red"' .ctx
+grep -Fxq 'nerdctl = "k8s.io"' .ctx
+git check-ignore -q .ctx
 
 test "$(ctx real docker)" = "$TEST_ROOT/fake-bin/docker"
 test "$(CTX_SHELL=custom-shell ctx shell)" = 'custom shell'
@@ -70,24 +82,39 @@ ctx completion powershell | grep -Fq 'Register-ArgumentCompleter'
 test "$(ctx run docker ps)" = '--context alpha ps'
 test "$(docker ps)" = '--context alpha ps'
 test "$(DOCKER_CONTEXT=environment ctx status docker)" = 'docker: environment (DOCKER_CONTEXT)'
+test "$(DOCKER_CONTEXT=environment docker ps)" = 'ps'
+test "$(docker --context beta ps)" = '--context beta ps'
 test "$(ctx run podman ps)" = '--connection red ps'
 test "$(podman ps)" = '--connection red ps'
+test "$(CONTAINER_CONNECTION=blue podman ps)" = 'ps'
+test "$(podman --connection blue ps)" = '--connection blue ps'
 test "$(ctx run nerdctl ps)" = '--namespace k8s.io ps'
 test "$(nerdctl ps)" = '--namespace k8s.io ps'
+test "$(CONTAINERD_NAMESPACE=default nerdctl ps)" = 'ps'
+test "$(nerdctl --namespace default ps)" = '--namespace default ps'
 test "$(ctx run container list)" = 'list'
 test "$(ctx run apple list)" = 'list'
 ctx clear docker >/dev/null
 test "$(ctx run docker ps)" = 'ps'
 test "$(docker ps)" = 'ps'
 ctx set docker alpha >/dev/null
-test "$(ctx ls browser)" = 'firefox:client-a'
+ctx ls browser | grep -Fxq 'firefox:client-a'
+ctx ls browser | grep -Fxq 'chrome:Profile 1'
 test "$(ctx run kubectl get pods)" = '--context production --namespace payments get pods'
+test "$(ctx run kubectl --context staging -n operations get pods)" = '--context staging -n operations get pods'
 test "$(ctx run aws sts get-caller-identity)" = '--profile client-a sts get-caller-identity'
+test "$(AWS_PROFILE=default ctx run aws sts get-caller-identity)" = 'sts get-caller-identity'
 test "$(ctx run gcloud projects list)" = '--configuration client-a projects list'
+test "$(CLOUDSDK_ACTIVE_CONFIG_NAME=default ctx run gcloud projects list)" = 'projects list'
 test "$(ctx run psql app)" = 'PGSERVICE=client-a-dev app'
+test "$(PGSERVICE=override ctx run psql app)" = 'PGSERVICE=override app'
 test "$(ctx run mysql app)" = '--login-path=client-a app'
+test "$(ctx run mysql --login-path=override app)" = '--login-path=override app'
 test "$(ctx run echo hello)" = 'run[staging] hello'
 test "$(ctx open https://example.test)" = '-na Firefox --args -P client-a https://example.test'
+ctx set browser chrome:'Profile 1' >/dev/null
+test "$(ctx open https://example.test)" = '-na Google Chrome --args --profile-directory=Profile 1 https://example.test'
+ctx set browser firefox:client-a >/dev/null
 ctx adapter inspect firefox | grep -Fq 'kind:         browser'
 ctx adapter inspect docker | grep -Fq 'kind:         container'
 ctx adapter inspect docker | grep -Fq 'default:      true'
@@ -157,5 +184,48 @@ case "$(ctx env)" in *'PATH=/client/bin:'*) ;; *) exit 1 ;; esac
 ctx profile env-unset client-b APP_ENV >/dev/null
 ctx profile unset client-b shell_path >/dev/null
 ctx profile clear >/dev/null
+
+# Central mappings and global fallbacks remain compatible with the shell-era
+# configuration format.
+printf '\n[projects."%s"]\ndocker = "beta"\npodman = "blue"\nnerdctl = "default"\n' "$TEST_ROOT/mapped" >> "$CTX_HOME/config.toml"
+cd "$TEST_ROOT/mapped"
+test "$(docker ps)" = '--context beta ps'
+test "$(podman ps)" = '--connection blue ps'
+test "$(nerdctl ps)" = '--namespace default ps'
+
+cd "$HOME"
+test "$(docker ps)" = 'ps'
+test "$(podman ps)" = 'ps'
+test "$(nerdctl ps)" = 'ps'
+ctx set docker alpha --global >/dev/null
+ctx set podman red --global >/dev/null
+ctx set nerdctl default --global >/dev/null
+test "$(docker ps)" = '--context alpha ps'
+test "$(podman ps)" = '--connection red ps'
+test "$(nerdctl ps)" = '--namespace default ps'
+if ctx set docker missing >/dev/null 2>&1; then
+  printf 'native core accepted an invalid Docker context\n' >&2
+  exit 1
+fi
+if ctx set podman missing >/dev/null 2>&1; then
+  printf 'native core accepted an invalid Podman connection\n' >&2
+  exit 1
+fi
+if ctx set nerdctl missing >/dev/null 2>&1; then
+  printf 'native core accepted an invalid nerdctl namespace\n' >&2
+  exit 1
+fi
+
+ctx set echo local >/dev/null
+printf '\n# changed after trust\n' >> "$CTX_HOME/adapters/echo/ctx-echo"
+if ctx run echo changed >/dev/null 2>&1; then
+  printf 'changed adapter retained trust\n' >&2
+  exit 1
+fi
+ctx adapter trust echo >/dev/null
+test "$(ctx run echo trusted-again)" = 'run[local] trusted-again'
+ctx clear echo >/dev/null
+ctx adapter remove echo >/dev/null
+test ! -e "$CTX_HOME/adapters/echo"
 
 printf 'ctx native adapter tests passed\n'
