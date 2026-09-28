@@ -14,4 +14,6 @@ profile discovery, validation, and launching.
 `kube`, `aws`, `gcloud`, `postgres`, and `mysql` are installed first-party
 selector adapters. Every installed adapter has an `adapter.toml` manifest and
 implements ctx adapter API v1. They are installed under `$CTX_HOME/adapters` and
-trusted by the ctx installer.
+trusted by the ctx installer. A package can declare `executable_windows` alongside
+its default `executable`; the native core selects the platform implementation at
+runtime while keeping one manifest, capability set, and trust record.

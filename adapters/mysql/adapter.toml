@@ -1,6 +1,7 @@
 api_version = "1"
 name = "mysql"
 executable = "ctx-mysql"
+executable_windows = "ctx-mysql.ps1"
 description = "First-party MySQL login-path adapter"
 capabilities = "validate,run,doctor"
 selector_key = "mysql_login_path"

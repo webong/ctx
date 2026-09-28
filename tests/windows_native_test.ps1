@@ -1,0 +1,114 @@
+[CmdletBinding()]
+param()
+
+$ErrorActionPreference = 'Stop'
+$root = Split-Path -Parent $PSScriptRoot
+$testRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("ctx-windows-test-" + [guid]::NewGuid().ToString('N'))
+$bin = Join-Path $testRoot 'bin'
+$config = Join-Path $testRoot 'config'
+$fakeBin = Join-Path $testRoot 'fake-bin'
+$project = Join-Path $testRoot 'project'
+
+function Assert-Success([string]$Description) {
+    if ($LASTEXITCODE -ne 0) { throw "$Description failed with exit code $LASTEXITCODE" }
+}
+
+function Assert-Output([string]$Description, [string]$Expected, [object[]]$Actual) {
+    $joined = ($Actual -join "`n").Trim()
+    if ($joined -ne $Expected) { throw "$Description output was '$joined'; expected '$Expected'" }
+}
+
+try {
+    New-Item -ItemType Directory -Force -Path $fakeBin, $project | Out-Null
+
+    $parseFailures = @()
+    Get-ChildItem (Join-Path $root 'adapters') -Recurse -Filter '*.ps1' | ForEach-Object {
+        $tokens = $null; $errors = $null
+        [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$errors) | Out-Null
+        if ($errors.Count -gt 0) { $parseFailures += "$($_.FullName): $($errors -join '; ')" }
+    }
+    if ($parseFailures.Count -gt 0) { throw ($parseFailures -join "`n") }
+
+    & (Join-Path $root 'install.ps1') -BinDir $bin -ConfigDir $config
+    Assert-Success 'source installation'
+
+    @'
+@echo off
+if "%1 %2"=="configure list-profiles" (
+  echo client-a
+  exit /b 0
+)
+echo %*
+'@ | Set-Content -Encoding ASCII (Join-Path $fakeBin 'aws.cmd')
+    @'
+@echo off
+if "%1"=="config" (
+  echo client-a
+  exit /b 0
+)
+echo %*
+'@ | Set-Content -Encoding ASCII (Join-Path $fakeBin 'gcloud.cmd')
+    @'
+@echo off
+if "%1 %2"=="config get-contexts" (
+  exit /b 0
+)
+echo %*
+'@ | Set-Content -Encoding ASCII (Join-Path $fakeBin 'kubectl.cmd')
+    @'
+@echo off
+echo PGSERVICE=%PGSERVICE% %*
+'@ | Set-Content -Encoding ASCII (Join-Path $fakeBin 'psql.cmd')
+    @'
+@echo off
+echo %*
+'@ | Set-Content -Encoding ASCII (Join-Path $fakeBin 'mysql.cmd')
+    @'
+@echo off
+echo %*
+'@ | Set-Content -Encoding ASCII (Join-Path $fakeBin 'firefox.cmd')
+
+    $env:CTX_HOME = $config
+    $env:CTX_BIN_DIR = $bin
+    $env:APPDATA = Join-Path $testRoot 'AppData\Roaming'
+    $env:LOCALAPPDATA = Join-Path $testRoot 'AppData\Local'
+    $env:PATH = "$bin;$fakeBin;$env:PATH"
+    $profilesDirectory = Join-Path $env:APPDATA 'Mozilla\Firefox'
+    New-Item -ItemType Directory -Force -Path $profilesDirectory | Out-Null
+    "[Profile0]`r`nName=client-a`r`n" | Set-Content -Encoding ASCII (Join-Path $profilesDirectory 'profiles.ini')
+
+    Push-Location $project
+    try {
+        $ctx = Join-Path $bin 'ctx.exe'
+        & $ctx set aws client-a | Out-Null; Assert-Success 'AWS selection'
+        & $ctx set gcloud client-a | Out-Null; Assert-Success 'gcloud selection'
+        & $ctx set kube production --namespace payments | Out-Null; Assert-Success 'Kubernetes selection'
+        & $ctx set postgres client-a-dev | Out-Null; Assert-Success 'PostgreSQL selection'
+        & $ctx set mysql client-a | Out-Null; Assert-Success 'MySQL selection'
+        & $ctx set browser firefox:client-a | Out-Null; Assert-Success 'browser selection'
+
+        Assert-Output 'AWS routing' '--profile client-a sts get-caller-identity' @(& $ctx run aws sts get-caller-identity)
+        Assert-Success 'AWS routing'
+        Assert-Output 'gcloud routing' '--configuration client-a projects list' @(& $ctx run gcloud projects list)
+        Assert-Success 'gcloud routing'
+        Assert-Output 'Kubernetes routing' '--context production --namespace payments get pods' @(& $ctx run kubectl get pods)
+        Assert-Success 'Kubernetes routing'
+        Assert-Output 'PostgreSQL routing' 'PGSERVICE=client-a-dev app' @(& $ctx run psql app)
+        Assert-Success 'PostgreSQL routing'
+        Assert-Output 'MySQL routing' '--login-path=client-a app' @(& $ctx run mysql app)
+        Assert-Success 'MySQL routing'
+        Assert-Output 'browser listing' 'firefox:client-a' @(& $ctx ls browser)
+        Assert-Success 'browser listing'
+        Assert-Output 'browser launch' '-P client-a https://example.test' @(& $ctx open https://example.test)
+        Assert-Success 'browser launch'
+        & $ctx doctor | Out-Null; Assert-Success 'ctx doctor'
+    }
+    finally {
+        Pop-Location
+    }
+
+    Write-Host 'ctx native Windows tests passed'
+}
+finally {
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $testRoot
+}

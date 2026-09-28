@@ -77,6 +77,32 @@ func TestManifestDefaultsAndKinds(t *testing.T) {
 	}
 }
 
+func TestManifestSelectsPlatformExecutable(t *testing.T) {
+	directory := fixtureAdapter(t, t.TempDir(), "echo", "selector")
+	manifestPath := filepath.Join(directory, "adapter.toml")
+	manifest, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest = append(manifest, []byte("executable_windows = \"ctx-echo.ps1\"\n")...)
+	if err := os.WriteFile(manifestPath, manifest, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "ctx-echo.ps1"), []byte("exit 0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadDirectory(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := filepath.Base(loaded.ExecutablePathForOS("windows")); got != "ctx-echo.ps1" {
+		t.Fatalf("windows executable = %q", got)
+	}
+	if got := filepath.Base(loaded.ExecutablePathForOS("linux")); got != "ctx-echo" {
+		t.Fatalf("linux executable = %q", got)
+	}
+}
+
 func TestCommandProtocol(t *testing.T) {
 	directory := fixtureAdapter(t, t.TempDir(), "echo", "selector")
 	loaded, err := LoadDirectory(directory)

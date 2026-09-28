@@ -1,6 +1,7 @@
 api_version = "1"
 name = "postgres"
 executable = "ctx-postgres"
+executable_windows = "ctx-postgres.ps1"
 description = "First-party PostgreSQL service adapter"
 capabilities = "configure,validate,run,doctor"
 selector_key = "postgres_service"

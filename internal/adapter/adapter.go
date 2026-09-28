@@ -28,16 +28,17 @@ var reservedNames = map[string]bool{
 }
 
 type Manifest struct {
-	APIVersion   string
-	Name         string
-	Kind         string
-	Executable   string
-	Description  string
-	Capabilities []string
-	SelectorKey  string
-	ExtraKeys    []string
-	Commands     []string
-	FirstParty   bool
+	APIVersion        string
+	Name              string
+	Kind              string
+	Executable        string
+	ExecutableWindows string
+	Description       string
+	Capabilities      []string
+	SelectorKey       string
+	ExtraKeys         []string
+	Commands          []string
+	FirstParty        bool
 }
 
 type Adapter struct {
@@ -72,16 +73,17 @@ func LoadDirectory(directory string) (*Adapter, error) {
 		return nil, err
 	}
 	manifest := Manifest{
-		APIVersion:   values["api_version"],
-		Name:         values["name"],
-		Kind:         values["kind"],
-		Executable:   values["executable"],
-		Description:  values["description"],
-		Capabilities: splitList(values["capabilities"]),
-		SelectorKey:  values["selector_key"],
-		ExtraKeys:    splitList(values["extra_keys"]),
-		Commands:     splitList(values["commands"]),
-		FirstParty:   values["first_party"] == "true",
+		APIVersion:        values["api_version"],
+		Name:              values["name"],
+		Kind:              values["kind"],
+		Executable:        values["executable"],
+		ExecutableWindows: values["executable_windows"],
+		Description:       values["description"],
+		Capabilities:      splitList(values["capabilities"]),
+		SelectorKey:       values["selector_key"],
+		ExtraKeys:         splitList(values["extra_keys"]),
+		Commands:          splitList(values["commands"]),
+		FirstParty:        values["first_party"] == "true",
 	}
 	if manifest.Kind == "" {
 		manifest.Kind = "selector"
@@ -152,7 +154,15 @@ func (a *Adapter) ConfigKeys() []string {
 }
 
 func (a *Adapter) ExecutablePath() string {
-	return filepath.Join(a.Directory, a.Manifest.Executable)
+	return a.ExecutablePathForOS(runtime.GOOS)
+}
+
+func (a *Adapter) ExecutablePathForOS(goos string) string {
+	executable := a.Manifest.Executable
+	if goos == "windows" && a.Manifest.ExecutableWindows != "" {
+		executable = a.Manifest.ExecutableWindows
+	}
+	return filepath.Join(a.Directory, executable)
 }
 
 func (a *Adapter) Checksum() (string, error) {
@@ -325,16 +335,21 @@ func validateManifest(manifest Manifest, directory string) error {
 			return fmt.Errorf("adapter %s has invalid key or command %s", manifest.Name, key)
 		}
 	}
-	if manifest.Executable == "" || filepath.Base(manifest.Executable) != manifest.Executable || strings.HasPrefix(manifest.Executable, ".") {
-		return fmt.Errorf("adapter %s has an invalid executable name", manifest.Name)
-	}
-	executable := filepath.Join(directory, manifest.Executable)
-	info, err := os.Stat(executable)
-	if err != nil || !info.Mode().IsRegular() {
-		return fmt.Errorf("adapter executable is missing: %s", executable)
-	}
-	if runtime.GOOS != "windows" && info.Mode().Perm()&0o111 == 0 {
-		return fmt.Errorf("adapter executable is not executable: %s", executable)
+	for platform, executableName := range map[string]string{"default": manifest.Executable, "windows": manifest.ExecutableWindows} {
+		if platform == "windows" && executableName == "" {
+			continue
+		}
+		if executableName == "" || filepath.Base(executableName) != executableName || strings.HasPrefix(executableName, ".") {
+			return fmt.Errorf("adapter %s has an invalid %s executable name", manifest.Name, platform)
+		}
+		executable := filepath.Join(directory, executableName)
+		info, err := os.Stat(executable)
+		if err != nil || !info.Mode().IsRegular() {
+			return fmt.Errorf("adapter executable is missing: %s", executable)
+		}
+		if platform == "default" && runtime.GOOS != "windows" && info.Mode().Perm()&0o111 == 0 {
+			return fmt.Errorf("adapter executable is not executable: %s", executable)
+		}
 	}
 	if !contains(manifest.Capabilities, "validate") || !contains(manifest.Capabilities, "doctor") || (!contains(manifest.Capabilities, "run") && !contains(manifest.Capabilities, "open")) {
 		return fmt.Errorf("adapter %s must provide validate, doctor, and run or open", manifest.Name)

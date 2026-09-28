@@ -26,9 +26,7 @@ jobs:
       - name: Test Windows source installer
         if: runner.os == 'Windows'
         shell: pwsh
-        run: |
-          ./install.ps1 -BinDir "$env:RUNNER_TEMP/ctx/bin" -ConfigDir "$env:RUNNER_TEMP/ctx/config"
-          & "$env:RUNNER_TEMP/ctx/bin/ctx.exe" version
+        run: ./tests/windows_native_test.ps1
 
   legacy-shell:
     runs-on: ubuntu-latest

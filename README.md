@@ -10,7 +10,8 @@ global default. External adapters can add selectors without changing ctx itself.
 > **Cross-platform migration:** a native Go core is now under development in
 > `cmd/ctx`. It already provides cross-platform context resolution, shell/profile
 > environments, trusted adapter execution, browser providers, configuration
-> mutations, and container command routing, and it cross-compiles for Windows.
+> mutations, container transfers, and container command routing. It cross-compiles
+> for Windows and ships native PowerShell implementations of bundled providers.
 > The POSIX implementation remains the default release until native command
 > parity is complete. See [the migration status](docs/cross-platform.md).
 

@@ -18,6 +18,8 @@ reaches command parity.
 - Atomic, lock-protected `set`, `clear`, and profile configuration mutations.
 - Registry-backed build caches plus image and named-volume transfers across
   Docker, Podman, nerdctl/containerd, and Apple Container endpoints.
+- Windows-native PowerShell providers for the bundled browser, Kubernetes, cloud,
+  PostgreSQL, and MySQL adapters.
 
 Build the preview locally:
 
@@ -35,7 +37,6 @@ ctx.exe version
 
 ## Remaining parity work
 
-- Windows-native implementations of the bundled browser and selector adapters.
 - Native macOS/Linux installation and signed release artifacts.
 - PowerShell completion and richer Windows shell selection.
 

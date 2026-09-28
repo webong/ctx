@@ -1,6 +1,7 @@
 # ctx adapter API v1
 
-An external adapter is a directory containing `adapter.toml` and one executable.
+An external adapter is a directory containing `adapter.toml` and at least one
+executable.
 ctx installs adapters under `$CTX_HOME/adapters`; it never discovers or sources
 code from the current directory or arbitrary `PATH` entries.
 
@@ -11,6 +12,8 @@ api_version = "1"
 name = "example"
 kind = "selector"
 executable = "ctx-example"
+# Optional native Windows implementation. When absent, executable is used.
+executable_windows = "ctx-example.ps1"
 description = "Example context adapter"
 capabilities = "list,validate,run,doctor,open"
 selector_key = "example_context"
@@ -36,7 +39,11 @@ packages shipped by ctx; it does not bypass checksum trust.
 
 ## Process protocol
 
-ctx invokes the executable with one of these forms:
+ctx selects `executable_windows` on Windows when it is present and otherwise uses
+`executable`. Windows adapters may be `.exe`, `.cmd`, `.bat`, or `.ps1`; PowerShell
+scripts are launched without loading the user's profile.
+
+ctx invokes the selected executable with one of these forms:
 
 ~~~text
 ctx-example list

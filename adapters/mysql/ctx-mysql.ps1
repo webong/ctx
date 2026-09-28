@@ -1,0 +1,25 @@
+[CmdletBinding(PositionalBinding = $false)]
+param(
+    [Parameter(Position = 0)][string]$Operation,
+    [Parameter(Position = 1)][string]$Selection,
+    [Parameter(Position = 2, ValueFromRemainingArguments = $true)][string[]]$Arguments
+)
+
+$mysql = Get-Command mysql.exe -ErrorAction SilentlyContinue
+if (-not $mysql) { $mysql = Get-Command mysql -ErrorAction SilentlyContinue }
+if (-not $mysql) { [Console]::Error.WriteLine('mysql: mysql client is not installed'); exit 127 }
+
+switch ($Operation) {
+    { $_ -eq 'validate' -or $_ -eq 'doctor' } { exit 0 }
+    'run' {
+        if ($Arguments.Count -gt 0 -and $Arguments[0] -eq '--') { $Arguments = @($Arguments | Select-Object -Skip 1) }
+        $commandName = if ($env:CTX_ADAPTER_COMMAND) { $env:CTX_ADAPTER_COMMAND } else { 'mysql' }
+        $client = Get-Command $commandName -ErrorAction SilentlyContinue
+        if (-not $client) { [Console]::Error.WriteLine("mysql: $commandName is not installed"); exit 127 }
+        $hasLoginPath = $false
+        foreach ($argument in $Arguments) { if ($argument -eq '--login-path' -or $argument -like '--login-path=*') { $hasLoginPath = $true } }
+        if ($hasLoginPath) { & $client.Source @Arguments } else { & $client.Source "--login-path=$Selection" @Arguments }
+        exit $LASTEXITCODE
+    }
+    default { exit 2 }
+}

@@ -56,7 +56,11 @@ if [ -z "$SRC_DIR" ]; then
     curl -fsSL "$SOURCE_BASE/adapters/$adapter/adapter.toml" -o "$FETCH_DIR/adapters/$adapter/adapter.toml"
     executable=$(awk -F '"' '/^executable[[:space:]]*=/{ print $2; exit }' "$FETCH_DIR/adapters/$adapter/adapter.toml")
     [ -n "$executable" ] || { printf 'ctx: invalid first-party adapter manifest for %s\n' "$adapter" >&2; exit 1; }
-    curl -fsSL "$SOURCE_BASE/adapters/$adapter/$executable" -o "$FETCH_DIR/adapters/$adapter/$executable"
+    for manifest_key in executable executable_windows; do
+      adapter_file=$(awk -F '"' -v key="$manifest_key" '$1 ~ "^" key "[[:space:]]*=" { print $2; exit }' "$FETCH_DIR/adapters/$adapter/adapter.toml")
+      [ -n "$adapter_file" ] || continue
+      curl -fsSL "$SOURCE_BASE/adapters/$adapter/$adapter_file" -o "$FETCH_DIR/adapters/$adapter/$adapter_file"
+    done
     chmod +x "$FETCH_DIR/adapters/$adapter/$executable"
   done
   SRC_DIR=$FETCH_DIR

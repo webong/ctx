@@ -1,6 +1,7 @@
 api_version = "1"
 name = "gcloud"
 executable = "ctx-gcloud"
+executable_windows = "ctx-gcloud.ps1"
 description = "First-party Google Cloud configuration adapter"
 capabilities = "list,validate,run,doctor"
 selector_key = "gcloud_configuration"
