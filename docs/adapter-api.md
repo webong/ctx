@@ -21,7 +21,6 @@ extra_keys = "example_namespace"
 commands = "example,examplectl"
 # Native variables that take priority over the stored selection.
 override_env = "EXAMPLE_CONTEXT,EXAMPLE_HOST"
-first_party = "false"
 # Optional for kind = "container". At most one installed provider should set it.
 default_provider = "false"
 ~~~
@@ -48,9 +47,8 @@ values owned by the adapter. `commands` defaults to the adapter name for selecto
 and container adapters and lets `ctx run` route native command names to the
 adapter. `override_env` declares native environment variables, in precedence
 order, that `ctx status` should report instead of the stored selection. The
-provider remains responsible for honoring them during `run`. `first_party`
-identifies packages shipped by ctx; it does not bypass checksum trust.
-`default_provider` lets legacy unqualified build, image-sync, and
+provider remains responsible for honoring them during `run`. `default_provider`
+lets legacy unqualified build, image-sync, and
 volume endpoints choose a provider without hard-coding an engine in the core;
 multiple trusted defaults are reported as an error.
 

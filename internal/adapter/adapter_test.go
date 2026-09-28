@@ -30,7 +30,6 @@ description = "Test adapter"
 capabilities = "` + capabilities + `"
 selector_key = "` + selector + `"
 commands = "` + name + `"
-first_party = "false"
 `
 	if err := os.WriteFile(filepath.Join(directory, "adapter.toml"), []byte(manifest), 0o644); err != nil {
 		t.Fatal(err)

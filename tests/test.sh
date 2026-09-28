@@ -48,9 +48,9 @@ test -x "$CTX_BIN_DIR/nerdctl"
 test -f "$CTX_HOME/config.toml"
 test "$(ctx ls browser)" = "$(printf '%s\n' 'chrome:Default' 'chrome:Profile 1' 'chromium:Default' 'firefox:client-a' 'firefox:default-release' 'safari:default')"
 
-for first_party_adapter in firefox chrome chromium safari kube aws gcloud postgres mysql; do
-  ctx adapter ls | grep -Eq "^${first_party_adapter}[[:space:]]+trusted"
-  ctx adapter test "$ROOT/adapters/$first_party_adapter" | grep -Fq "adapter $first_party_adapter satisfies ctx adapter API v1"
+for bundled_adapter in firefox chrome chromium safari kube aws gcloud postgres mysql; do
+  ctx adapter ls | grep -Eq "^${bundled_adapter}[[:space:]]+trusted"
+  ctx adapter test "$ROOT/adapters/$bundled_adapter" | grep -Fq "adapter $bundled_adapter satisfies ctx adapter API v1"
 done
 
 ctx adapter test "$ROOT/examples/adapters/echo" | grep -Fq 'satisfies ctx adapter API v1'

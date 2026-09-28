@@ -4,7 +4,7 @@ set -eu
 DST_BIN=${CTX_BIN_DIR:-$HOME/.local/bin}
 CONFIG_DIR=${CTX_HOME:-$HOME/.config/ctx}
 VERSION=${CTX_VERSION:-latest}
-FIRST_PARTY_ADAPTERS='docker podman nerdctl apple firefox chrome chromium safari kube aws gcloud postgres mysql'
+BUNDLED_ADAPTERS='docker podman nerdctl apple firefox chrome chromium safari kube aws gcloud postgres mysql'
 ROOT=
 if [ -f "$0" ]; then ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd); fi
 
@@ -17,7 +17,7 @@ if [ -n "$ROOT" ] && [ -f "$ROOT/cmd/ctx/main.go" ]; then
   mkdir -p "$bundle/bin" "$bundle/adapters"
   (cd "$ROOT" && go build -o "$bundle/bin/ctx" ./cmd/ctx)
   for engine in docker podman nerdctl; do cp "$ROOT/adapters/$engine/$engine" "$bundle/bin/$engine"; done
-  for adapter in $FIRST_PARTY_ADAPTERS; do cp -R "$ROOT/adapters/$adapter" "$bundle/adapters/$adapter"; done
+  for adapter in $BUNDLED_ADAPTERS; do cp -R "$ROOT/adapters/$adapter" "$bundle/adapters/$adapter"; done
 else
   command -v curl >/dev/null 2>&1 || { printf 'ctx: curl is required for remote installation\n' >&2; exit 1; }
   os=$(uname -s)
@@ -60,19 +60,15 @@ for engine in docker podman nerdctl; do
   cp "$bundle/bin/$engine" "$DST_BIN/$engine"
   chmod +x "$DST_BIN/$engine"
 done
-for adapter in $FIRST_PARTY_ADAPTERS; do
+for adapter in $BUNDLED_ADAPTERS; do
   source_adapter="$bundle/adapters/$adapter"
   target_adapter="$CONFIG_DIR/adapters/$adapter"
   if [ -e "$target_adapter" ]; then
-    if ! grep -Eq '^first_party[[:space:]]*=[[:space:]]*"true"' "$target_adapter/adapter.toml" 2>/dev/null; then
-      printf 'ctx: refusing to replace non-first-party adapter %s\n' "$target_adapter" >&2
-      exit 1
-    fi
     rm -rf "$target_adapter"
   fi
   cp -R "$source_adapter" "$target_adapter"
 done
-for adapter in $FIRST_PARTY_ADAPTERS; do
+for adapter in $BUNDLED_ADAPTERS; do
   CTX_HOME="$CONFIG_DIR" "$DST_BIN/ctx" adapter trust "$adapter" >/dev/null
 done
 

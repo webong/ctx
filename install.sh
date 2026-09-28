@@ -4,7 +4,7 @@ set -eu
 DST_BIN=${CTX_BIN_DIR:-$HOME/.local/bin}
 CONFIG_DIR=${CTX_HOME:-$HOME/.config/ctx}
 CORE_ENGINE_ADAPTERS='docker podman nerdctl'
-FIRST_PARTY_ADAPTERS='firefox chrome chromium safari kube aws gcloud postgres mysql'
+BUNDLED_ADAPTERS='firefox chrome chromium safari kube aws gcloud postgres mysql'
 
 for tool in ctx $CORE_ENGINE_ADAPTERS; do
   target="$DST_BIN/$tool"
@@ -51,7 +51,7 @@ if [ -z "$SRC_DIR" ]; then
     sh -n "$FETCH_DIR/adapters/$tool/$tool"
     chmod +x "$FETCH_DIR/adapters/$tool/$tool"
   done
-  for adapter in $FIRST_PARTY_ADAPTERS; do
+  for adapter in $BUNDLED_ADAPTERS; do
     mkdir -p "$FETCH_DIR/adapters/$adapter"
     curl -fsSL "$SOURCE_BASE/adapters/$adapter/adapter.toml" -o "$FETCH_DIR/adapters/$adapter/adapter.toml"
     executable=$(awk -F '"' '/^executable[[:space:]]*=/{ print $2; exit }' "$FETCH_DIR/adapters/$adapter/adapter.toml")
@@ -74,22 +74,18 @@ for tool in $CORE_ENGINE_ADAPTERS; do
   chmod +x "$DST_BIN/$tool"
 done
 
-for adapter in $FIRST_PARTY_ADAPTERS; do
+for adapter in $BUNDLED_ADAPTERS; do
   source_adapter="$SRC_DIR/adapters/$adapter"
   target_adapter="$CONFIG_DIR/adapters/$adapter"
   [ -f "$source_adapter/adapter.toml" ] || { printf 'ctx: bundled adapter %s is missing\n' "$adapter" >&2; exit 1; }
   if [ -e "$target_adapter" ]; then
-    if ! grep -Eq '^first_party[[:space:]]*=[[:space:]]*"true"' "$target_adapter/adapter.toml" 2>/dev/null; then
-      printf 'ctx: refusing to replace non-first-party adapter %s\n' "$target_adapter" >&2
-      exit 1
-    fi
     rm -rf "$target_adapter"
   fi
   mkdir -p "$target_adapter"
   cp -R "$source_adapter/." "$target_adapter/"
 done
 
-for adapter in $FIRST_PARTY_ADAPTERS; do
+for adapter in $BUNDLED_ADAPTERS; do
   CTX_HOME="$CONFIG_DIR" "$DST_BIN/ctx" adapter trust "$adapter" >/dev/null
 done
 

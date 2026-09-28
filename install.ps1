@@ -8,7 +8,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $repositoryRoot = $PSScriptRoot
 $localSource = Test-Path (Join-Path $repositoryRoot 'cmd\ctx\main.go')
-$firstPartyAdapters = @('docker', 'podman', 'nerdctl', 'apple', 'firefox', 'chrome', 'chromium', 'safari', 'kube', 'aws', 'gcloud', 'postgres', 'mysql')
+$bundledAdapters = @('docker', 'podman', 'nerdctl', 'apple', 'firefox', 'chrome', 'chromium', 'safari', 'kube', 'aws', 'gcloud', 'postgres', 'mysql')
 $bundleRoot = $null
 $downloadRoot = $null
 
@@ -85,13 +85,9 @@ foreach ($engine in @('docker', 'podman', 'nerdctl')) {
 
 $adaptersRoot = Join-Path $ConfigDir 'adapters'
 New-Item -ItemType Directory -Force -Path $adaptersRoot | Out-Null
-foreach ($adapter in $firstPartyAdapters) {
+foreach ($adapter in $bundledAdapters) {
     $target = Join-Path $adaptersRoot $adapter
     if (Test-Path $target) {
-        $targetManifest = Join-Path $target 'adapter.toml'
-        if (-not (Test-Path $targetManifest) -or -not (Select-String -Quiet -Path $targetManifest -Pattern '^first_party\s*=\s*"true"\s*$')) {
-            throw "Refusing to replace non-first-party adapter: $target"
-        }
         Remove-Item -Recurse -Force $target
     }
     $adapterSource = if ($bundleRoot) { Join-Path $bundleRoot "adapters\$adapter" } else { Join-Path $repositoryRoot "adapters\$adapter" }
@@ -101,7 +97,7 @@ foreach ($adapter in $firstPartyAdapters) {
 $previousCtxHome = $env:CTX_HOME
 try {
     $env:CTX_HOME = $ConfigDir
-    foreach ($adapter in $firstPartyAdapters) {
+    foreach ($adapter in $bundledAdapters) {
         & $ctxTarget adapter trust $adapter | Out-Null
         if ($LASTEXITCODE -ne 0) { throw "Failed to trust bundled adapter: $adapter" }
     }

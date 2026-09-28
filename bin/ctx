@@ -106,7 +106,6 @@ adapter_validate_directory() {
   ADAPTER_SELECTOR_KEY=$(manifest_value "$manifest" selector_key)
   ADAPTER_EXTRA_KEYS=$(manifest_value "$manifest" extra_keys)
   ADAPTER_COMMANDS=$(manifest_value "$manifest" commands)
-  ADAPTER_FIRST_PARTY=$(manifest_value "$manifest" first_party)
   [ -n "$ADAPTER_KIND" ] || ADAPTER_KIND=selector
   if [ -z "$ADAPTER_SELECTOR_KEY" ]; then
     if [ "$ADAPTER_KIND" = browser ]; then ADAPTER_SELECTOR_KEY=browser

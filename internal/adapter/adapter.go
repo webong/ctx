@@ -39,7 +39,6 @@ type Manifest struct {
 	ExtraKeys         []string
 	Commands          []string
 	OverrideEnv       []string
-	FirstParty        bool
 	DefaultProvider   bool
 }
 
@@ -86,7 +85,6 @@ func LoadDirectory(directory string) (*Adapter, error) {
 		ExtraKeys:         splitList(values["extra_keys"]),
 		Commands:          splitList(values["commands"]),
 		OverrideEnv:       splitList(values["override_env"]),
-		FirstParty:        values["first_party"] == "true",
 		DefaultProvider:   values["default_provider"] == "true",
 	}
 	if manifest.Kind == "" {

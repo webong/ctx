@@ -8,4 +8,3 @@ capabilities = "list,validate,run,doctor,build,image_push,image_pull,image_save,
 selector_key = "nerdctl"
 commands = "nerdctl"
 override_env = "CONTAINERD_NAMESPACE,CONTAINERD_ADDRESS"
-first_party = "true"

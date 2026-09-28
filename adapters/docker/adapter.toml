@@ -8,5 +8,4 @@ capabilities = "list,validate,run,doctor,build,image_push,image_pull,image_save,
 selector_key = "docker"
 commands = "docker"
 override_env = "DOCKER_CONTEXT,DOCKER_HOST"
-first_party = "true"
 default_provider = "true"
