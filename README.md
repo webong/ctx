@@ -7,6 +7,12 @@ MySQL are first-party adapter packages developed in this repository and installe
 with ctx. Named profiles bundle all of these choices without changing a tool's
 global default. External adapters can add selectors without changing ctx itself.
 
+> **Cross-platform migration:** a native Go core is now under development in
+> `cmd/ctx`. It already provides cross-platform context resolution, shell/profile
+> environments, and container command routing, and it cross-compiles for Windows.
+> The POSIX implementation remains the default release until native command
+> parity is complete. See [the migration status](docs/cross-platform.md).
+
 ## Install
 
 You need curl and at least one of the Docker, Podman, or nerdctl CLIs. kubectl and
