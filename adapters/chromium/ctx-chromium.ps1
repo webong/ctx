@@ -6,8 +6,7 @@ param(
 )
 
 function Find-Chromium {
-    $command = Get-Command chromium.exe -ErrorAction SilentlyContinue
-    if (-not $command) { $command = Get-Command chromium -ErrorAction SilentlyContinue }
+    $command = Get-Command chromium -CommandType Application -ErrorAction SilentlyContinue
     if ($command) { return $command.Source }
     $candidates = @()
     if ($env:LOCALAPPDATA) { $candidates += (Join-Path $env:LOCALAPPDATA 'Chromium\Application\chrome.exe') }

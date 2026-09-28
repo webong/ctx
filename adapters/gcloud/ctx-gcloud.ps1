@@ -5,9 +5,7 @@ param(
     [Parameter(Position = 2, ValueFromRemainingArguments = $true)][string[]]$Arguments
 )
 
-$gcloud = (Get-Command gcloud.cmd -ErrorAction SilentlyContinue).Source
-if (-not $gcloud) { $gcloud = (Get-Command gcloud.exe -ErrorAction SilentlyContinue).Source }
-if (-not $gcloud) { $gcloud = (Get-Command gcloud -ErrorAction SilentlyContinue).Source }
+$gcloud = (Get-Command gcloud -CommandType Application -ErrorAction SilentlyContinue).Source
 if (-not $gcloud) { [Console]::Error.WriteLine('gcloud: Google Cloud CLI is not installed'); exit 127 }
 
 function Test-Configuration([string]$Name) {

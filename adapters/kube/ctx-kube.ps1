@@ -5,8 +5,7 @@ param(
     [Parameter(Position = 2, ValueFromRemainingArguments = $true)][string[]]$Arguments
 )
 
-$kubectl = Get-Command kubectl.exe -ErrorAction SilentlyContinue
-if (-not $kubectl) { $kubectl = Get-Command kubectl -ErrorAction SilentlyContinue }
+$kubectl = Get-Command kubectl -CommandType Application -ErrorAction SilentlyContinue
 if (-not $kubectl) { [Console]::Error.WriteLine('kube: kubectl is not installed'); exit 127 }
 $kubectlPath = $kubectl.Source
 

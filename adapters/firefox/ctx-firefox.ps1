@@ -6,8 +6,7 @@ param(
 )
 
 function Find-Firefox {
-    $command = Get-Command firefox.exe -ErrorAction SilentlyContinue
-    if (-not $command) { $command = Get-Command firefox -ErrorAction SilentlyContinue }
+    $command = Get-Command firefox -CommandType Application -ErrorAction SilentlyContinue
     if ($command) { return $command.Source }
     $candidates = @()
     if ($env:ProgramFiles) { $candidates += (Join-Path $env:ProgramFiles 'Mozilla Firefox\firefox.exe') }

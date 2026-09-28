@@ -7,6 +7,7 @@ $testRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("ctx-windows-test-" + [
 $bin = Join-Path $testRoot 'bin'
 $config = Join-Path $testRoot 'config'
 $fakeBin = Join-Path $testRoot 'fake-bin'
+$fallbackBin = Join-Path $testRoot 'fallback-bin'
 $project = Join-Path $testRoot 'project'
 
 function Assert-Success([string]$Description) {
@@ -19,7 +20,7 @@ function Assert-Output([string]$Description, [string]$Expected, [object[]]$Actua
 }
 
 try {
-    New-Item -ItemType Directory -Force -Path $fakeBin, $project | Out-Null
+    New-Item -ItemType Directory -Force -Path $fakeBin, $fallbackBin, $project | Out-Null
 
     $parseFailures = @()
     Get-ChildItem (Join-Path $root 'adapters') -Recurse -Filter '*.ps1' | ForEach-Object {
@@ -80,11 +81,15 @@ if "%1 %2"=="context inspect" exit /b 0
 echo %*
 '@ | Set-Content -Encoding ASCII (Join-Path $fakeBin 'docker.cmd')
 
+    foreach ($command in @('aws', 'gcloud', 'kubectl', 'psql', 'mysql', 'firefox')) {
+        Copy-Item (Join-Path $bin 'ctx.exe') (Join-Path $fallbackBin "$command.exe")
+    }
+
     $env:CTX_HOME = $config
     $env:CTX_BIN_DIR = $bin
     $env:APPDATA = Join-Path $testRoot 'AppData\Roaming'
     $env:LOCALAPPDATA = Join-Path $testRoot 'AppData\Local'
-    $env:PATH = "$bin;$fakeBin;$env:PATH"
+    $env:PATH = "$bin;$fakeBin;$fallbackBin;$env:PATH"
     $profilesDirectory = Join-Path $env:APPDATA 'Mozilla\Firefox'
     New-Item -ItemType Directory -Force -Path $profilesDirectory | Out-Null
     "[Profile0]`r`nName=client-a`r`n" | Set-Content -Encoding ASCII (Join-Path $profilesDirectory 'profiles.ini')

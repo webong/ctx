@@ -5,8 +5,7 @@ param(
     [Parameter(Position = 2, ValueFromRemainingArguments = $true)][string[]]$Arguments
 )
 
-$psql = Get-Command psql.exe -ErrorAction SilentlyContinue
-if (-not $psql) { $psql = Get-Command psql -ErrorAction SilentlyContinue }
+$psql = Get-Command psql -CommandType Application -ErrorAction SilentlyContinue
 if (-not $psql) { [Console]::Error.WriteLine('postgres: psql is not installed'); exit 127 }
 
 switch ($Operation) {
@@ -31,7 +30,7 @@ switch ($Operation) {
         if ($Arguments.Count -gt 0 -and $Arguments[0] -eq '--') { $Arguments = @($Arguments | Select-Object -Skip 1) }
         $commandName = if ($env:CTX_ADAPTER_COMMAND) { $env:CTX_ADAPTER_COMMAND } else { 'psql' }
         if ($commandName -eq 'postgres') { $commandName = 'psql' }
-        $client = Get-Command $commandName -ErrorAction SilentlyContinue
+        $client = Get-Command $commandName -CommandType Application -ErrorAction SilentlyContinue
         if (-not $client) { [Console]::Error.WriteLine("postgres: $commandName is not installed"); exit 127 }
         if (-not $env:PGSERVICE) { $env:PGSERVICE = $Selection }
         if (-not $env:PGSERVICEFILE -and $env:CTX_ADAPTER_VALUE_POSTGRES_SERVICE_FILE) {

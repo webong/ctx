@@ -5,8 +5,7 @@ param(
     [Parameter(Position = 2, ValueFromRemainingArguments = $true)][string[]]$Arguments
 )
 
-$aws = (Get-Command aws.exe -ErrorAction SilentlyContinue).Source
-if (-not $aws) { $aws = (Get-Command aws -ErrorAction SilentlyContinue).Source }
+$aws = (Get-Command aws -CommandType Application -ErrorAction SilentlyContinue).Source
 if (-not $aws) { [Console]::Error.WriteLine('aws: AWS CLI is not installed'); exit 127 }
 
 function Get-Profiles { @(& $aws configure list-profiles) }
