@@ -16,6 +16,9 @@ func DefaultConfigHome() string {
 }
 
 func DefaultShell() string {
+	if shell := os.Getenv("CTX_SHELL"); shell != "" {
+		return shell
+	}
 	if shell := os.Getenv("SHELL"); shell != "" {
 		return shell
 	}

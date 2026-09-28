@@ -22,6 +22,8 @@ reaches command parity.
   PostgreSQL, and MySQL adapters.
 - Checksum-verified macOS, Linux, and Windows release bundles with GitHub build
   provenance attestations and source installers for each platform.
+- Explicit `CTX_SHELL`/`--shell` selection and dynamic PowerShell completion for
+  commands, adapters, profiles, selectors, and discovered context values.
 
 Build the preview locally:
 
@@ -37,9 +39,11 @@ On Windows, from a source checkout:
 ctx.exe version
 ~~~
 
-## Remaining parity work
+## Release readiness
 
-- PowerShell completion and richer Windows shell selection.
+The intended 0.8 native command surface is implemented. The remaining work is
+release-candidate soak testing on real Windows, macOS, and Linux setups before
+making the native executable the default installer target.
 
 The target architecture keeps `shell`, `browser`, and `container` as ctx context
 families. Individual applications remain providers, so operating-system support

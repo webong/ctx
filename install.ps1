@@ -120,10 +120,15 @@ if (-not (Test-Path $configFile)) {
 '@ | Set-Content -Encoding UTF8 $configFile
 }
 
+$completionPath = Join-Path $ConfigDir 'ctx-completion.ps1'
+& $ctxTarget completion powershell | Set-Content -Encoding UTF8 $completionPath
+if ($LASTEXITCODE -ne 0) { throw 'Failed to generate PowerShell completion' }
+
 Write-Host "Installed ctx.exe, container shims, and first-party adapters in $BinDir"
 Write-Host "Config: $configFile"
+Write-Host "PowerShell completion: add `. '$completionPath' to your PowerShell profile"
 if (($env:PATH -split ';') -notcontains $BinDir) {
     Write-Host "Add this directory before Docker, Podman, and nerdctl on PATH: $BinDir"
 }
 if ($downloadRoot) { Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $downloadRoot }
-Write-Warning 'Native Windows support is a migration preview; richer PowerShell shell integration is still being completed.'
+Write-Warning 'Native Windows support is a migration preview; validate it with your local CLI and credential setup before replacing an existing installation.'

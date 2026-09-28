@@ -48,6 +48,9 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, real)
 		return 0
 	}
+	if args[0] == "completion" {
+		return completion(args[1:], stdout, stderr)
+	}
 	resolver, err := newResolver()
 	if err != nil {
 		fmt.Fprintf(stderr, "ctx: %v\n", err)
@@ -107,6 +110,7 @@ func usage(output io.Writer) {
 usage:
   ctx status [selector]
   ctx real <docker|podman|nerdctl>
+  ctx completion powershell
   ctx resolve <key>
   ctx explain
   ctx env
@@ -122,7 +126,7 @@ usage:
   ctx volume <export|import|copy> [arguments...]
   ctx run <docker|podman|nerdctl> [arguments...]
   ctx run -- <command> [arguments...]
-  ctx shell [-- <command> [arguments...]]
+  ctx shell [--shell <executable>] [-- <command> [arguments...]]
   ctx version`)
 }
 
@@ -289,6 +293,20 @@ func runCommand(resolver *config.Resolver, args []string, stdout, stderr io.Writ
 }
 
 func shell(resolver *config.Resolver, args []string, stdout, stderr io.Writer) int {
+	shellName := ""
+	if len(args) > 0 && args[0] == "--shell" {
+		if len(args) < 2 || args[1] == "" {
+			fmt.Fprintln(stderr, "ctx: --shell needs an executable")
+			return 2
+		}
+		shellName, args = args[1], args[2:]
+	} else if len(args) > 0 && strings.HasPrefix(args[0], "--shell=") {
+		shellName, args = strings.TrimPrefix(args[0], "--shell="), args[1:]
+		if shellName == "" {
+			fmt.Fprintln(stderr, "ctx: --shell needs an executable")
+			return 2
+		}
+	}
 	if len(args) > 0 && args[0] == "--" {
 		if len(args) == 1 {
 			fmt.Fprintln(stderr, "ctx: shell -- needs a command")
@@ -297,10 +315,21 @@ func shell(resolver *config.Resolver, args []string, stdout, stderr io.Writer) i
 		return execute(resolver, args[1], args[2:], stdout, stderr)
 	}
 	if len(args) != 0 {
-		fmt.Fprintln(stderr, "ctx: shell only accepts -- followed by a command")
+		fmt.Fprintln(stderr, "ctx: shell only accepts --shell followed by an executable or -- followed by a command")
 		return 2
 	}
-	return execute(resolver, platform.DefaultShell(), nil, stdout, stderr)
+	if shellName == "" {
+		values, err := profileEnvironment(resolver)
+		if err != nil {
+			fmt.Fprintf(stderr, "ctx: %v\n", err)
+			return 1
+		}
+		shellName = values["CTX_SHELL"]
+		if shellName == "" {
+			shellName = platform.DefaultShell()
+		}
+	}
+	return execute(resolver, shellName, nil, stdout, stderr)
 }
 
 func execute(resolver *config.Resolver, name string, args []string, stdout, stderr io.Writer) int {

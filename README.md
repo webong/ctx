@@ -43,6 +43,8 @@ macOS, Linux, and Windows:
 
 On Windows, run `./install.ps1` from PowerShell. Release bundles carry GitHub
 build-provenance attestations and inject the release tag into `ctx version`.
+The installer writes `ctx-completion.ps1` under the ctx configuration directory
+and prints the one-line command to load it from your PowerShell profile.
 
 Put $HOME/.local/bin before the real Docker, Podman, and nerdctl commands on your PATH. For example, add this to ~/.zshrc or ~/.bashrc:
 
@@ -305,11 +307,17 @@ The same bundle can provide a declarative child-shell environment:
 ctx env
 ctx run -- npm test
 ctx shell
+CTX_SHELL=pwsh ctx shell
+ctx shell --shell pwsh
 ctx shell -- npm test
 ~~~
 
 `ctx run --` applies the profile to one command. `ctx shell` starts the user's
 shell with those values and restores the original environment when it exits.
+`CTX_SHELL` changes the preferred shell, while `--shell` overrides it for one
+invocation. On Windows, ctx otherwise prefers PowerShell 7, then Windows
+PowerShell, then `COMSPEC`. `CTX_SHELL` may also be stored in a named profile's
+environment when different projects need different shells.
 Existing environment variables take priority over profile values. `shell_path`
 is prepended to PATH. ctx does not source startup fragments or execute profile
 hooks.

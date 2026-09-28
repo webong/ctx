@@ -11,9 +11,10 @@ export CTX_BIN_DIR="$TEST_ROOT/bin"
 export CTX_PLATFORM=Darwin
 mkdir -p "$HOME" "$CTX_BIN_DIR" "$TEST_ROOT/fake-bin" "$TEST_ROOT/project"
 
-for tool in docker podman nerdctl container kubectl aws gcloud open; do
+for tool in docker podman nerdctl container kubectl aws gcloud open shell; do
   cp "$ROOT/tests/fake-$tool" "$TEST_ROOT/fake-bin/$tool"
 done
+mv "$TEST_ROOT/fake-bin/shell" "$TEST_ROOT/fake-bin/custom-shell"
 cp "$ROOT/tests/fake-postgres" "$TEST_ROOT/fake-bin/psql"
 cp "$ROOT/tests/fake-mysql" "$TEST_ROOT/fake-bin/mysql"
 chmod +x "$TEST_ROOT/fake-bin"/*
@@ -51,6 +52,9 @@ ctx set mysql client-a >/dev/null
 ctx set echo staging >/dev/null
 
 test "$(ctx real docker)" = "$TEST_ROOT/fake-bin/docker"
+test "$(CTX_SHELL=custom-shell ctx shell)" = 'custom shell'
+test "$(ctx shell --shell custom-shell)" = 'custom shell'
+ctx completion powershell | grep -Fq 'Register-ArgumentCompleter'
 test "$(ctx run docker ps)" = '--context alpha ps'
 test "$(ctx run podman ps)" = '--connection red ps'
 test "$(ctx run nerdctl ps)" = '--namespace k8s.io ps'
@@ -105,10 +109,12 @@ fi
 ctx profile set client-b aws_profile default >/dev/null
 ctx profile set client-b shell_path /client/bin >/dev/null
 ctx profile env client-b APP_ENV development >/dev/null
+ctx profile env client-b CTX_SHELL custom-shell >/dev/null
 ctx profile show client-b | grep -Fq 'aws_profile = "default"'
 ctx profile show client-b | grep -Fq '[env]'
 ctx profile use client-b >/dev/null
 ctx clear aws >/dev/null
+test "$(ctx shell)" = 'custom shell'
 test "$(ctx run aws sts get-caller-identity)" = '--profile default sts get-caller-identity'
 test "$(ctx run -- sh -c 'printf %s "$APP_ENV"')" = 'development'
 case "$(ctx env)" in *'PATH=/client/bin:'*) ;; *) exit 1 ;; esac

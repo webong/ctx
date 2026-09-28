@@ -31,6 +31,9 @@ try {
 
     & (Join-Path $root 'install.ps1') -BinDir $bin -ConfigDir $config
     Assert-Success 'source installation'
+    $completionTokens = $null; $completionErrors = $null
+    [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $config 'ctx-completion.ps1'), [ref]$completionTokens, [ref]$completionErrors) | Out-Null
+    if ($completionErrors.Count -gt 0) { throw "Generated completion has syntax errors: $($completionErrors -join '; ')" }
 
     @'
 @echo off
@@ -80,6 +83,9 @@ echo %*
     Push-Location $project
     try {
         $ctx = Join-Path $bin 'ctx.exe'
+        $completion = @(& $ctx completion powershell) -join "`n"
+        Assert-Success 'PowerShell completion generation'
+        if ($completion -notmatch 'Register-ArgumentCompleter') { throw 'PowerShell completion output is incomplete' }
         & $ctx set aws client-a | Out-Null; Assert-Success 'AWS selection'
         & $ctx set gcloud client-a | Out-Null; Assert-Success 'gcloud selection'
         & $ctx set kube production --namespace payments | Out-Null; Assert-Success 'Kubernetes selection'
