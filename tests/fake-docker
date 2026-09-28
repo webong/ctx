@@ -6,7 +6,13 @@ if [ "${1:-}" = context ] && [ "${2:-}" = inspect ]; then
   exit 1
 fi
 
+if [ "${1:-}" = context ] && [ "${2:-}" = ls ]; then
+  printf 'default\nalpha\nbeta\n'
+  exit 0
+fi
+
 if [ "${1:-}" = --context ] && [ "${3:-}" = info ]; then exit 1; fi
+if [ "${1:-}" = --context ] && [ "${3:-}" = print-env ]; then printf '%s\n' "${APP_ENV:-}"; exit 0; fi
 
 if [ "${1:-}" = --context ] && [ "${3:-}" = volume ] && [ "${4:-}" = inspect ]; then
   [ "${5:-}" = exists ] && exit 0

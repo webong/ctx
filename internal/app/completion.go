@@ -27,9 +27,12 @@ Register-ArgumentCompleter -Native -CommandName ctx -ScriptBlock {
         }
     }
     function Get-CtxSelectors {
-        $values = @('docker', 'podman', 'nerdctl', 'browser')
+        $values = @('browser')
         $values += @(& ctx adapter ls 2>$null | ForEach-Object { ($_ -split '\s+')[0] })
         return $values
+    }
+    function Get-CtxContainerProviders {
+        @(& ctx adapter ls container 2>$null | ForEach-Object { ($_ -split '\s+')[0] })
     }
     function Get-CtxProfiles { @(& ctx profile ls 2>$null) }
 
@@ -45,11 +48,10 @@ Register-ArgumentCompleter -Native -CommandName ctx -ScriptBlock {
             }
         }
         'clear' { if ($words.Count -le 2) { Emit-CtxCompletion ((Get-CtxSelectors) + 'profile'); return } }
-        'real' { if ($words.Count -le 2) { Emit-CtxCompletion @('docker', 'podman', 'nerdctl'); return } }
         'completion' { if ($words.Count -le 2) { Emit-CtxCompletion @('powershell'); return } }
         'image' { if ($words.Count -le 2) { Emit-CtxCompletion @('sync', 'copy'); return } }
         'volume' { if ($words.Count -le 2) { Emit-CtxCompletion @('export', 'import', 'copy'); return } }
-        'build' { if ($words.Count -le 2) { Emit-CtxCompletion @('docker', 'podman', 'nerdctl', '--cache-ref'); return } }
+        'build' { if ($words.Count -le 2) { Emit-CtxCompletion ((Get-CtxContainerProviders) + '--cache-ref'); return } }
         'profile' {
             $operations = @('ls', 'show', 'use', 'set', 'unset', 'env', 'env-unset', 'clear')
             if ($words.Count -le 2) { Emit-CtxCompletion $operations; return }

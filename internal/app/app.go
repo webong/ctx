@@ -10,16 +10,11 @@ import (
 	"strings"
 
 	"github.com/webong/ctx/internal/config"
-	"github.com/webong/ctx/internal/engine"
 	"github.com/webong/ctx/internal/launch"
 	"github.com/webong/ctx/internal/platform"
 )
 
 var Version = "0.8.0-dev"
-
-type environment struct{}
-
-func (environment) Get(key string) string { return os.Getenv(key) }
 
 func Run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
@@ -31,14 +26,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	if args[0] == "real" {
-		if len(args) != 2 {
-			fmt.Fprintln(stderr, "ctx: real needs docker, podman, or nerdctl")
-			return 2
-		}
-		switch args[1] {
-		case "docker", "podman", "nerdctl":
-		default:
-			fmt.Fprintf(stderr, "ctx: unsupported engine %s\n", args[1])
+		if len(args) != 2 || filepath.Base(args[1]) != args[1] {
+			fmt.Fprintln(stderr, "ctx: real needs a command name")
 			return 2
 		}
 		real, err := launch.FindReal(args[1])
@@ -94,7 +83,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	case "image":
 		return imageCommand(resolver, args[1:], stdout, stderr)
 	case "volume":
-		return volumeCommand(args[1:], stdout, stderr)
+		return volumeCommand(resolver, args[1:], stdout, stderr)
 	case "run":
 		return runCommand(resolver, args[1:], stdout, stderr)
 	case "shell":
@@ -109,7 +98,7 @@ func usage(output io.Writer) {
 	fmt.Fprintln(output, `ctx — native cross-platform context core (migration preview)
 usage:
   ctx status [selector]
-  ctx real <docker|podman|nerdctl>
+  ctx real <command>
   ctx completion powershell
   ctx resolve <key>
   ctx explain
@@ -117,14 +106,14 @@ usage:
   ctx set <selector> <name> [options]
   ctx clear [selector|profile]
   ctx profile <ls|show|use|set|unset|env|env-unset|clear> [arguments...]
-  ctx adapter <ls|inspect|install|trust|test|doctor|remove> [arguments...]
+  ctx adapter <ls [kind]|inspect|install|trust|test|doctor|remove> [arguments...]
   ctx ls <selector>
   ctx open [URL...]
   ctx doctor
-  ctx build [docker|podman|nerdctl] --cache-ref <registry-ref> [--] <build arguments>
+  ctx build [provider] --cache-ref <registry-ref> [--] <build arguments>
   ctx image <sync|copy> [arguments...]
   ctx volume <export|import|copy> [arguments...]
-  ctx run <docker|podman|nerdctl> [arguments...]
+  ctx run <provider-or-adapter-command> [arguments...]
   ctx run -- <command> [arguments...]
   ctx shell [--shell <executable>] [-- <command> [arguments...]]
   ctx version`)
@@ -152,10 +141,10 @@ func configHomePath() string {
 func status(resolver *config.Resolver, selectors []string, stdout, stderr io.Writer) int {
 	showAll := len(selectors) == 0
 	if showAll {
-		selectors = []string{"docker", "podman", "nerdctl", "browser", "profile"}
+		selectors = []string{"browser", "profile"}
 		if installed, err := adapterStore().List(); err == nil {
 			for _, candidate := range installed {
-				if candidate.Manifest.Kind == "selector" {
+				if candidate.Manifest.Kind == "selector" || candidate.Manifest.Kind == "container" {
 					selectors = append(selectors, candidate.Manifest.Name)
 				}
 			}
@@ -166,13 +155,18 @@ func status(resolver *config.Resolver, selectors []string, stdout, stderr io.Wri
 		return 2
 	}
 	for _, selector := range selectors {
-		if value, source := environmentOverride(selector); value != "" {
+		candidate, _ := adapterStore().Load(selector)
+		overrideEnv := []string(nil)
+		if candidate != nil && (candidate.Manifest.Kind == "selector" || candidate.Manifest.Kind == "container") {
+			overrideEnv = candidate.Manifest.OverrideEnv
+		}
+		if value, source := environmentOverride(selector, overrideEnv); value != "" {
 			fmt.Fprintf(stdout, "%s: %s (%s)\n", selector, value, source)
 			continue
 		}
 		key := selector
-		if installed, err := adapterStore().Load(selector); err == nil && installed.Manifest.Kind == "selector" {
-			key = installed.Manifest.SelectorKey
+		if candidate != nil && (candidate.Manifest.Kind == "selector" || candidate.Manifest.Kind == "container") {
+			key = candidate.Manifest.SelectorKey
 		}
 		resolved, err := resolver.Resolve(key)
 		if err != nil {
@@ -188,14 +182,12 @@ func status(resolver *config.Resolver, selectors []string, stdout, stderr io.Wri
 	return 0
 }
 
-func environmentOverride(selector string) (string, string) {
-	checks := map[string][]string{
-		"docker":  {"DOCKER_CONTEXT", "DOCKER_HOST"},
-		"podman":  {"CONTAINER_CONNECTION", "CONTAINER_HOST"},
-		"nerdctl": {"CONTAINERD_NAMESPACE", "CONTAINERD_ADDRESS"},
-		"browser": {"CTX_BROWSER"},
+func environmentOverride(selector string, providerVariables []string) (string, string) {
+	checks := providerVariables
+	if selector == "browser" {
+		checks = append([]string{"CTX_BROWSER"}, checks...)
 	}
-	for _, key := range checks[selector] {
+	for _, key := range checks {
 		if value := os.Getenv(key); value != "" {
 			return value, key
 		}
@@ -204,10 +196,15 @@ func environmentOverride(selector string) (string, string) {
 }
 
 func explain(resolver *config.Resolver, stdout, stderr io.Writer) int {
-	for _, item := range []struct{ label, key string }{
-		{"profile", "profile"}, {"docker", "docker"}, {"podman", "podman"},
-		{"nerdctl", "nerdctl"}, {"browser", "browser"}, {"shell-path", "shell_path"},
-	} {
+	items := []struct{ label, key string }{{"profile", "profile"}, {"browser", "browser"}, {"shell-path", "shell_path"}}
+	if installed, err := adapterStore().List(); err == nil {
+		for _, candidate := range installed {
+			if candidate.Manifest.Kind == "container" || candidate.Manifest.Kind == "selector" {
+				items = append(items, struct{ label, key string }{candidate.Manifest.Name, candidate.Manifest.SelectorKey})
+			}
+		}
+	}
+	for _, item := range items {
 		resolved, err := resolver.Resolve(item.key)
 		if err != nil {
 			fmt.Fprintf(stderr, "ctx: %v\n", err)
@@ -274,22 +271,7 @@ func runCommand(resolver *config.Resolver, args []string, stdout, stderr io.Writ
 		}
 		return execute(resolver, args[1], args[2:], stdout, stderr)
 	}
-	engineName := args[0]
-	if engineName != "docker" && engineName != "podman" && engineName != "nerdctl" {
-		return runAdapterTool(resolver, engineName, args[1:], stdout, stderr)
-	}
-	real, err := launch.FindReal(engineName)
-	if err != nil {
-		fmt.Fprintf(stderr, "ctx: %v\n", err)
-		return 127
-	}
-	resolved, err := resolver.Resolve(engineName)
-	if err != nil {
-		fmt.Fprintf(stderr, "ctx: %v\n", err)
-		return 1
-	}
-	engineArgs := engine.Arguments(engineName, resolved.Value, args[1:], environment{})
-	return execute(resolver, real, engineArgs, stdout, stderr)
+	return runAdapterTool(resolver, args[0], args[1:], stdout, stderr)
 }
 
 func shell(resolver *config.Resolver, args []string, stdout, stderr io.Writer) int {

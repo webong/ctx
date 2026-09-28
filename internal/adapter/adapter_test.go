@@ -19,6 +19,8 @@ func fixtureAdapter(t *testing.T, root, name, kind string) string {
 	if kind == "browser" {
 		selector = "browser"
 		capabilities = "list,validate,open,doctor"
+	} else if kind == "container" {
+		capabilities = "list,validate,run,doctor,image_save"
 	}
 	manifest := `api_version = "1"
 name = "` + name + `"
@@ -74,6 +76,27 @@ func TestManifestDefaultsAndKinds(t *testing.T) {
 	}
 	if loaded.Manifest.Kind != "browser" || loaded.Manifest.SelectorKey != "browser" || !loaded.HasCapability("open") {
 		t.Fatalf("unexpected manifest: %#v", loaded.Manifest)
+	}
+}
+
+func TestContainerProviderCommandProtocol(t *testing.T) {
+	directory := fixtureAdapter(t, t.TempDir(), "engine", "container")
+	loaded, err := LoadDirectory(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	command, err := loaded.Command(Invocation{
+		Operation: "image_save", Selection: "remote", Arguments: []string{"image.tar", "example:dev"},
+		Project: "/project", RealCommand: "/usr/bin/engine",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(command.Args, " "); !strings.Contains(got, "image_save remote -- image.tar example:dev") {
+		t.Fatalf("unexpected command arguments: %q", got)
+	}
+	if environment := strings.Join(command.Env, "\n"); !strings.Contains(environment, "CTX_ADAPTER_REAL_COMMAND=/usr/bin/engine") {
+		t.Fatalf("missing real command in environment: %q", environment)
 	}
 }
 

@@ -953,10 +953,13 @@ run_tool() {
 
 docker_exec() {
   real=$(find_real docker)
-  if [ -n "${DOCKER_CONTEXT:-}" ] || [ -n "${DOCKER_HOST:-}" ]; then
+  if [ -n "${DOCKER_CONTEXT:-}" ] || [ -n "${DOCKER_HOST:-}" ] || [ "${1:-}" = context ]; then
     "$real" "$@"
     return
   fi
+  for argument in "$@"; do
+    case "$argument" in --context|--context=*|--host|--host=*|-H|-H?*) "$real" "$@"; return;; esac
+  done
   resolve docker
   if [ -n "$RESOLVED" ]; then
     "$real" --context "$RESOLVED" "$@"
@@ -967,10 +970,14 @@ docker_exec() {
 
 podman_exec() {
   real=$(find_real podman)
-  if [ -n "${CONTAINER_CONNECTION:-}" ] || [ -n "${CONTAINER_HOST:-}" ]; then
+  if [ -n "${CONTAINER_CONNECTION:-}" ] || [ -n "${CONTAINER_HOST:-}" ] || [ "${1:-}" = machine ]; then
     "$real" "$@"
     return
   fi
+  if [ "${1:-}" = system ] && [ "${2:-}" = connection ]; then "$real" "$@"; return; fi
+  for argument in "$@"; do
+    case "$argument" in --connection|--connection=*|--url|--url=*|--remote|-c|-c?*|-r|-r?*) "$real" "$@"; return;; esac
+  done
   resolve podman
   if [ -n "$RESOLVED" ]; then
     "$real" --connection "$RESOLVED" "$@"
@@ -981,10 +988,13 @@ podman_exec() {
 
 nerdctl_exec() {
   real=$(find_real nerdctl)
-  if [ -n "${CONTAINERD_NAMESPACE:-}" ] || [ -n "${CONTAINERD_ADDRESS:-}" ]; then
+  if [ -n "${CONTAINERD_NAMESPACE:-}" ] || [ -n "${CONTAINERD_ADDRESS:-}" ] || [ "${1:-}" = namespace ]; then
     "$real" "$@"
     return
   fi
+  for argument in "$@"; do
+    case "$argument" in --namespace|--namespace=*|--address|--address=*|-n|-n?*|-a|-a?*) "$real" "$@"; return;; esac
+  done
   resolve nerdctl
   if [ -n "$RESOLVED" ]; then
     "$real" --namespace "$RESOLVED" "$@"

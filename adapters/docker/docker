@@ -3,18 +3,4 @@
 set -eu
 
 BIN_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-CTX="$BIN_DIR/ctx"
-REAL=$("$CTX" real docker)
-
-if [ -n "${DOCKER_CONTEXT:-}" ] || [ -n "${DOCKER_HOST:-}" ] || [ "${1:-}" = context ]; then
-  exec "$REAL" "$@"
-fi
-for arg in "$@"; do
-  case "$arg" in
-    --context|--context=*|--host|--host=*|-H|-H?*) exec "$REAL" "$@" ;;
-  esac
-done
-
-CHOICE=$("$CTX" resolve docker)
-if [ -n "$CHOICE" ]; then exec "$REAL" --context "$CHOICE" "$@"; fi
-exec "$REAL" "$@"
+exec "$BIN_DIR/ctx" run docker "$@"

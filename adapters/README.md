@@ -3,9 +3,16 @@
 This directory contains every tool-specific integration maintained in the ctx
 repository.
 
-`docker`, `podman`, and `nerdctl` are built-in container-engine adapters. Their
-executables are transparent command shims, so the installer copies them into the
-same binary directory as `ctx` under their native command names.
+`docker`, `podman`, `nerdctl`, and `apple` are first-party container providers.
+Their manifests use `kind = "container"`; each package owns its native CLI syntax,
+context discovery, validation, routing, build behavior, and supported image and
+volume operations. The ctx core sees only the common capability protocol.
+
+The Docker, Podman, and nerdctl directories also contain tiny command shims. The
+installer copies those launcher files into the binary directory under the native
+command names so ordinary commands can be context-aware. The provider
+implementations themselves remain installed and trusted under
+`$CTX_HOME/adapters`.
 
 `firefox`, `chrome`, `chromium`, and `safari` are browser providers. The built-in
 `browser` context aggregates them while each provider owns application-specific

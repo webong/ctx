@@ -70,6 +70,15 @@ echo %*
 @echo off
 echo %*
 '@ | Set-Content -Encoding ASCII (Join-Path $fakeBin 'firefox.cmd')
+    @'
+@echo off
+if "%1 %2"=="context ls" (
+  echo alpha
+  exit /b 0
+)
+if "%1 %2"=="context inspect" exit /b 0
+echo %*
+'@ | Set-Content -Encoding ASCII (Join-Path $fakeBin 'docker.cmd')
 
     $env:CTX_HOME = $config
     $env:CTX_BIN_DIR = $bin
@@ -92,6 +101,7 @@ echo %*
         & $ctx set postgres client-a-dev | Out-Null; Assert-Success 'PostgreSQL selection'
         & $ctx set mysql client-a | Out-Null; Assert-Success 'MySQL selection'
         & $ctx set browser firefox:client-a | Out-Null; Assert-Success 'browser selection'
+        & $ctx set docker alpha | Out-Null; Assert-Success 'Docker selection'
 
         Assert-Output 'AWS routing' '--profile client-a sts get-caller-identity' @(& $ctx run aws sts get-caller-identity)
         Assert-Success 'AWS routing'
@@ -107,6 +117,14 @@ echo %*
         Assert-Success 'browser listing'
         Assert-Output 'browser launch' '-P client-a https://example.test' @(& $ctx open https://example.test)
         Assert-Success 'browser launch'
+        Assert-Output 'Docker routing' '--context alpha ps' @(& $ctx run docker ps)
+        Assert-Success 'Docker routing'
+        & $ctx clear docker | Out-Null; Assert-Success 'Docker selection clear'
+        Assert-Output 'Docker native-default routing' 'ps' @(& $ctx run docker ps)
+        Assert-Success 'Docker native-default routing'
+        & $ctx set docker alpha | Out-Null; Assert-Success 'Docker selection restore'
+        if (@(& $ctx ls container) -notcontains 'docker:alpha') { throw 'container provider listing did not include docker:alpha' }
+        Assert-Success 'container provider listing'
         & $ctx doctor | Out-Null; Assert-Success 'ctx doctor'
     }
     finally {

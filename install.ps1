@@ -8,7 +8,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $repositoryRoot = $PSScriptRoot
 $localSource = Test-Path (Join-Path $repositoryRoot 'cmd\ctx\main.go')
-$firstPartyAdapters = @('firefox', 'chrome', 'chromium', 'safari', 'kube', 'aws', 'gcloud', 'postgres', 'mysql')
+$firstPartyAdapters = @('docker', 'podman', 'nerdctl', 'apple', 'firefox', 'chrome', 'chromium', 'safari', 'kube', 'aws', 'gcloud', 'postgres', 'mysql')
 $bundleRoot = $null
 $downloadRoot = $null
 

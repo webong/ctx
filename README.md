@@ -1,11 +1,12 @@
 # ctx
 
-ctx chooses tool contexts per project. Its core owns shell environments, browser
-profiles, and the container family: Docker, Podman, nerdctl/containerd, plus
-Apple Container transfer endpoints. Kubernetes, AWS, gcloud, PostgreSQL, and
-MySQL are first-party adapter packages developed in this repository and installed
-with ctx. Named profiles bundle all of these choices without changing a tool's
-global default. External adapters can add selectors without changing ctx itself.
+ctx chooses tool contexts per project. Its core owns shell environments and the
+generic browser and container families. Docker, Podman, nerdctl/containerd,
+Apple Container, Firefox, Chrome, Chromium, and Safari are first-party provider
+adapters developed in this repository. Kubernetes, AWS, gcloud, PostgreSQL, and
+MySQL are first-party selector adapters. Named profiles bundle these choices
+without changing a tool's global default, and external adapters can add providers
+or selectors without changing ctx itself.
 
 > **Cross-platform migration:** a native Go core is now under development in
 > `cmd/ctx`. It already provides cross-platform context resolution, shell/profile
@@ -61,6 +62,7 @@ If you previously installed dctx, remove any `eval "$(dctx hook zsh)"` or `eval 
 Run these in a project directory:
 
 ~~~sh
+ctx ls container
 ctx ls docker
 ctx ls podman
 ctx ls nerdctl
@@ -69,6 +71,14 @@ ctx set podman my-podman-connection
 ctx set nerdctl k8s.io
 ctx status
 ~~~
+
+`ctx ls container` aggregates every available container provider and prints
+qualified values such as `docker:orbstack`, `podman:podman-machine-default`,
+`nerdctl:k8s.io`, and `apple:local`. `ctx ls docker` (or another provider name)
+lists only that provider. OrbStack and Docker Desktop are Docker contexts, so they
+remain selections of the Docker provider rather than separate adapters.
+Docker's manifest marks it as the default provider for backward-compatible
+unqualified `ctx build`, `ctx image sync`, and `ctx volume` commands.
 
 This creates a local .ctx file:
 
@@ -331,9 +341,12 @@ non-secret settings only.
 
 The bundled first-party adapters live under `adapters/` in this repository:
 
-- `docker`, `podman`, and `nerdctl` contain the built-in container-engine shims.
-  The installer places those executables in the binary directory so normal engine
-  commands can transparently resolve the current project's selection.
+- `docker`, `podman`, `nerdctl`, and `apple` are `kind = "container"` providers.
+  They own engine-specific discovery, validation, command routing, builds, image
+  transfer, and volume transfer. The core only orchestrates generic capabilities.
+- The Docker, Podman, and nerdctl packages also contain tiny transparent shims.
+  The installer places only those launchers in the binary directory under the
+  native command names; they delegate immediately to the installed providers.
 - `firefox`, `chrome`, `chromium`, and `safari` are browser providers used by the
   built-in `browser` context. Each provider owns application-specific profile
   discovery, validation, and launch behavior.
@@ -347,8 +360,8 @@ The installer installs and trusts these packages alongside ctx. They use the sam
 public adapter protocol as third-party additions, so integrations can evolve
 without adding another selector switch to the core.
 
-ctx adapter API v1 lets a separately installed executable provide `list`,
-`configure`, `validate`, `run`, `doctor`, and optional `open` operations.
+ctx adapter API v1 lets a separately installed executable provide selector,
+browser-provider, or container-provider operations.
 Adapters are loaded only from `$CTX_HOME/adapters`; ctx never sources them or
 discovers code in the current directory or arbitrary PATH entries.
 
@@ -396,6 +409,12 @@ An adapter with `kind = "browser"` extends the built-in browser context instead
 of creating another top-level selector. Its name becomes the prefix in values
 such as `brave:Default`; `ctx ls browser`, `ctx set browser`, `ctx open`, and
 `ctx doctor` route through it automatically.
+
+An adapter with `kind = "container"` extends the container family. Its name is
+accepted by `ctx ls`, `ctx set`, `ctx run`, and `ctx build`, and it can declare
+image and volume transfer capabilities. Qualified endpoints use
+`provider:selection`, so a newly installed provider participates in `ctx image
+copy` and `ctx volume copy` without a core release.
 
 ## Remove
 

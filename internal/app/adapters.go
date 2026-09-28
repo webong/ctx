@@ -30,15 +30,26 @@ func adapterCommand(resolver *config.Resolver, args []string, stdout, stderr io.
 	store := adapterStore()
 	switch args[0] {
 	case "ls", "list":
-		if len(args) != 1 {
-			fmt.Fprintln(stderr, "ctx: adapter ls takes no arguments")
+		if len(args) > 2 {
+			fmt.Fprintln(stderr, "ctx: adapter ls accepts an optional kind")
 			return 2
+		}
+		kind := ""
+		if len(args) == 2 {
+			kind = args[1]
+			if kind != "selector" && kind != "browser" && kind != "container" {
+				fmt.Fprintf(stderr, "ctx: unknown adapter kind %s\n", kind)
+				return 2
+			}
 		}
 		installed, err := store.List()
 		if err != nil {
 			return reportError(stderr, err)
 		}
 		for _, candidate := range installed {
+			if kind != "" && candidate.Manifest.Kind != kind {
+				continue
+			}
 			state := "untrusted"
 			if trusted, err := store.IsTrusted(candidate); err == nil && trusted {
 				state = "trusted"
@@ -63,7 +74,15 @@ func adapterCommand(resolver *config.Resolver, args []string, stdout, stderr io.
 		fmt.Fprintf(stdout, "api:          %s\n", candidate.Manifest.APIVersion)
 		fmt.Fprintf(stdout, "kind:         %s\n", candidate.Manifest.Kind)
 		fmt.Fprintf(stdout, "state:        %s\n", state)
+		fmt.Fprintf(stdout, "selector:     %s\n", candidate.Manifest.SelectorKey)
+		fmt.Fprintf(stdout, "commands:     %s\n", strings.Join(candidate.Manifest.Commands, ","))
 		fmt.Fprintf(stdout, "capabilities: %s\n", strings.Join(candidate.Manifest.Capabilities, ","))
+		if len(candidate.Manifest.OverrideEnv) > 0 {
+			fmt.Fprintf(stdout, "override env: %s\n", strings.Join(candidate.Manifest.OverrideEnv, ","))
+		}
+		if candidate.Manifest.Kind == "container" {
+			fmt.Fprintf(stdout, "default:      %t\n", candidate.Manifest.DefaultProvider)
+		}
 		fmt.Fprintf(stdout, "executable:   %s\n", candidate.ExecutablePath())
 		fmt.Fprintf(stdout, "description:  %s\n", candidate.Manifest.Description)
 		return 0
@@ -148,7 +167,7 @@ func runAdapterTool(resolver *config.Resolver, tool string, args []string, stdou
 	}
 	var matched *adapterpkg.Adapter
 	for _, candidate := range installed {
-		if candidate.Manifest.Kind != "selector" || (candidate.Manifest.Name != tool && !candidate.HasCommand(tool)) {
+		if (candidate.Manifest.Kind != "selector" && candidate.Manifest.Kind != "container") || (candidate.Manifest.Name != tool && !candidate.HasCommand(tool)) {
 			continue
 		}
 		if matched != nil {
@@ -165,7 +184,7 @@ func runAdapterTool(resolver *config.Resolver, tool string, args []string, stdou
 	if err != nil {
 		return reportError(stderr, err)
 	}
-	if selection == "" {
+	if selection == "" && matched.Manifest.Kind != "container" {
 		fmt.Fprintf(stderr, "ctx: no %s selection; run ctx set %s <name>\n", matched.Manifest.Name, matched.Manifest.Name)
 		return 1
 	}
@@ -179,53 +198,65 @@ func listContexts(resolver *config.Resolver, args []string, stdout, stderr io.Wr
 	}
 	selector := args[0]
 	switch selector {
-	case "docker":
-		return runNativeList(resolver, selector, []string{"context", "ls"}, stdout, stderr)
-	case "podman":
-		return runNativeList(resolver, selector, []string{"system", "connection", "list"}, stdout, stderr)
-	case "nerdctl":
-		return runNativeList(resolver, selector, []string{"namespace", "ls"}, stdout, stderr)
 	case "browser":
 		return listBrowsers(resolver, stdout, stderr)
+	case "container":
+		return listContainers(resolver, stdout, stderr)
 	}
 	candidate, err := adapterStore().Load(selector)
-	if err != nil || candidate.Manifest.Kind != "selector" {
+	if err != nil || (candidate.Manifest.Kind != "selector" && candidate.Manifest.Kind != "container") {
 		fmt.Fprintf(stderr, "ctx: unknown selector %s\n", selector)
 		return 2
 	}
 	return invokeAdapter(resolver, candidate, "list", "", nil, "", stdout, stderr)
 }
 
-func runNativeList(resolver *config.Resolver, tool string, args []string, stdout, stderr io.Writer) int {
-	real, err := launch.FindReal(tool)
-	if err != nil {
-		return reportErrorCode(stderr, err, 127)
-	}
-	return execute(resolver, real, args, stdout, stderr)
+func listBrowsers(resolver *config.Resolver, stdout, stderr io.Writer) int {
+	return listProviderFamily(resolver, "browser", true, stdout, stderr)
 }
 
-func listBrowsers(resolver *config.Resolver, stdout, stderr io.Writer) int {
+func listContainers(resolver *config.Resolver, stdout, stderr io.Writer) int {
+	return listProviderFamily(resolver, "container", true, stdout, stderr)
+}
+
+func listProviderFamily(resolver *config.Resolver, kind string, prefix bool, stdout, stderr io.Writer) int {
 	installed, err := adapterStore().List()
 	if err != nil {
 		return reportError(stderr, err)
 	}
 	found := false
+	var failures bytes.Buffer
 	for _, candidate := range installed {
-		if candidate.Manifest.Kind != "browser" {
+		if candidate.Manifest.Kind != kind {
 			continue
 		}
-		var output bytes.Buffer
-		code := invokeAdapter(resolver, candidate, "list", "", nil, "", &output, stderr)
+		var output, adapterError bytes.Buffer
+		code := invokeAdapter(resolver, candidate, "list", "", nil, "", &output, &adapterError)
 		if code != 0 {
-			return code
+			if adapterError.Len() > 0 {
+				fmt.Fprintf(&failures, "%s: %s", candidate.Manifest.Name, adapterError.String())
+				if !strings.HasSuffix(adapterError.String(), "\n") {
+					failures.WriteByte('\n')
+				}
+			}
+			continue
 		}
 		if output.Len() > 0 {
 			found = true
-			_, _ = io.Copy(stdout, &output)
+			if prefix && kind == "container" {
+				for _, selection := range strings.Split(strings.TrimSpace(output.String()), "\n") {
+					if selection != "" {
+						fmt.Fprintf(stdout, "%s:%s\n", candidate.Manifest.Name, selection)
+					}
+				}
+			} else {
+				_, _ = io.Copy(stdout, &output)
+			}
 		}
 	}
 	if !found {
-		fmt.Fprintln(stderr, "ctx: no supported browser profiles found")
+		_, _ = io.Copy(stderr, &failures)
+		fmt.Fprintf(stderr, "ctx: no supported %s contexts found\n", kind)
 		return 1
 	}
 	return 0
@@ -286,7 +317,7 @@ func doctor(resolver *config.Resolver, stdout, stderr io.Writer) int {
 		return reportError(stderr, err)
 	}
 	for _, candidate := range installed {
-		if candidate.Manifest.Kind != "selector" {
+		if candidate.Manifest.Kind != "selector" && candidate.Manifest.Kind != "container" {
 			continue
 		}
 		selection, err := adapterSelection(resolver, candidate)
@@ -294,11 +325,15 @@ func doctor(resolver *config.Resolver, stdout, stderr io.Writer) int {
 			continue
 		}
 		checked++
+		label := candidate.Manifest.Kind
+		if label == "selector" {
+			label = "adapter"
+		}
 		if invokeAdapter(resolver, candidate, "doctor", selection, nil, "", io.Discard, io.Discard) != 0 {
-			fmt.Fprintf(stdout, "fail adapter %s %s is unavailable\n", candidate.Manifest.Name, selection)
+			fmt.Fprintf(stdout, "fail %s %s %s is unavailable\n", label, candidate.Manifest.Name, selection)
 			failures++
 		} else {
-			fmt.Fprintf(stdout, "ok   adapter %s %s\n", candidate.Manifest.Name, selection)
+			fmt.Fprintf(stdout, "ok   %s %s %s\n", label, candidate.Manifest.Name, selection)
 		}
 	}
 	if checked == 0 {
@@ -326,6 +361,10 @@ func adapterSelection(resolver *config.Resolver, candidate *adapterpkg.Adapter) 
 }
 
 func invokeAdapter(resolver *config.Resolver, candidate *adapterpkg.Adapter, operation, selection string, args []string, requestedCommand string, stdout, stderr io.Writer) int {
+	return invokeAdapterIO(resolver, candidate, operation, selection, args, requestedCommand, os.Stdin, stdout, stderr)
+}
+
+func invokeAdapterIO(resolver *config.Resolver, candidate *adapterpkg.Adapter, operation, selection string, args []string, requestedCommand string, stdin io.Reader, stdout, stderr io.Writer) int {
 	store := adapterStore()
 	if err := store.AssertTrusted(candidate); err != nil {
 		return reportError(stderr, err)
@@ -339,14 +378,38 @@ func invokeAdapter(resolver *config.Resolver, candidate *adapterpkg.Adapter, ope
 		values[key] = resolved.Value
 	}
 	profile, _, _ := resolver.ActiveProfile()
+	realCommand := ""
+	if candidate.Manifest.Kind == "container" {
+		commandName := ""
+		if candidate.HasCommand(requestedCommand) {
+			commandName = requestedCommand
+		} else if len(candidate.Manifest.Commands) > 0 {
+			commandName = candidate.Manifest.Commands[0]
+		}
+		if commandName == "" {
+			return reportErrorCode(stderr, fmt.Errorf("container provider %s does not declare a native command", candidate.Manifest.Name), 127)
+		}
+		var err error
+		realCommand, err = launch.FindReal(commandName)
+		if err != nil {
+			return reportErrorCode(stderr, err, 127)
+		}
+	}
 	command, err := candidate.Command(adapterpkg.Invocation{
 		Operation: operation, Selection: selection, Arguments: args, Values: values,
-		Profile: profile, Project: currentDirectory(), Command: requestedCommand,
+		Profile: profile, Project: currentDirectory(), Command: requestedCommand, RealCommand: realCommand,
 	})
 	if err != nil {
 		return reportError(stderr, err)
 	}
-	return runPrepared(command, stdout, stderr)
+	profileValues, err := profileEnvironment(resolver)
+	if err != nil {
+		return reportError(stderr, err)
+	}
+	for key, value := range profileValues {
+		command.Env = setEnvironment(command.Env, key, value)
+	}
+	return runPreparedIO(command, stdin, stdout, stderr)
 }
 
 func runPrepared(command *exec.Cmd, stdout, stderr io.Writer) int {

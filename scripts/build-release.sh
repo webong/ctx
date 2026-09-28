@@ -4,7 +4,7 @@ set -eu
 VERSION=${1:-0.8.0-dev}
 OUTPUT=${2:-dist}
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-FIRST_PARTY_ADAPTERS='firefox chrome chromium safari kube aws gcloud postgres mysql'
+FIRST_PARTY_ADAPTERS='docker podman nerdctl apple firefox chrome chromium safari kube aws gcloud postgres mysql'
 
 case "$OUTPUT" in ''|/|.) printf 'ctx: unsafe release output directory: %s\n' "$OUTPUT" >&2; exit 2;; esac
 if [ -e "$OUTPUT" ]; then

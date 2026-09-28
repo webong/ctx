@@ -8,13 +8,14 @@ import (
 )
 
 type Invocation struct {
-	Operation string
-	Selection string
-	Arguments []string
-	Values    map[string]string
-	Profile   string
-	Project   string
-	Command   string
+	Operation   string
+	Selection   string
+	Arguments   []string
+	Values      map[string]string
+	Profile     string
+	Project     string
+	Command     string
+	RealCommand string
 }
 
 func (a *Adapter) Command(invocation Invocation) (*exec.Cmd, error) {
@@ -27,10 +28,8 @@ func (a *Adapter) Command(invocation Invocation) (*exec.Cmd, error) {
 		args = []string{"list"}
 	case "validate", "doctor":
 		args = []string{invocation.Operation, invocation.Selection}
-	case "configure", "run", "open":
-		args = append([]string{invocation.Operation, invocation.Selection, "--"}, invocation.Arguments...)
 	default:
-		return nil, fmt.Errorf("unsupported adapter operation %s", invocation.Operation)
+		args = append([]string{invocation.Operation, invocation.Selection, "--"}, invocation.Arguments...)
 	}
 	command := adapterCommand(a.ExecutablePath(), args)
 	command.Env = os.Environ()
@@ -41,6 +40,7 @@ func (a *Adapter) Command(invocation Invocation) (*exec.Cmd, error) {
 		requestedCommand = a.Manifest.Name
 	}
 	command.Env = setEnvironment(command.Env, "CTX_ADAPTER_COMMAND", requestedCommand)
+	command.Env = setEnvironment(command.Env, "CTX_ADAPTER_REAL_COMMAND", invocation.RealCommand)
 	command.Env = setEnvironment(command.Env, "CTX_PROJECT_DIR", invocation.Project)
 	command.Env = setEnvironment(command.Env, "CTX_PROFILE", invocation.Profile)
 	for key, value := range invocation.Values {

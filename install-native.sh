@@ -4,7 +4,7 @@ set -eu
 DST_BIN=${CTX_BIN_DIR:-$HOME/.local/bin}
 CONFIG_DIR=${CTX_HOME:-$HOME/.config/ctx}
 VERSION=${CTX_VERSION:-latest}
-FIRST_PARTY_ADAPTERS='firefox chrome chromium safari kube aws gcloud postgres mysql'
+FIRST_PARTY_ADAPTERS='docker podman nerdctl apple firefox chrome chromium safari kube aws gcloud postgres mysql'
 ROOT=
 if [ -f "$0" ]; then ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd); fi
 

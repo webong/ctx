@@ -9,7 +9,8 @@ reaches command parity.
 - Project `.ctx`, central project map, fallback, and named-profile resolution.
 - `ctx status`, `ctx resolve`, `ctx explain`, and `ctx version`.
 - Profile environment application through `ctx env`, `ctx run --`, and `ctx shell`.
-- Docker, Podman, and nerdctl/containerd selection through `ctx run`.
+- Provider-driven Docker, Podman, nerdctl/containerd, and Apple Container
+  selection through `ctx run`.
 - Native compilation on macOS, Linux, and Windows.
 - Windows `.cmd` engine shims and a PowerShell source installer.
 - Adapter v1 discovery, checksum trust, lifecycle commands, and process dispatch.
@@ -46,5 +47,8 @@ release-candidate soak testing on real Windows, macOS, and Linux setups before
 making the native executable the default installer target.
 
 The target architecture keeps `shell`, `browser`, and `container` as ctx context
-families. Individual applications remain providers, so operating-system support
-belongs in the provider rather than accumulating platform switches in the core.
+families. Individual applications are first-party or external providers, so
+operating-system support and CLI-specific behavior live in provider packages
+rather than accumulating platform or engine switches in the core. Container
+providers are discovered from installed `kind = "container"` adapters; adding one
+does not require recompiling ctx.

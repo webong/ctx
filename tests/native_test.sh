@@ -22,8 +22,12 @@ export PATH="$CTX_BIN_DIR:$TEST_ROOT/fake-bin:$PATH"
 
 GOCACHE=${GOCACHE:-/tmp/ctx-go-build-cache} GOMODCACHE=${GOMODCACHE:-/tmp/ctx-go-mod-cache} \
   go build -o "$CTX_BIN_DIR/ctx" "$ROOT/cmd/ctx"
+for engine in docker podman nerdctl; do
+  cp "$ROOT/adapters/$engine/$engine" "$CTX_BIN_DIR/$engine"
+  chmod +x "$CTX_BIN_DIR/$engine"
+done
 
-for adapter in firefox kube aws gcloud postgres mysql; do
+for adapter in docker podman nerdctl apple firefox kube aws gcloud postgres mysql; do
   ctx adapter install "$ROOT/adapters/$adapter" >/dev/null
   ctx adapter trust "$adapter" >/dev/null
   ctx adapter ls | grep -Eq "^${adapter}[[:space:]]+trusted"
@@ -43,6 +47,7 @@ cd "$TEST_ROOT/project"
 ctx set docker alpha >/dev/null
 ctx set podman red >/dev/null
 ctx set nerdctl k8s.io >/dev/null
+ctx set apple local >/dev/null
 ctx set kube production --namespace payments >/dev/null
 ctx set aws client-a >/dev/null
 ctx set gcloud client-a >/dev/null
@@ -56,8 +61,18 @@ test "$(CTX_SHELL=custom-shell ctx shell)" = 'custom shell'
 test "$(ctx shell --shell custom-shell)" = 'custom shell'
 ctx completion powershell | grep -Fq 'Register-ArgumentCompleter'
 test "$(ctx run docker ps)" = '--context alpha ps'
+test "$(docker ps)" = '--context alpha ps'
+test "$(DOCKER_CONTEXT=environment ctx status docker)" = 'docker: environment (DOCKER_CONTEXT)'
 test "$(ctx run podman ps)" = '--connection red ps'
+test "$(podman ps)" = '--connection red ps'
 test "$(ctx run nerdctl ps)" = '--namespace k8s.io ps'
+test "$(nerdctl ps)" = '--namespace k8s.io ps'
+test "$(ctx run container list)" = 'list'
+test "$(ctx run apple list)" = 'list'
+ctx clear docker >/dev/null
+test "$(ctx run docker ps)" = 'ps'
+test "$(docker ps)" = 'ps'
+ctx set docker alpha >/dev/null
 test "$(ctx ls browser)" = 'firefox:client-a'
 test "$(ctx run kubectl get pods)" = '--context production --namespace payments get pods'
 test "$(ctx run aws sts get-caller-identity)" = '--profile client-a sts get-caller-identity'
@@ -67,10 +82,23 @@ test "$(ctx run mysql app)" = '--login-path=client-a app'
 test "$(ctx run echo hello)" = 'run[staging] hello'
 test "$(ctx open https://example.test)" = '-na Firefox --args -P client-a https://example.test'
 ctx adapter inspect firefox | grep -Fq 'kind:         browser'
+ctx adapter inspect docker | grep -Fq 'kind:         container'
+ctx adapter inspect docker | grep -Fq 'default:      true'
+ctx adapter ls container | grep -Eq '^apple[[:space:]]+trusted'
+ctx adapter ls container | grep -Eq '^docker[[:space:]]+trusted'
+ctx ls container | grep -Fq 'docker:alpha'
+ctx ls container | grep -Fq 'apple:local'
+mv "$TEST_ROOT/fake-bin/container" "$TEST_ROOT/fake-bin/container-disabled"
+ctx ls container | grep -Fq 'docker:alpha'
+mv "$TEST_ROOT/fake-bin/container-disabled" "$TEST_ROOT/fake-bin/container"
 ctx doctor | grep -Fq 'ok   adapter kube production'
+ctx doctor | grep -Fq 'ok   container docker alpha'
 ctx doctor | grep -Fq 'ok   browser firefox:client-a'
 
 test "$(ctx build --cache-ref registry.example/app:buildcache -- --tag registry.example/app:dev .)" = '--context alpha buildx build --cache-from type=registry,ref=registry.example/app:buildcache --cache-to type=registry,ref=registry.example/app:buildcache,mode=max --tag registry.example/app:dev .'
+ctx clear docker >/dev/null
+test "$(ctx build --cache-ref registry.example/app:buildcache -- --tag registry.example/app:dev .)" = 'buildx build --cache-from type=registry,ref=registry.example/app:buildcache --cache-to type=registry,ref=registry.example/app:buildcache,mode=max --tag registry.example/app:dev .'
+ctx set docker alpha >/dev/null
 test "$(ctx build podman --cache-ref registry.example/app:podman-cache -- --tag registry.example/app:dev .)" = '--connection red build --layers --cache-from registry.example/app:podman-cache --cache-to registry.example/app:podman-cache --tag registry.example/app:dev .'
 test "$(ctx build nerdctl --cache-ref registry.example/app:nerdctl-cache -- --tag registry.example/app:dev .)" = '--namespace k8s.io build --cache-from type=registry,ref=registry.example/app:nerdctl-cache --cache-to type=registry,ref=registry.example/app:nerdctl-cache,mode=max --tag registry.example/app:dev .'
 test "$(ctx image sync alpha beta registry.example/app:dev)" = "$(printf '%s\n%s' '--context alpha image push registry.example/app:dev' '--context beta image pull registry.example/app:dev')"
@@ -116,6 +144,7 @@ ctx profile use client-b >/dev/null
 ctx clear aws >/dev/null
 test "$(ctx shell)" = 'custom shell'
 test "$(ctx run aws sts get-caller-identity)" = '--profile default sts get-caller-identity'
+test "$(ctx run docker print-env)" = 'development'
 test "$(ctx run -- sh -c 'printf %s "$APP_ENV"')" = 'development'
 case "$(ctx env)" in *'PATH=/client/bin:'*) ;; *) exit 1 ;; esac
 ctx profile env-unset client-b APP_ENV >/dev/null

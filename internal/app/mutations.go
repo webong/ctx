@@ -13,7 +13,6 @@ import (
 
 	adapterpkg "github.com/webong/ctx/internal/adapter"
 	"github.com/webong/ctx/internal/config"
-	"github.com/webong/ctx/internal/launch"
 )
 
 var profileNamePattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
@@ -31,25 +30,6 @@ func setContext(resolver *config.Resolver, args []string, stdout, stderr io.Writ
 	}
 	projectFile := filepath.Join(currentDirectory(), ".ctx")
 	switch selector {
-	case "docker", "podman", "nerdctl":
-		global := len(options) == 1 && options[0] == "--global"
-		if len(options) != 0 && !global {
-			fmt.Fprintln(stderr, "ctx: container set only accepts --global")
-			return 2
-		}
-		if code := validateEngineSelection(selector, selection, stderr); code != 0 {
-			return code
-		}
-		if global {
-			if err := config.SetRoot(resolver.ConfigPath, selector+"_default", selection); err != nil {
-				return reportError(stderr, err)
-			}
-			fmt.Fprintf(stdout, "%s fallback: %s\n", selector, selection)
-			return 0
-		}
-		if err := config.SetFlat(projectFile, selector, selection); err != nil {
-			return reportError(stderr, err)
-		}
 	case "browser":
 		if len(options) != 0 {
 			fmt.Fprintln(stderr, "ctx: browser set does not accept options")
@@ -66,16 +46,37 @@ func setContext(resolver *config.Resolver, args []string, stdout, stderr io.Writ
 		}
 	default:
 		candidate, err := adapterStore().Load(selector)
-		if err != nil || candidate.Manifest.Kind != "selector" {
+		if err != nil || (candidate.Manifest.Kind != "selector" && candidate.Manifest.Kind != "container") {
 			fmt.Fprintf(stderr, "ctx: unknown selector %s\n", selector)
 			return 2
 		}
-		values, code := configureAdapterSelection(resolver, candidate, selection, options, stderr)
-		if code != 0 {
-			return code
-		}
-		if err := config.SetFlatValues(projectFile, values); err != nil {
-			return reportError(stderr, err)
+		if candidate.Manifest.Kind == "container" {
+			global := len(options) == 1 && options[0] == "--global"
+			if len(options) != 0 && !global {
+				fmt.Fprintln(stderr, "ctx: container set only accepts --global")
+				return 2
+			}
+			if code := invokeAdapter(resolver, candidate, "validate", selection, nil, "", io.Discard, stderr); code != 0 {
+				return code
+			}
+			if global {
+				if err := config.SetRoot(resolver.ConfigPath, candidate.Manifest.SelectorKey+"_default", selection); err != nil {
+					return reportError(stderr, err)
+				}
+				fmt.Fprintf(stdout, "%s fallback: %s\n", selector, selection)
+				return 0
+			}
+			if err := config.SetFlat(projectFile, candidate.Manifest.SelectorKey, selection); err != nil {
+				return reportError(stderr, err)
+			}
+		} else {
+			values, code := configureAdapterSelection(resolver, candidate, selection, options, stderr)
+			if code != 0 {
+				return code
+			}
+			if err := config.SetFlatValues(projectFile, values); err != nil {
+				return reportError(stderr, err)
+			}
 		}
 	}
 	ensureGitExclude(projectFile)
@@ -136,9 +137,9 @@ func clearContext(args []string, stdout, stderr io.Writer) int {
 	}
 	selector := args[0]
 	keys := []string{selector}
-	if selector == "profile" || selector == "browser" || selector == "docker" || selector == "podman" || selector == "nerdctl" {
+	if selector == "profile" || selector == "browser" {
 		// The selector key is identical to its command name.
-	} else if candidate, err := adapterStore().Load(selector); err == nil && candidate.Manifest.Kind == "selector" {
+	} else if candidate, err := adapterStore().Load(selector); err == nil && (candidate.Manifest.Kind == "selector" || candidate.Manifest.Kind == "container") {
 		keys = candidate.ConfigKeys()
 	} else {
 		fmt.Fprintf(stderr, "ctx: cannot clear %s\n", selector)
@@ -262,47 +263,9 @@ func profileCommand(resolver *config.Resolver, args []string, stdout, stderr io.
 	}
 }
 
-func validateEngineSelection(engine, selection string, stderr io.Writer) int {
-	real, err := launch.FindReal(engine)
-	if err != nil {
-		return reportErrorCode(stderr, err, 127)
-	}
-	var args []string
-	switch engine {
-	case "docker":
-		args = []string{"context", "inspect", selection}
-	case "podman":
-		args = []string{"system", "connection", "list", "--format", "{{.Name}}"}
-	case "nerdctl":
-		args = []string{"namespace", "ls", "--quiet"}
-	}
-	command := exec.Command(real, args...)
-	var output bytes.Buffer
-	command.Stdout = &output
-	command.Stderr = io.Discard
-	if err := command.Run(); err != nil {
-		fmt.Fprintf(stderr, "ctx: unknown %s %s\n", engine, selection)
-		return 1
-	}
-	if engine != "docker" {
-		found := false
-		for _, line := range strings.Split(strings.TrimSpace(output.String()), "\n") {
-			if line == selection {
-				found = true
-				break
-			}
-		}
-		if !found {
-			fmt.Fprintf(stderr, "ctx: unknown %s %s\n", engine, selection)
-			return 1
-		}
-	}
-	return 0
-}
-
 func validProfileKey(key string) bool {
 	switch key {
-	case "docker", "podman", "nerdctl", "browser", "shell_path":
+	case "browser", "shell_path":
 		return true
 	}
 	installed, err := adapterStore().List()
@@ -310,7 +273,7 @@ func validProfileKey(key string) bool {
 		return false
 	}
 	for _, candidate := range installed {
-		if candidate.Manifest.Kind != "selector" {
+		if candidate.Manifest.Kind != "selector" && candidate.Manifest.Kind != "container" {
 			continue
 		}
 		for _, configKey := range candidate.ConfigKeys() {

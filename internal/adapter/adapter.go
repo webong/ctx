@@ -20,10 +20,10 @@ import (
 const APIVersion = "1"
 
 var validName = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
+var validEnvironmentName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 var reservedNames = map[string]bool{
-	"docker": true, "podman": true, "nerdctl": true, "browser": true,
-	"profile": true, "shell": true, "env": true, "image": true,
+	"browser": true, "container": true, "profile": true, "shell": true, "env": true, "image": true,
 	"volume": true, "build": true, "adapter": true,
 }
 
@@ -38,7 +38,9 @@ type Manifest struct {
 	SelectorKey       string
 	ExtraKeys         []string
 	Commands          []string
+	OverrideEnv       []string
 	FirstParty        bool
+	DefaultProvider   bool
 }
 
 type Adapter struct {
@@ -83,7 +85,9 @@ func LoadDirectory(directory string) (*Adapter, error) {
 		SelectorKey:       values["selector_key"],
 		ExtraKeys:         splitList(values["extra_keys"]),
 		Commands:          splitList(values["commands"]),
+		OverrideEnv:       splitList(values["override_env"]),
 		FirstParty:        values["first_party"] == "true",
+		DefaultProvider:   values["default_provider"] == "true",
 	}
 	if manifest.Kind == "" {
 		manifest.Kind = "selector"
@@ -95,7 +99,7 @@ func LoadDirectory(directory string) (*Adapter, error) {
 			manifest.SelectorKey = manifest.Name
 		}
 	}
-	if len(manifest.Commands) == 0 && manifest.Kind == "selector" {
+	if len(manifest.Commands) == 0 && (manifest.Kind == "selector" || manifest.Kind == "container") {
 		manifest.Commands = []string{manifest.Name}
 	}
 	if err := validateManifest(manifest, absolute); err != nil {
@@ -324,8 +328,11 @@ func validateManifest(manifest Manifest, directory string) error {
 	if !validName.MatchString(manifest.Name) || reservedNames[manifest.Name] {
 		return fmt.Errorf("invalid or reserved adapter name %s", manifest.Name)
 	}
-	if manifest.Kind != "selector" && manifest.Kind != "browser" {
+	if manifest.Kind != "selector" && manifest.Kind != "browser" && manifest.Kind != "container" {
 		return fmt.Errorf("adapter %s has invalid kind %s", manifest.Name, manifest.Kind)
+	}
+	if manifest.DefaultProvider && manifest.Kind != "container" {
+		return fmt.Errorf("adapter %s can only be a default provider when kind is container", manifest.Name)
 	}
 	if !validName.MatchString(manifest.SelectorKey) {
 		return fmt.Errorf("adapter %s has invalid selector key %s", manifest.Name, manifest.SelectorKey)
@@ -333,6 +340,11 @@ func validateManifest(manifest Manifest, directory string) error {
 	for _, key := range append(append([]string{}, manifest.ExtraKeys...), manifest.Commands...) {
 		if !validName.MatchString(key) {
 			return fmt.Errorf("adapter %s has invalid key or command %s", manifest.Name, key)
+		}
+	}
+	for _, key := range manifest.OverrideEnv {
+		if !validEnvironmentName.MatchString(key) {
+			return fmt.Errorf("adapter %s has invalid override environment variable %s", manifest.Name, key)
 		}
 	}
 	for platform, executableName := range map[string]string{"default": manifest.Executable, "windows": manifest.ExecutableWindows} {
@@ -356,7 +368,9 @@ func validateManifest(manifest Manifest, directory string) error {
 	}
 	for _, capability := range manifest.Capabilities {
 		switch capability {
-		case "list", "configure", "validate", "run", "doctor", "open":
+		case "list", "configure", "validate", "run", "doctor", "open", "build",
+			"image_push", "image_pull", "image_save", "image_load",
+			"volume_exists", "volume_create", "volume_export", "volume_import":
 		default:
 			return fmt.Errorf("adapter %s declares unknown capability %s", manifest.Name, capability)
 		}
