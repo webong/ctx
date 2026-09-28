@@ -54,6 +54,14 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return explain(resolver, stdout, stderr)
 	case "env":
 		return showEnvironment(resolver, stdout, stderr)
+	case "adapter":
+		return adapterCommand(resolver, args[1:], stdout, stderr)
+	case "ls":
+		return listContexts(resolver, args[1:], stdout, stderr)
+	case "open":
+		return openBrowser(resolver, args[1:], stdout, stderr)
+	case "doctor":
+		return doctor(resolver, stdout, stderr)
 	case "run":
 		return runCommand(resolver, args[1:], stdout, stderr)
 	case "shell":
@@ -71,6 +79,10 @@ usage:
   ctx resolve <key>
   ctx explain
   ctx env
+  ctx adapter <ls|inspect|install|trust|test|doctor|remove> [arguments...]
+  ctx ls <selector>
+  ctx open [URL...]
+  ctx doctor
   ctx run <docker|podman|nerdctl> [arguments...]
   ctx run -- <command> [arguments...]
   ctx shell [-- <command> [arguments...]]
@@ -86,18 +98,29 @@ func newResolver() (*config.Resolver, error) {
 	if err != nil {
 		return nil, err
 	}
-	configHome := os.Getenv("CTX_HOME")
-	if configHome == "" {
-		configHome = platform.DefaultConfigHome()
+	return config.NewResolver(workingDir, homeDir, filepath.Join(configHomePath(), "config.toml"))
+}
+
+func configHomePath() string {
+	if home := os.Getenv("CTX_HOME"); home != "" {
+		return home
 	}
-	return config.NewResolver(workingDir, homeDir, filepath.Join(configHome, "config.toml"))
+	return platform.DefaultConfigHome()
 }
 
 func status(resolver *config.Resolver, selectors []string, stdout, stderr io.Writer) int {
-	if len(selectors) == 0 {
+	showAll := len(selectors) == 0
+	if showAll {
 		selectors = []string{"docker", "podman", "nerdctl", "browser", "profile"}
+		if installed, err := adapterStore().List(); err == nil {
+			for _, candidate := range installed {
+				if candidate.Manifest.Kind == "selector" {
+					selectors = append(selectors, candidate.Manifest.Name)
+				}
+			}
+		}
 	}
-	if len(selectors) != 1 && len(selectors) != 5 {
+	if !showAll && len(selectors) != 1 {
 		fmt.Fprintln(stderr, "ctx: status accepts at most one selector")
 		return 2
 	}
@@ -106,7 +129,11 @@ func status(resolver *config.Resolver, selectors []string, stdout, stderr io.Wri
 			fmt.Fprintf(stdout, "%s: %s (%s)\n", selector, value, source)
 			continue
 		}
-		resolved, err := resolver.Resolve(selector)
+		key := selector
+		if installed, err := adapterStore().Load(selector); err == nil && installed.Manifest.Kind == "selector" {
+			key = installed.Manifest.SelectorKey
+		}
+		resolved, err := resolver.Resolve(key)
 		if err != nil {
 			fmt.Fprintf(stderr, "ctx: %v\n", err)
 			return 1
@@ -208,8 +235,7 @@ func runCommand(resolver *config.Resolver, args []string, stdout, stderr io.Writ
 	}
 	engineName := args[0]
 	if engineName != "docker" && engineName != "podman" && engineName != "nerdctl" {
-		fmt.Fprintf(stderr, "ctx: native adapter execution for %s is not migrated yet\n", engineName)
-		return 2
+		return runAdapterTool(resolver, engineName, args[1:], stdout, stderr)
 	}
 	real, err := launch.FindReal(engineName)
 	if err != nil {

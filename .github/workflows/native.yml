@@ -35,3 +35,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: ./tests/test.sh
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache: true
+      - run: ./tests/native_test.sh

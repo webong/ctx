@@ -12,6 +12,9 @@ reaches command parity.
 - Docker, Podman, and nerdctl/containerd selection through `ctx run`.
 - Native compilation on macOS, Linux, and Windows.
 - Windows `.cmd` engine shims and a PowerShell source installer.
+- Adapter v1 discovery, checksum trust, lifecycle commands, and process dispatch.
+- Selector adapters for Kubernetes, cloud CLIs, and databases.
+- Browser-provider aggregation, validation, launching, and diagnostics.
 
 Build the preview locally:
 
@@ -29,8 +32,7 @@ ctx.exe version
 
 ## Remaining parity work
 
-- Adapter discovery, trust, and process execution in Go.
-- Browser-provider discovery and Windows browser implementations.
+- Windows-native implementations of the bundled browser and selector adapters.
 - `set`, `clear`, and profile mutation commands.
 - Build-cache, image, and volume transfer commands.
 - Native macOS/Linux installation and signed release artifacts.
