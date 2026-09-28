@@ -77,6 +77,9 @@ func adapterCommand(resolver *config.Resolver, args []string, stdout, stderr io.
 		fmt.Fprintf(stdout, "selector:     %s\n", candidate.Manifest.SelectorKey)
 		fmt.Fprintf(stdout, "commands:     %s\n", strings.Join(candidate.Manifest.Commands, ","))
 		fmt.Fprintf(stdout, "capabilities: %s\n", strings.Join(candidate.Manifest.Capabilities, ","))
+		if len(candidate.Manifest.ShareSpaces) > 0 {
+			fmt.Fprintf(stdout, "share spaces: %s\n", strings.Join(candidate.Manifest.ShareSpaces, ","))
+		}
 		if len(candidate.Manifest.OverrideEnv) > 0 {
 			fmt.Fprintf(stdout, "override env: %s\n", strings.Join(candidate.Manifest.OverrideEnv, ","))
 		}

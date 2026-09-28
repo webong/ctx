@@ -73,6 +73,9 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	recordSystemContext(resolver, stderr)
+	if strings.HasPrefix(args[0], "share:") {
+		return shareSpaceCommand(resolver, strings.TrimPrefix(args[0], "share:"), args[1:], stdout, stderr)
+	}
 	switch args[0] {
 	case "resolve":
 		if len(args) != 2 {
@@ -110,10 +113,6 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return doctor(resolver, stdout, stderr)
 	case "build":
 		return buildImage(resolver, args[1:], stdout, stderr)
-	case "image":
-		return imageCommand(resolver, args[1:], stdout, stderr)
-	case "volume":
-		return volumeCommand(resolver, args[1:], stdout, stderr)
 	case "run":
 		return runCommand(resolver, args[1:], stdout, stderr)
 	case "shell":
@@ -173,8 +172,11 @@ usage:
   ctx open [URL...]
   ctx doctor
   ctx build [provider] --cache-ref <registry-ref> [--] <build arguments>
-  ctx image <sync|copy> [arguments...]
-  ctx volume <export|import|copy> [arguments...]
+  ctx share:container image <sync|copy> [arguments...]
+  ctx share:container volume <export|import|copy> [arguments...]
+  ctx share:browser (reserved; unavailable)
+  ctx share:computer (reserved; unavailable)
+  ctx share:<space> [arguments...] (when an adapter registers the space)
   ctx run <provider-or-adapter-command> [arguments...]
   ctx run -- <command> [arguments...]
   ctx shell [--shell <executable>] [-- <command> [arguments...]]

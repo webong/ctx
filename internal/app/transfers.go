@@ -64,7 +64,7 @@ parsed:
 
 func imageCommand(resolver *config.Resolver, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "ctx: image requires sync or copy")
+		fmt.Fprintln(stderr, "ctx: share:container image requires sync or copy")
 		return 2
 	}
 	switch args[0] {
@@ -73,7 +73,7 @@ func imageCommand(resolver *config.Resolver, args []string, stdout, stderr io.Wr
 	case "copy":
 		return imageCopy(resolver, args[1:], stdout, stderr)
 	default:
-		fmt.Fprintln(stderr, "ctx: image requires sync or copy")
+		fmt.Fprintln(stderr, "ctx: share:container image requires sync or copy")
 		return 2
 	}
 }
@@ -172,7 +172,7 @@ func imageCopy(resolver *config.Resolver, args []string, stdout, stderr io.Write
 
 func volumeCommand(resolver *config.Resolver, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "ctx: volume requires export, import, or copy")
+		fmt.Fprintln(stderr, "ctx: share:container volume requires export, import, or copy")
 		return 2
 	}
 	switch args[0] {
@@ -210,7 +210,7 @@ func volumeCommand(resolver *config.Resolver, args []string, stdout, stderr io.W
 		}
 		return volumeCopy(resolver, args[1:], stdout, stderr)
 	default:
-		fmt.Fprintln(stderr, "ctx: volume requires export, import, or copy")
+		fmt.Fprintln(stderr, "ctx: share:container volume requires export, import, or copy")
 		return 2
 	}
 }

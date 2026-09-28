@@ -135,35 +135,35 @@ test "$(ctx build --cache-ref registry.example/app:buildcache -- --tag registry.
 ctx set docker alpha >/dev/null
 test "$(ctx build podman --cache-ref registry.example/app:podman-cache -- --tag registry.example/app:dev .)" = '--connection red build --layers --cache-from registry.example/app:podman-cache --cache-to registry.example/app:podman-cache --tag registry.example/app:dev .'
 test "$(ctx build nerdctl --cache-ref registry.example/app:nerdctl-cache -- --tag registry.example/app:dev .)" = '--namespace k8s.io build --cache-from type=registry,ref=registry.example/app:nerdctl-cache --cache-to type=registry,ref=registry.example/app:nerdctl-cache,mode=max --tag registry.example/app:dev .'
-test "$(ctx image sync alpha beta registry.example/app:dev)" = "$(printf '%s\n%s' '--context alpha image push registry.example/app:dev' '--context beta image pull registry.example/app:dev')"
-ctx image sync --tar alpha beta registry.example/app:dev >/dev/null
-image_copy_output=$(ctx image copy docker:alpha podman:red registry.example/app:dev)
+test "$(ctx share:container image sync alpha beta registry.example/app:dev)" = "$(printf '%s\n%s' '--context alpha image push registry.example/app:dev' '--context beta image pull registry.example/app:dev')"
+ctx share:container image sync --tar alpha beta registry.example/app:dev >/dev/null
+image_copy_output=$(ctx share:container image copy docker:alpha podman:red registry.example/app:dev)
 printf '%s\n' "$image_copy_output" | grep -Eq '^--context alpha image save -o .+ registry.example/app:dev$'
 printf '%s\n' "$image_copy_output" | grep -Eq '^--connection red image load -i .+$'
-image_copy_output=$(ctx image copy podman:red docker:beta registry.example/app:dev)
+image_copy_output=$(ctx share:container image copy podman:red docker:beta registry.example/app:dev)
 printf '%s\n' "$image_copy_output" | grep -Eq '^--connection red image save -o .+ registry.example/app:dev$'
 printf '%s\n' "$image_copy_output" | grep -Eq '^--context beta image load -i .+$'
-image_copy_output=$(ctx image copy docker:alpha nerdctl:k8s.io registry.example/app:dev)
+image_copy_output=$(ctx share:container image copy docker:alpha nerdctl:k8s.io registry.example/app:dev)
 printf '%s\n' "$image_copy_output" | grep -Eq '^--context alpha image save -o .+ registry.example/app:dev$'
 printf '%s\n' "$image_copy_output" | grep -Eq '^--namespace k8s.io load -i .+$'
-image_copy_output=$(ctx image copy nerdctl:k8s.io apple:local registry.example/app:dev)
+image_copy_output=$(ctx share:container image copy nerdctl:k8s.io apple:local registry.example/app:dev)
 printf '%s\n' "$image_copy_output" | grep -Eq '^--namespace k8s.io save -o .+ registry.example/app:dev$'
 printf '%s\n' "$image_copy_output" | grep -Eq '^image load --input .+$'
-if CTX_TEST_APPLE_VERSION=1.2.0 ctx image copy docker:alpha apple:local registry.example/app:dev >/dev/null 2>&1; then
+if CTX_TEST_APPLE_VERSION=1.2.0 ctx share:container image copy docker:alpha apple:local registry.example/app:dev >/dev/null 2>&1; then
   printf 'native core allowed an unsafe Apple Container image import\n' >&2
   exit 1
 fi
-test "$(ctx volume export alpha data 2>/dev/null)" = '--context alpha run --rm -v data:/volume:ro alpine:3.21 tar -C /volume -cf - .'
-test "$(ctx volume import alpha restored </dev/null)" = "$(printf '%s\n%s' '--context alpha volume create restored' '--context alpha run --rm -i -v restored:/volume alpine:3.21 tar -C /volume -xf -')"
-test "$(ctx volume copy docker:alpha podman:red data restored-podman 2>/dev/null)" = "$(printf '%s\n%s' '--connection red volume create restored-podman' '--connection red run --rm -i -v restored-podman:/volume alpine:3.21 tar -C /volume -xf -')"
-test "$(ctx volume copy podman:red docker:beta data restored-docker 2>/dev/null)" = "$(printf '%s\n%s' '--context beta volume create restored-docker' '--context beta run --rm -i -v restored-docker:/volume alpine:3.21 tar -C /volume -xf -')"
-test "$(ctx volume copy docker:alpha nerdctl:k8s.io data restored-nerdctl 2>/dev/null)" = "$(printf '%s\n%s' '--namespace k8s.io volume create restored-nerdctl' '--namespace k8s.io run --rm -i -v restored-nerdctl:/volume alpine:3.21 tar -C /volume -xf -')"
-test "$(ctx volume copy nerdctl:k8s.io apple:local data restored-apple 2>/dev/null)" = "$(printf '%s\n%s' 'volume create restored-apple' 'run --rm -i -v restored-apple:/volume alpine:3.21 tar -C /volume -xf -')"
-if ctx volume import alpha exists </dev/null >/dev/null 2>&1; then
+test "$(ctx share:container volume export alpha data 2>/dev/null)" = '--context alpha run --rm -v data:/volume:ro alpine:3.21 tar -C /volume -cf - .'
+test "$(ctx share:container volume import alpha restored </dev/null)" = "$(printf '%s\n%s' '--context alpha volume create restored' '--context alpha run --rm -i -v restored:/volume alpine:3.21 tar -C /volume -xf -')"
+test "$(ctx share:container volume copy docker:alpha podman:red data restored-podman 2>/dev/null)" = "$(printf '%s\n%s' '--connection red volume create restored-podman' '--connection red run --rm -i -v restored-podman:/volume alpine:3.21 tar -C /volume -xf -')"
+test "$(ctx share:container volume copy podman:red docker:beta data restored-docker 2>/dev/null)" = "$(printf '%s\n%s' '--context beta volume create restored-docker' '--context beta run --rm -i -v restored-docker:/volume alpine:3.21 tar -C /volume -xf -')"
+test "$(ctx share:container volume copy docker:alpha nerdctl:k8s.io data restored-nerdctl 2>/dev/null)" = "$(printf '%s\n%s' '--namespace k8s.io volume create restored-nerdctl' '--namespace k8s.io run --rm -i -v restored-nerdctl:/volume alpine:3.21 tar -C /volume -xf -')"
+test "$(ctx share:container volume copy nerdctl:k8s.io apple:local data restored-apple 2>/dev/null)" = "$(printf '%s\n%s' 'volume create restored-apple' 'run --rm -i -v restored-apple:/volume alpine:3.21 tar -C /volume -xf -')"
+if ctx share:container volume import alpha exists </dev/null >/dev/null 2>&1; then
   printf 'native core imported into an existing volume\n' >&2
   exit 1
 fi
-if ctx volume copy docker:alpha podman:red data exists </dev/null >/dev/null 2>&1; then
+if ctx share:container volume copy docker:alpha podman:red data exists </dev/null >/dev/null 2>&1; then
   printf 'native core copied into an existing volume\n' >&2
   exit 1
 fi

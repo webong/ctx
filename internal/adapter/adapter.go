@@ -24,7 +24,7 @@ var validEnvironmentName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 var reservedNames = map[string]bool{
 	"browser": true, "container": true, "profile": true, "shell": true, "env": true, "image": true,
-	"volume": true, "build": true, "adapter": true,
+	"volume": true, "build": true, "adapter": true, "share": true, "computer": true,
 }
 
 type Manifest struct {
@@ -38,6 +38,7 @@ type Manifest struct {
 	SelectorKey       string
 	ExtraKeys         []string
 	Commands          []string
+	ShareSpaces       []string
 	OverrideEnv       []string
 	DefaultProvider   bool
 }
@@ -84,6 +85,7 @@ func LoadDirectory(directory string) (*Adapter, error) {
 		SelectorKey:       values["selector_key"],
 		ExtraKeys:         splitList(values["extra_keys"]),
 		Commands:          splitList(values["commands"]),
+		ShareSpaces:       splitList(values["share_spaces"]),
 		OverrideEnv:       splitList(values["override_env"]),
 		DefaultProvider:   values["default_provider"] == "true",
 	}
@@ -99,6 +101,9 @@ func LoadDirectory(directory string) (*Adapter, error) {
 	}
 	if len(manifest.Commands) == 0 && (manifest.Kind == "selector" || manifest.Kind == "container") {
 		manifest.Commands = []string{manifest.Name}
+	}
+	if contains(manifest.Capabilities, "share") && len(manifest.ShareSpaces) == 0 {
+		manifest.ShareSpaces = []string{manifest.Name}
 	}
 	if err := validateManifest(manifest, absolute); err != nil {
 		return nil, err
@@ -401,6 +406,16 @@ func validateManifest(manifest Manifest, directory string) error {
 			return fmt.Errorf("adapter %s has invalid key or command %s", manifest.Name, key)
 		}
 	}
+	if len(manifest.ShareSpaces) > 0 && !contains(manifest.Capabilities, "share") {
+		return fmt.Errorf("adapter %s declares share spaces without the share capability", manifest.Name)
+	}
+	seenShareSpaces := map[string]bool{}
+	for _, space := range manifest.ShareSpaces {
+		if !validName.MatchString(space) || space == "container" || space == "browser" || space == "computer" || seenShareSpaces[space] {
+			return fmt.Errorf("adapter %s has invalid or duplicate share space %s", manifest.Name, space)
+		}
+		seenShareSpaces[space] = true
+	}
 	for _, key := range manifest.OverrideEnv {
 		if !validEnvironmentName.MatchString(key) {
 			return fmt.Errorf("adapter %s has invalid override environment variable %s", manifest.Name, key)
@@ -427,7 +442,7 @@ func validateManifest(manifest Manifest, directory string) error {
 	}
 	for _, capability := range manifest.Capabilities {
 		switch capability {
-		case "list", "configure", "validate", "run", "doctor", "open", "build",
+		case "list", "configure", "validate", "run", "doctor", "open", "build", "share",
 			"image_push", "image_pull", "image_save", "image_load",
 			"volume_exists", "volume_create", "volume_export", "volume_import":
 		default:

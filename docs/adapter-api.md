@@ -15,10 +15,12 @@ executable = "ctx-example"
 # Optional native Windows implementation. When absent, executable is used.
 executable_windows = "ctx-example.ps1"
 description = "Example context adapter"
-capabilities = "list,validate,run,doctor,open"
+capabilities = "list,validate,run,doctor,open,share"
 selector_key = "example_context"
 extra_keys = "example_namespace"
 commands = "example,examplectl"
+# Optional when capabilities includes share; defaults to adapter name.
+share_spaces = "workspace,project"
 # Native variables that take priority over the stored selection.
 override_env = "EXAMPLE_CONTEXT,EXAMPLE_HOST"
 # Optional for kind = "container". At most one installed provider should set it.
@@ -38,7 +40,8 @@ A `container` adapter provides an engine to the built-in container family. Its
 unqualified `list` output contains native context, connection, or namespace
 names; `ctx ls container` prefixes each result as `name:selection`. The provider
 may implement `build`, image, and volume capabilities in addition to normal
-`run` routing. `ctx image copy` and `ctx volume copy` resolve qualified endpoints
+`run` routing. `ctx share:container image copy` and
+`ctx share:container volume copy` resolve qualified endpoints
 dynamically, so third-party container providers need no core changes.
 
 `selector_key` defaults to the adapter name for selector and container adapters,
@@ -67,6 +70,7 @@ ctx-example configure SELECTION -- OPTIONS...
 ctx-example doctor SELECTION
 ctx-example run SELECTION -- ARGUMENTS...
 ctx-example open SELECTION -- ARGUMENTS...
+ctx-example share SELECTION -- SPACE ARGUMENTS...
 ~~~
 
 Every declared capability is invoked by the same protocol:
@@ -80,6 +84,21 @@ Container capabilities currently understood by the core are `build`,
 `volume_create`, `volume_export`, and `volume_import`. Image save arguments are
 `ARCHIVE IMAGE...`; image load receives `ARCHIVE`. Volume export writes a tar
 stream to stdout, while volume import reads a tar stream from stdin.
+
+Container resource transfers are exposed through `ctx share:container`.
+The installed container adapters register the actual image and volume
+capabilities, and ctx rejects a transfer when either endpoint lacks a needed
+capability. `ctx share:browser` is reserved for browser adapters. Browser
+adapters do not currently register cookie, policy, or key transfer operations;
+browser sharing must define source and target scope, compatible data formats,
+and handling for operating-system-bound keys before those operations are added.
+`ctx share:computer` is also reserved. Any other installed adapter can declare
+the `share` capability and optional `share_spaces` to register
+`ctx share:<space>` commands. When `share_spaces` is omitted, the adapter name
+is the space. CTX rejects ambiguous registrations, then invokes the trusted
+adapter's `share` operation with the resolved selection. The first argument
+after `--` is the space, followed by the user's remaining arguments; the
+adapter owns their meaning.
 
 The process receives `CTX_ADAPTER_API`, `CTX_ADAPTER_NAME`,
 `CTX_ADAPTER_COMMAND`, `CTX_ADAPTER_REAL_COMMAND`, `CTX_PROJECT_DIR`, and

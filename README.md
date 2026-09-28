@@ -162,7 +162,7 @@ ctx shell -- npm test
 Environment values are stored as plain text. Use them for ordinary configuration,
 not passwords, tokens, or private keys.
 
-## Images, volumes, and build caches
+## Sharing container resources and build caches
 
 Share a registry-backed build cache while keeping each engine's cache format
 separate:
@@ -176,7 +176,7 @@ ctx build docker \
 Copy images between supported engines through a temporary archive:
 
 ```sh
-ctx image copy \
+ctx share:container image copy \
   docker:orbstack \
   podman:podman-machine-default \
   acme/api:dev
@@ -185,7 +185,7 @@ ctx image copy \
 Copy a named volume between engines:
 
 ```sh
-ctx volume copy \
+ctx share:container volume copy \
   docker:orbstack \
   podman:podman-machine-default \
   postgres-data \
@@ -197,6 +197,15 @@ quiesce databases first. ctx refuses to import into an existing target volume.
 
 Apple Container image imports require a version newer than 1.3.0 because of
 [GHSA-r3h2-rgqf-9hv9](https://github.com/apple/containerization/security/advisories/GHSA-r3h2-rgqf-9hv9).
+
+`ctx share:browser` is reserved for browser-profile sharing. The bundled
+browser adapters currently only list, validate, and open profiles; they do not
+export cookies, policies, or keys. CTX reports this instead of creating an
+incomplete or unprotected browser copy.
+
+`ctx share:computer` is reserved for sharing a computer context. Adapters can
+register other spaces through a `share` capability and optional `share_spaces`
+manifest field, exposed as `ctx share:<space> ...`.
 
 ## Adapters
 
@@ -246,6 +255,9 @@ See [Adapters](adapters/README.md) for the bundled packages and
 | `ctx run -- <command> ...` | Run any command with the profile environment |
 | `ctx shell` | Start a child shell with the profile environment |
 | `ctx open <url>` | Open a URL with the selected browser profile |
+| `ctx share:container image <sync|copy> ...` | Transfer images through installed container providers |
+| `ctx share:container volume <export|import|copy> ...` | Transfer named volumes through installed container providers |
+| `ctx share:<space> ...` | Invoke a trusted adapter's registered share operation |
 | `ctx doctor` | Validate configured selections and adapters |
 | `ctx hook <bash|zsh|powershell>` | Generate an optional shell prompt observer |
 | `ctx graph status` | Show the local system graph revision and size |
