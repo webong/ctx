@@ -327,7 +327,7 @@ func resolveBrowserSource(resolver *config.Resolver, choice string) (browserEndp
 		}
 	}
 	if choice == "" {
-		return browserEndpoint{}, errors.New("no source browser selected; use --from browser:profile or ctx set browser")
+		return browserEndpoint{}, errors.New("no source browser selected; use --from <browser>:<profile> or ctx set <browser>:<profile>")
 	}
 	return parseBrowserEndpoint(choice)
 }

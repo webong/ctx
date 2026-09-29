@@ -14,6 +14,8 @@ PowerShell implementations where Windows needs them.
 - Native compilation on macOS, Linux, and Windows.
 - Windows `.cmd` engine shims and a PowerShell source installer.
 - Adapter API v2.0 discovery, checksum trust, lifecycle commands, and process dispatch.
+- Platform-specific `.ctxadapter` archives and checksum-pinned indexes, so a bare
+  ctx binary can install compiled adapters without a Go toolchain.
 - Computer-runtime adapters for Kubernetes, cloud CLIs, and databases.
 - Browser-provider aggregation, validation, launching, and diagnostics.
 - Atomic, lock-protected `set`, `clear`, and profile configuration mutations.

@@ -24,6 +24,7 @@ const legacyAPIVersion = "1"
 const legacyDecimalAPIVersion = "1.0"
 
 var validName = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
+var validExecutable = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 var validBrowserShareOperation = regexp.MustCompile(`^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$`)
 var validEnvironmentName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 var validComputerHookEvent = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9]*$`)
@@ -72,6 +73,11 @@ func NewStore(home string) *Store {
 }
 
 func LoadDirectory(directory string) (*Adapter, error) {
+	return LoadDirectoryForOS(directory, runtime.GOOS)
+}
+
+// LoadDirectoryForOS validates a package for a specific target operating system.
+func LoadDirectoryForOS(directory, goos string) (*Adapter, error) {
 	absolute, err := filepath.Abs(directory)
 	if err != nil {
 		return nil, err
@@ -131,7 +137,7 @@ func LoadDirectory(directory string) (*Adapter, error) {
 	if contains(manifest.Capabilities, "share") && len(manifest.ShareSpaces) == 0 {
 		manifest.ShareSpaces = []string{manifest.Name}
 	}
-	if err := validateManifest(manifest, absolute); err != nil {
+	if err := validateManifest(manifest, absolute, goos); err != nil {
 		return nil, err
 	}
 	return &Adapter{Directory: absolute, Manifest: manifest}, nil
@@ -472,7 +478,7 @@ func parseManifest(path string) (map[string]string, error) {
 	return values, nil
 }
 
-func validateManifest(manifest Manifest, directory string) error {
+func validateManifest(manifest Manifest, directory, goos string) error {
 	if manifest.APIVersion != APIVersion && manifest.APIVersion != legacyAPIVersion && manifest.APIVersion != legacyDecimalAPIVersion {
 		return fmt.Errorf("adapter %s uses unsupported API %s (expected %s)", manifest.Name, manifest.APIVersion, APIVersion)
 	}
@@ -583,21 +589,21 @@ func validateManifest(manifest Manifest, directory string) error {
 			return fmt.Errorf("adapter %s has invalid override environment variable %s", manifest.Name, key)
 		}
 	}
-	for platform, executableName := range map[string]string{"default": manifest.Executable, "windows": manifest.ExecutableWindows} {
-		if platform == "windows" && executableName == "" {
-			continue
-		}
-		if executableName == "" || filepath.Base(executableName) != executableName || strings.HasPrefix(executableName, ".") {
-			return fmt.Errorf("adapter %s has an invalid %s executable name", manifest.Name, platform)
-		}
-		executable := filepath.Join(directory, executableName)
-		info, err := os.Stat(executable)
-		if err != nil || !info.Mode().IsRegular() {
-			return fmt.Errorf("adapter executable is missing: %s", executable)
-		}
-		if platform == "default" && runtime.GOOS != "windows" && info.Mode().Perm()&0o111 == 0 {
-			return fmt.Errorf("adapter executable is not executable: %s", executable)
-		}
+	if !validExecutableName(manifest.Executable) ||
+		(manifest.ExecutableWindows != "" && !validExecutableName(manifest.ExecutableWindows)) {
+		return fmt.Errorf("adapter %s has an invalid executable name", manifest.Name)
+	}
+	executableName := manifest.Executable
+	if goos == "windows" && manifest.ExecutableWindows != "" {
+		executableName = manifest.ExecutableWindows
+	}
+	executable := filepath.Join(directory, executableName)
+	info, err := os.Stat(executable)
+	if err != nil || !info.Mode().IsRegular() {
+		return fmt.Errorf("adapter executable is missing: %s", executable)
+	}
+	if goos != "windows" && runtime.GOOS != "windows" && info.Mode().Perm()&0o111 == 0 {
+		return fmt.Errorf("adapter executable is not executable: %s", executable)
 	}
 	if !contains(manifest.Capabilities, "validate") || !contains(manifest.Capabilities, "doctor") {
 		return fmt.Errorf("adapter %s must provide validate and doctor", manifest.Name)
@@ -627,6 +633,10 @@ func validateManifest(manifest Manifest, directory string) error {
 		}
 	}
 	return nil
+}
+
+func validExecutableName(name string) bool {
+	return validExecutable.MatchString(name)
 }
 
 func validPackagePath(value string) bool {

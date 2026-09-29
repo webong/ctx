@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -26,7 +27,7 @@ func adapterStore() *modpkg.Store {
 
 func adapterCommand(resolver *config.Resolver, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "ctx: adapter requires ls, available, add, refresh, inspect, install, trust, test, doctor, or remove")
+		fmt.Fprintln(stderr, "ctx: adapter requires ls, available, add, refresh, inspect, build, pack, index, install, trust, test, doctor, or remove")
 		return 2
 	}
 	store := adapterStore()
@@ -141,16 +142,78 @@ func adapterCommand(resolver *config.Resolver, args []string, stdout, stderr io.
 		}
 		return 0
 	case "install":
-		if len(args) != 2 {
-			fmt.Fprintln(stderr, "ctx: adapter install needs a source directory")
+		if len(args) != 2 && (len(args) != 4 || args[2] != "--sha256") {
+			fmt.Fprintln(stderr, "ctx: adapter install needs a directory or archive, optionally followed by --sha256 <digest>")
 			return 2
 		}
-		installed, err := store.Install(args[1])
+		digest := ""
+		if len(args) == 4 {
+			digest = args[3]
+		}
+		installed, err := store.InstallSource(args[1], digest)
 		if err != nil {
 			return reportError(stderr, err)
 		}
 		fmt.Fprintf(stdout, "installed adapter %s in %s (untrusted)\n", installed.Manifest.Name, installed.Directory)
 		fmt.Fprintf(stdout, "review it, then run: ctx adapter trust %s\n", installed.Manifest.Name)
+		return 0
+	case "build", "pack":
+		if len(args) < 2 {
+			fmt.Fprintf(stderr, "ctx: adapter %s needs a source directory\n", args[0])
+			return 2
+		}
+		output := ""
+		goos, goarch := runtime.GOOS, runtime.GOARCH
+		for index := 2; index < len(args); index += 2 {
+			if index+1 >= len(args) {
+				fmt.Fprintln(stderr, "ctx: adapter build/pack option needs a value")
+				return 2
+			}
+			switch args[index] {
+			case "--output":
+				output = args[index+1]
+			case "--os":
+				goos = args[index+1]
+			case "--arch":
+				goarch = args[index+1]
+			default:
+				fmt.Fprintf(stderr, "ctx: unknown adapter build/pack option %s\n", args[index])
+				return 2
+			}
+		}
+		if args[0] == "build" {
+			built, err := modpkg.BuildGoPackage(modpkg.GoBuildOptions{Source: args[1], Output: output, OS: goos, Arch: goarch})
+			if err != nil {
+				return reportError(stderr, err)
+			}
+			fmt.Fprintf(stdout, "built adapter package %s\n", built)
+			return 0
+		}
+		candidate, err := modpkg.LoadDirectoryForOS(args[1], goos)
+		if err != nil {
+			return reportError(stderr, err)
+		}
+		if output == "" {
+			output = filepath.Join(filepath.Dir(candidate.Directory), fmt.Sprintf("%s-%s-%s.ctxadapter", candidate.Manifest.Name, goos, goarch))
+		}
+		if err := modpkg.PackageDirectory(args[1], output, goos, goarch); err != nil {
+			return reportError(stderr, err)
+		}
+		fmt.Fprintf(stdout, "packed adapter %s in %s\n", candidate.Manifest.Name, output)
+		return 0
+	case "index":
+		if len(args) < 3 {
+			fmt.Fprintln(stderr, "ctx: adapter index needs an output path and one or more archives")
+			return 2
+		}
+		if err := modpkg.WriteIndex(args[1], args[2:]); err != nil {
+			return reportError(stderr, err)
+		}
+		digest, err := modpkg.FileSHA256(args[1])
+		if err != nil {
+			return reportError(stderr, err)
+		}
+		fmt.Fprintf(stdout, "wrote adapter index %s\nsha256: %s\n", args[1], digest)
 		return 0
 	case "trust":
 		if len(args) != 2 {
@@ -222,7 +285,7 @@ func adapterCommand(resolver *config.Resolver, args []string, stdout, stderr io.
 		fmt.Fprintf(stdout, "removed adapter %s\n", args[1])
 		return 0
 	default:
-		fmt.Fprintln(stderr, "ctx: adapter requires ls, available, add, refresh, inspect, install, trust, test, doctor, or remove")
+		fmt.Fprintln(stderr, "ctx: adapter requires ls, available, add, refresh, inspect, build, pack, index, install, trust, test, doctor, or remove")
 		return 2
 	}
 }

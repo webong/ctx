@@ -178,10 +178,11 @@ usage:
   ctx resolve <key>
   ctx explain
   ctx env
+  ctx set <adapter>:<selection> [options]
   ctx set <selector> <name> [options]
   ctx clear [selector|profile]
   ctx profile <ls|show|use|set|unset|env|env-unset|clear> [arguments...]
-  ctx adapter <ls [runtime|surface]|available|add|refresh|inspect|install|trust|test|doctor|remove> [arguments...]
+  ctx adapter <ls [runtime|surface]|available|add|refresh|inspect|build|pack|index|install|trust|test|doctor|remove> [arguments...]
   ctx computer hooks <print|install|remove> <adapter> [--events <name,...>] [--handler <executable>]
   ctx virtualizer add <name> --provider <adapter> --selection <context>
       [--virtualizer <product>] [--machine <vm>] [--address <adapter-address>]

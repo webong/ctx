@@ -3,6 +3,10 @@
 This directory contains every tool-specific integration maintained in the ctx
 repository.
 
+External Go adapters can use the public `github.com/webong/ctx/adapter` process
+parser and ship a platform-specific `.ctxadapter` archive. A bare ctx binary
+installs that archive without Go; source builds use `ctx adapter build`.
+
 `docker`, `podman`, `nerdctl`, and `apple` are maintained virtualizer providers.
 Their manifests declare `runtime = "virtualizer"` and `surfaces = "shell"`;
 each package owns its native CLI syntax, context discovery, validation, routing,

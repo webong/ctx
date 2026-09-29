@@ -19,8 +19,23 @@ var profileNamePattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 var environmentNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 func setContext(resolver *config.Resolver, args []string, stdout, stderr io.Writer) int {
+	if len(args) > 0 {
+		provider, selection, qualified := strings.Cut(args[0], ":")
+		if qualified {
+			candidate, err := adapterStore().Load(provider)
+			if provider == "" || selection == "" || err != nil || !candidate.IsSelectable() {
+				fmt.Fprintf(stderr, "ctx: invalid or unavailable adapter selection %s\n", args[0])
+				return 2
+			}
+			if candidate.IsRuntime("browser") {
+				args = append([]string{"browser", args[0]}, args[1:]...)
+			} else {
+				args = append([]string{provider, selection}, args[1:]...)
+			}
+		}
+	}
 	if len(args) < 2 {
-		fmt.Fprintln(stderr, "ctx: set needs a selector and name")
+		fmt.Fprintln(stderr, "ctx: set needs an adapter:selection or a selector and name")
 		return 2
 	}
 	selector, selection, options := args[0], args[1], args[2:]
@@ -37,7 +52,7 @@ func setContext(resolver *config.Resolver, args []string, stdout, stderr io.Writ
 		}
 		provider, profile, ok := strings.Cut(selection, ":")
 		candidate, err := adapterStore().Load(provider)
-		if !ok || err != nil || !candidate.IsRuntime("browser") || invokeAdapter(resolver, candidate, "validate", profile, nil, "", io.Discard, stderr) != 0 {
+		if !ok || profile == "" || err != nil || !candidate.IsRuntime("browser") || invokeAdapter(resolver, candidate, "validate", profile, nil, "", io.Discard, stderr) != 0 {
 			fmt.Fprintf(stderr, "ctx: browser selection %s is unavailable\n", selection)
 			return 1
 		}

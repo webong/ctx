@@ -103,7 +103,7 @@ Register-ArgumentCompleter -Native -CommandName ctx -ScriptBlock {
             }
         }
         'adapter' {
-            $operations = @('ls', 'available', 'add', 'refresh', 'inspect', 'install', 'trust', 'test', 'doctor', 'remove')
+            $operations = @('ls', 'available', 'add', 'refresh', 'inspect', 'build', 'pack', 'index', 'install', 'trust', 'test', 'doctor', 'remove')
             if ($words.Count -le 2) { Emit-CtxCompletion $operations; return }
             if ($words[2] -in @('inspect', 'trust', 'doctor', 'remove') -and $words.Count -le 3) {
                 Emit-CtxCompletion @(& ctx adapter ls 2>$null | ForEach-Object { ($_ -split '\s+')[0] }); return

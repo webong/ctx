@@ -12,7 +12,7 @@ cd my-project
 ctx set docker orbstack
 ctx set kube development --namespace payments
 ctx set aws client-a
-ctx set browser firefox:client-a
+ctx set firefox:client-a
 
 docker ps
 ctx run kubectl get pods
@@ -124,7 +124,7 @@ Choose a browser profile and open project URLs in it:
 
 ```sh
 ctx ls browser
-ctx set browser 'chrome:Profile 1'
+ctx set 'chrome:Profile 1'
 ctx open http://localhost:3000
 ```
 
@@ -402,6 +402,26 @@ ctx adapter inspect azure
 ctx adapter trust azure
 ```
 
+A bare `ctx` binary can also install a prebuilt adapter archive without Go.
+The archive includes the manifest and an executable for the current platform:
+
+```sh
+ctx adapter install ./azure-darwin-arm64.ctxadapter
+ctx adapter trust azure
+```
+
+For a published multi-platform adapter index, pin the index checksum. ctx picks
+the current platform and verifies the selected archive's checksum from the index:
+
+```sh
+ctx adapter install https://example.com/azure.ctxadapter.json --sha256 "$INDEX_SHA256"
+ctx adapter trust azure
+```
+
+Go adapter authors build the same archive explicitly with `ctx adapter build
+./my-adapter`; this command requires Go. See the [Go example](examples/adapters/go_echo)
+and [adapter packaging guide](docs/adapter-api.md#binary-packages-and-go-builds).
+
 See [Adapters](adapters/README.md) for the bundled packages and
 [Adapter API v2.0](docs/adapter-api.md) to build an integration.
 
@@ -410,7 +430,8 @@ See [Adapters](adapters/README.md) for the bundled packages and
 | Command | Purpose |
 | --- | --- |
 | `ctx ls <runtime-or-selector>` | List available contexts |
-| `ctx set <selector> <name>` | Select a context for the current project |
+| `ctx set <adapter>:<selection>` | Select a context using its adapter's declared runtime |
+| `ctx set <selector> <name>` | Select a context with the existing two-argument form |
 | `ctx clear [selector]` | Remove one or all project selections |
 | `ctx status` | Show active selections |
 | `ctx explain` | Show resolved values and their sources |
@@ -420,6 +441,10 @@ See [Adapters](adapters/README.md) for the bundled packages and
 | `ctx open <url>` | Open a URL with the selected browser profile |
 | `ctx hook computer <adapter> <event>` | Pass a computer hook event through a trusted adapter |
 | `ctx plugin computer <adapter> ...` | Run a computer integration's plugin operation |
+| `ctx adapter build <source>` | Compile a Go adapter into a platform archive |
+| `ctx adapter pack <directory>` | Archive an already built adapter package |
+| `ctx adapter index <output> <archives...>` | Create a platform index with archive checksums |
+| `ctx adapter install <source>` | Install a local directory, archive, or pinned HTTPS package |
 | `ctx virtualizer <add|ls|show|remove> ...` | Register named virtualizer instances for sharing and builds |
 | `ctx share:virtualizer image <sync|copy> ...` | Transfer images through installed virtualizer providers |
 | `ctx share:virtualizer volume <export|import|copy> ...` | Transfer named volumes through installed virtualizer providers |

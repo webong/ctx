@@ -1,7 +1,8 @@
 # ctx adapter API v2.0
 
-An external adapter is a directory containing `adapter.toml` and at least one
-executable.
+An external adapter is a directory containing `adapter.toml` and an executable
+for the current operating system. It can be distributed as a platform-specific
+`.ctxadapter` archive or through a platform index.
 ctx installs adapters under `$CTX_HOME/adapters`; it never discovers or sources
 code from the current directory or arbitrary `PATH` entries.
 
@@ -84,7 +85,9 @@ depend on a second category field. API v2.0 does not accept `kind`.
 
 A browser adapter normally uses `selector_key = "browser"`. Its `list` output
 uses `name:profile` values, while `validate`, `doctor`, and `open` receive only
-the profile portion as their selection.
+the profile portion as their selection. `ctx set name:profile` uses the
+adapter's declared `browser` runtime to store that value under the `browser`
+selection key.
 
 A browser adapter participating in `ctx share:browser` declares, for example:
 
@@ -303,9 +306,13 @@ shared across browsers are portable; optional browser-specific fields go in
 Importers must reject attributes they cannot preserve. Version 2 replaces the
 earlier version 1 browser share request and bundle format.
 
-`internal/app/browser/adapterkit` contains repository-only helpers for serving the
-share protocol, reading policy sources, and accessing SQLite safely. The bare
-Chromium adapter owns the reusable storage engine at
+`internal/app/browser/adapterkit` contains the shared implementation for
+serving the share protocol, reading policy sources, and accessing SQLite.
+External Go adapters import its stable public facade at
+`github.com/webong/ctx/adapter/browser`. A Go browser adapter can handle
+`share <profile> -- <resource> <operation>` in its main executable and use
+`browser.RunCookie` or `browser.RunPolicyExport`; it does not need a separate
+helper executable. The bare Chromium adapter owns the reusable storage engine at
 `github.com/webong/ctx/adapters/chromium/engine`; Chrome and other
 Chromium-based Go adapters can configure and import it through its exported
 `Config`, `Cookie`, `List`, `ReadValue`, and `Import` API. The versioned JSON
@@ -375,6 +382,77 @@ ctx adapter inspect example
 ctx adapter trust example
 ctx adapter doctor example
 ctx adapter remove example
+~~~
+
+### Binary packages and Go builds
+
+`ctx adapter install` accepts a ready-to-run directory, a local `.ctxadapter`
+archive, or an HTTPS archive with `--sha256 <digest>`. Installation never runs
+Go or executes the adapter. The archive has `adapter.toml`, the platform's
+executable, optional runtime assets, and a `ctx-package.json` record containing
+`format_version`, `name`, `os`, and `arch`. ctx rejects archives for another
+platform, unsafe paths, links, oversized contents, and checksum mismatches.
+It installs the package untrusted; review it and run `ctx adapter trust <name>`
+before using it.
+
+Go authors can use the public `github.com/webong/ctx/adapter` package to parse
+the versioned process invocation. Browser authors can also import
+`github.com/webong/ctx/adapter/browser` for the cookie and policy bridge types
+and helpers while keeping their own browser-specific storage code. A source
+directory needs `adapter.toml` and
+a Go `main` package. `go_entry` names that package (default `.`), and optional
+`package_files` lists runtime files or directories to ship. Source code and
+`go.mod` are not copied into the archive unless deliberately listed.
+
+~~~toml
+api_version = "2.0"
+name = "example"
+runtime = "computer"
+surfaces = "shell"
+executable = "ctx-example"
+executable_windows = "ctx-example.exe"
+capabilities = "list,validate,run,doctor"
+go_entry = "./cmd/ctx-example"
+package_files = "policy.json,templates"
+~~~
+
+~~~sh
+ctx adapter build ./example
+ctx adapter build ./example --os linux --arch amd64
+ctx adapter pack ./ready-package --os linux --arch amd64 --output ./example-linux-amd64.ctxadapter
+ctx adapter install ./example/dist/example-darwin-arm64.ctxadapter
+ctx adapter trust example
+~~~
+
+`ctx adapter build` requires Go and emits one archive per target. Cross builds
+default to `CGO_ENABLED=0` unless the author sets it explicitly. The example
+under `examples/adapters/go_echo` shows the public parser and a complete Go
+adapter. An adapter written in another language can prepare a package directory
+and use `ctx adapter pack` without Go. `pack` includes every regular file in the
+given directory, so use a directory containing only runtime files.
+
+Publishers may provide a `.ctxadapter.json` index so users need one install
+reference across platforms. Each package entry includes its own SHA-256 digest;
+an HTTPS index itself also requires `--sha256` on install. Relative package URLs
+are resolved against the index URL. Place the platform archives in one directory
+and run `ctx adapter index ./dist/example.ctxadapter.json ./dist/example-*.ctxadapter`
+to generate the index and its package checksums. The command prints the index
+SHA-256 to give installers out of band.
+
+~~~json
+{
+  "format_version": 1,
+  "name": "example",
+  "packages": {
+    "darwin/arm64": {"url": "example-darwin-arm64.ctxadapter", "sha256": "<archive-sha256>"},
+    "linux/amd64": {"url": "example-linux-amd64.ctxadapter", "sha256": "<archive-sha256>"}
+  }
+}
+~~~
+
+~~~sh
+ctx adapter install https://example.com/example.ctxadapter.json --sha256 "$INDEX_SHA256"
+ctx adapter trust example
 ~~~
 
 The installer-provided catalog lives under `$CTX_HOME/catalog/adapters` (or
