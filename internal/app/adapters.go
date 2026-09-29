@@ -31,13 +31,13 @@ func adapterCommand(resolver *config.Resolver, args []string, stdout, stderr io.
 	switch args[0] {
 	case "ls", "list":
 		if len(args) > 2 {
-			fmt.Fprintln(stderr, "ctx: adapter ls accepts an optional kind")
+			fmt.Fprintln(stderr, "ctx: adapter ls accepts an optional kind or computer")
 			return 2
 		}
 		kind := ""
 		if len(args) == 2 {
 			kind = args[1]
-			if kind != "selector" && kind != "browser" && kind != "container" {
+			if kind != "selector" && kind != "browser" && kind != "container" && kind != "computer" {
 				fmt.Fprintf(stderr, "ctx: unknown adapter kind %s\n", kind)
 				return 2
 			}
@@ -47,7 +47,10 @@ func adapterCommand(resolver *config.Resolver, args []string, stdout, stderr io.
 			return reportError(stderr, err)
 		}
 		for _, candidate := range installed {
-			if kind != "" && candidate.Manifest.Kind != kind {
+			if kind == "computer" && !candidate.IsComputerEndpoint() {
+				continue
+			}
+			if kind != "" && kind != "computer" && candidate.Manifest.Kind != kind {
 				continue
 			}
 			state := "untrusted"
@@ -72,10 +75,20 @@ func adapterCommand(resolver *config.Resolver, args []string, stdout, stderr io.
 		}
 		fmt.Fprintf(stdout, "name:         %s\n", candidate.Manifest.Name)
 		fmt.Fprintf(stdout, "api:          %s\n", candidate.Manifest.APIVersion)
-		fmt.Fprintf(stdout, "kind:         %s\n", candidate.Manifest.Kind)
+		kind := candidate.Manifest.Kind
+		if kind == "" && candidate.IsComputerEndpoint() {
+			kind = "computer endpoint"
+		}
+		fmt.Fprintf(stdout, "kind:         %s\n", kind)
 		fmt.Fprintf(stdout, "state:        %s\n", state)
 		fmt.Fprintf(stdout, "selector:     %s\n", candidate.Manifest.SelectorKey)
 		fmt.Fprintf(stdout, "commands:     %s\n", strings.Join(candidate.Manifest.Commands, ","))
+		if len(candidate.Manifest.ComputerCommands) > 0 {
+			fmt.Fprintf(stdout, "computer commands: %s\n", strings.Join(candidate.Manifest.ComputerCommands, ","))
+		}
+		if len(candidate.Manifest.ComputerCapabilities) > 0 {
+			fmt.Fprintf(stdout, "computer capabilities: %s\n", strings.Join(candidate.Manifest.ComputerCapabilities, ","))
+		}
 		fmt.Fprintf(stdout, "capabilities: %s\n", strings.Join(candidate.Manifest.Capabilities, ","))
 		if len(candidate.Manifest.ShareSpaces) > 0 {
 			fmt.Fprintf(stdout, "share spaces: %s\n", strings.Join(candidate.Manifest.ShareSpaces, ","))
@@ -222,7 +235,8 @@ func runAdapterTool(resolver *config.Resolver, tool string, args []string, stdou
 	}
 	var matched *adapterpkg.Adapter
 	for _, candidate := range installed {
-		if (candidate.Manifest.Kind != "selector" && candidate.Manifest.Kind != "container") || (candidate.Manifest.Name != tool && !candidate.HasCommand(tool)) {
+		commandMatch := candidate.HasCommand(tool) || candidate.HasComputerCommand(tool)
+		if (candidate.Manifest.Kind != "selector" && candidate.Manifest.Kind != "container" && !candidate.IsComputerEndpoint()) || (candidate.Manifest.Name != tool && !commandMatch) {
 			continue
 		}
 		if matched != nil {
@@ -239,7 +253,7 @@ func runAdapterTool(resolver *config.Resolver, tool string, args []string, stdou
 	if err != nil {
 		return reportError(stderr, err)
 	}
-	if selection == "" && matched.Manifest.Kind != "container" {
+	if selection == "" && matched.Manifest.Kind != "container" && !matched.IsComputerEndpoint() {
 		fmt.Fprintf(stderr, "ctx: no %s selection; run ctx set %s <name>\n", matched.Manifest.Name, matched.Manifest.Name)
 		return 1
 	}
@@ -376,16 +390,18 @@ func doctor(resolver *config.Resolver, stdout, stderr io.Writer) int {
 		return reportError(stderr, err)
 	}
 	for _, candidate := range installed {
-		if candidate.Manifest.Kind != "selector" && candidate.Manifest.Kind != "container" {
+		if candidate.Manifest.Kind != "selector" && candidate.Manifest.Kind != "container" && !candidate.IsComputerEndpoint() {
 			continue
 		}
 		selection, err := adapterSelection(resolver, candidate)
-		if err != nil || selection == "" {
+		if err != nil || (selection == "" && !candidate.IsComputerEndpoint()) {
 			continue
 		}
 		checked++
 		label := candidate.Manifest.Kind
-		if label == "selector" {
+		if candidate.IsComputerEndpoint() {
+			label = "computer"
+		} else if label == "selector" {
 			label = "adapter"
 		}
 		if invokeAdapter(resolver, candidate, "doctor", selection, nil, "", io.Discard, io.Discard) != 0 {
@@ -405,6 +421,9 @@ func doctor(resolver *config.Resolver, stdout, stderr io.Writer) int {
 }
 
 func adapterSelection(resolver *config.Resolver, candidate *adapterpkg.Adapter) (string, error) {
+	if candidate.Manifest.Kind == "" {
+		return "", nil
+	}
 	resolved, err := resolver.Resolve(candidate.Manifest.SelectorKey)
 	if err != nil {
 		return "", err
@@ -438,15 +457,17 @@ func invokeAdapterIO(resolver *config.Resolver, candidate *adapterpkg.Adapter, o
 	}
 	profile, _, _ := resolver.ActiveProfile()
 	realCommand := ""
-	if candidate.Manifest.Kind == "container" {
+	if candidate.Manifest.Kind == "container" || (candidate.IsComputerEndpoint() && (operation == "run" || operation == "doctor" || operation == "plugin" || requestedCommand != "")) {
 		commandName := ""
-		if candidate.HasCommand(requestedCommand) {
+		if candidate.HasCommand(requestedCommand) || candidate.HasComputerCommand(requestedCommand) {
 			commandName = requestedCommand
 		} else if len(candidate.Manifest.Commands) > 0 {
 			commandName = candidate.Manifest.Commands[0]
+		} else if len(candidate.Manifest.ComputerCommands) > 0 {
+			commandName = candidate.Manifest.ComputerCommands[0]
 		}
 		if commandName == "" {
-			return reportErrorCode(stderr, fmt.Errorf("container provider %s does not declare a native command", candidate.Manifest.Name), 127)
+			return reportErrorCode(stderr, fmt.Errorf("adapter %s does not declare a native command", candidate.Manifest.Name), 127)
 		}
 		var err error
 		realCommand, err = launch.FindReal(commandName)

@@ -43,6 +43,9 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return completion(args[1:], stdout, stderr)
 	}
 	if args[0] == "hook" {
+		if len(args) >= 2 && args[1] == "computer" {
+			return computerHook(args[2:], stdout, stderr)
+		}
 		return shellHook(args[1:], stdout, stderr)
 	}
 	if args[0] == "__observe-shell" {
@@ -97,6 +100,12 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return showEnvironment(resolver, stdout, stderr)
 	case "adapter":
 		return adapterCommand(resolver, args[1:], stdout, stderr)
+	case "plugin":
+		if len(args) < 2 || args[1] != "computer" {
+			fmt.Fprintln(stderr, "ctx: plugin requires computer <adapter> [arguments...]")
+			return 2
+		}
+		return computerPlugin(resolver, args[2:], stdout, stderr)
 	case "setup":
 		return setupCommand(args[1:], os.Stdin, stdout, stderr)
 	case "set":
@@ -160,6 +169,8 @@ usage:
   ctx real <command>
   ctx completion powershell
   ctx hook <bash|zsh|powershell>
+  ctx hook computer <adapter> <event> Read event JSON from stdin and invoke a computer hook
+  ctx plugin computer <adapter> [arguments...]
   ctx resolve <key>
   ctx explain
   ctx env
@@ -174,7 +185,10 @@ usage:
   ctx build [provider] --cache-ref <registry-ref> [--] <build arguments>
   ctx share:container image <sync|copy> [arguments...]
   ctx share:container volume <export|import|copy> [arguments...]
-  ctx share:browser (reserved; unavailable)
+  ctx share:browser cookie list [--from <browser:profile>] --site <URL>
+  ctx share:browser cookie copy [--from <browser:profile>] --site <URL> --name <cookie>
+      [--domain <domain>] [--path <path>] [--origin-attributes <value>]
+      (--to-profile <browser:profile> | --to-file <path> | --stdout) [--replace]
   ctx share:computer (reserved; unavailable)
   ctx share:<space> [arguments...] (when an adapter registers the space)
   ctx run <provider-or-adapter-command> [arguments...]

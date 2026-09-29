@@ -26,3 +26,13 @@ packages under `$CTX_HOME/adapters` and records their checksum trust. A package
 can declare `executable_windows` alongside its default executable; the native
 core selects the platform implementation at runtime while keeping one manifest,
 capability set, and trust record.
+
+Shell-launched AI CLIs declare `computer_commands` and optional
+`computer_capabilities` in their manifest, with no special adapter kind.
+Computer integrations can install command shims and provide native hook and
+plugin operations. Hook payloads stream through stdin/stdout; provider config
+and plugin formats remain adapter-owned. See [the adapter API](../docs/adapter-api.md#computer-side-cli-integrations).
+The first-party `claude_code` and `codex` packages are bundled in the installer
+catalog. Their shims route launches through ctx, hooks forward JSON stdin to
+`CTX_COMPUTER_HOOK_COMMAND` with the event name, and plugin operations delegate
+to each CLI's native plugin subcommand.

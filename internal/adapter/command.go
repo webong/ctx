@@ -29,7 +29,12 @@ func (a *Adapter) Command(invocation Invocation) (*exec.Cmd, error) {
 	case "validate", "doctor":
 		args = []string{invocation.Operation, invocation.Selection}
 	default:
-		args = append([]string{invocation.Operation, invocation.Selection, "--"}, invocation.Arguments...)
+		args = []string{invocation.Operation}
+		if invocation.Selection != "" || !a.IsComputerEndpoint() {
+			args = append(args, invocation.Selection)
+		}
+		args = append(args, "--")
+		args = append(args, invocation.Arguments...)
 	}
 	command := adapterCommand(a.ExecutablePath(), args)
 	command.Env = os.Environ()

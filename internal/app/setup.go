@@ -218,7 +218,9 @@ func binaryDirectory() string {
 
 func adapterShimSources(candidate *adapterpkg.Adapter) map[string]string {
 	result := map[string]string{}
-	for _, command := range candidate.Manifest.Commands {
+	commands := append([]string(nil), candidate.Manifest.Commands...)
+	commands = append(commands, candidate.Manifest.ComputerCommands...)
+	for _, command := range commands {
 		filename := command
 		if runtime.GOOS == "windows" {
 			filename += ".cmd"

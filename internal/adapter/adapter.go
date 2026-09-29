@@ -28,19 +28,21 @@ var reservedNames = map[string]bool{
 }
 
 type Manifest struct {
-	APIVersion        string
-	Name              string
-	Kind              string
-	Executable        string
-	ExecutableWindows string
-	Description       string
-	Capabilities      []string
-	SelectorKey       string
-	ExtraKeys         []string
-	Commands          []string
-	ShareSpaces       []string
-	OverrideEnv       []string
-	DefaultProvider   bool
+	APIVersion           string
+	Name                 string
+	Kind                 string
+	Executable           string
+	ExecutableWindows    string
+	Description          string
+	Capabilities         []string
+	SelectorKey          string
+	ExtraKeys            []string
+	Commands             []string
+	ComputerCommands     []string
+	ComputerCapabilities []string
+	ShareSpaces          []string
+	OverrideEnv          []string
+	DefaultProvider      bool
 }
 
 type Adapter struct {
@@ -75,24 +77,26 @@ func LoadDirectory(directory string) (*Adapter, error) {
 		return nil, err
 	}
 	manifest := Manifest{
-		APIVersion:        values["api_version"],
-		Name:              values["name"],
-		Kind:              values["kind"],
-		Executable:        values["executable"],
-		ExecutableWindows: values["executable_windows"],
-		Description:       values["description"],
-		Capabilities:      splitList(values["capabilities"]),
-		SelectorKey:       values["selector_key"],
-		ExtraKeys:         splitList(values["extra_keys"]),
-		Commands:          splitList(values["commands"]),
-		ShareSpaces:       splitList(values["share_spaces"]),
-		OverrideEnv:       splitList(values["override_env"]),
-		DefaultProvider:   values["default_provider"] == "true",
+		APIVersion:           values["api_version"],
+		Name:                 values["name"],
+		Kind:                 values["kind"],
+		Executable:           values["executable"],
+		ExecutableWindows:    values["executable_windows"],
+		Description:          values["description"],
+		Capabilities:         splitList(values["capabilities"]),
+		SelectorKey:          values["selector_key"],
+		ExtraKeys:            splitList(values["extra_keys"]),
+		Commands:             splitList(values["commands"]),
+		ComputerCommands:     splitList(values["computer_commands"]),
+		ComputerCapabilities: splitList(values["computer_capabilities"]),
+		ShareSpaces:          splitList(values["share_spaces"]),
+		OverrideEnv:          splitList(values["override_env"]),
+		DefaultProvider:      values["default_provider"] == "true",
 	}
-	if manifest.Kind == "" {
+	if manifest.Kind == "" && !hasComputerEndpoint(manifest) {
 		manifest.Kind = "selector"
 	}
-	if manifest.SelectorKey == "" {
+	if manifest.SelectorKey == "" && manifest.Kind != "" {
 		if manifest.Kind == "browser" {
 			manifest.SelectorKey = "browser"
 		} else {
@@ -149,15 +153,35 @@ func (s *Store) List() ([]*Adapter, error) {
 }
 
 func (a *Adapter) HasCapability(capability string) bool {
-	return contains(a.Manifest.Capabilities, capability)
+	return contains(a.Manifest.Capabilities, capability) || a.HasComputerCapability(capability)
 }
 
 func (a *Adapter) HasCommand(command string) bool {
 	return contains(a.Manifest.Commands, command)
 }
 
+func (a *Adapter) HasComputerCommand(command string) bool {
+	return contains(a.Manifest.ComputerCommands, command)
+}
+
+func (a *Adapter) HasComputerCapability(capability string) bool {
+	return contains(a.Manifest.ComputerCapabilities, capability)
+}
+
+func (a *Adapter) IsComputerEndpoint() bool {
+	return hasComputerEndpoint(a.Manifest)
+}
+
+func hasComputerEndpoint(manifest Manifest) bool {
+	return len(manifest.ComputerCommands) > 0 || len(manifest.ComputerCapabilities) > 0
+}
+
 func (a *Adapter) ConfigKeys() []string {
-	return append([]string{a.Manifest.SelectorKey}, a.Manifest.ExtraKeys...)
+	keys := append([]string(nil), a.Manifest.ExtraKeys...)
+	if a.Manifest.SelectorKey != "" {
+		keys = append([]string{a.Manifest.SelectorKey}, keys...)
+	}
+	return keys
 }
 
 func (a *Adapter) ExecutablePath() string {
@@ -392,19 +416,32 @@ func validateManifest(manifest Manifest, directory string) error {
 	if !validName.MatchString(manifest.Name) || reservedNames[manifest.Name] {
 		return fmt.Errorf("invalid or reserved adapter name %s", manifest.Name)
 	}
-	if manifest.Kind != "selector" && manifest.Kind != "browser" && manifest.Kind != "container" {
+	if manifest.Kind != "" && manifest.Kind != "selector" && manifest.Kind != "browser" && manifest.Kind != "container" {
 		return fmt.Errorf("adapter %s has invalid kind %s", manifest.Name, manifest.Kind)
+	}
+	if manifest.Kind == "" && !hasComputerEndpoint(manifest) {
+		return fmt.Errorf("adapter %s must declare a kind or computer endpoint", manifest.Name)
+	}
+	if manifest.Kind != "" && hasComputerEndpoint(manifest) {
+		return fmt.Errorf("adapter %s computer endpoint cannot be combined with kind %s", manifest.Name, manifest.Kind)
 	}
 	if manifest.DefaultProvider && manifest.Kind != "container" {
 		return fmt.Errorf("adapter %s can only be a default provider when kind is container", manifest.Name)
 	}
-	if !validName.MatchString(manifest.SelectorKey) {
+	if manifest.Kind != "" && !validName.MatchString(manifest.SelectorKey) {
 		return fmt.Errorf("adapter %s has invalid selector key %s", manifest.Name, manifest.SelectorKey)
 	}
-	for _, key := range append(append([]string{}, manifest.ExtraKeys...), manifest.Commands...) {
+	for _, key := range append(append(append([]string{}, manifest.ExtraKeys...), manifest.Commands...), manifest.ComputerCommands...) {
 		if !validName.MatchString(key) {
 			return fmt.Errorf("adapter %s has invalid key or command %s", manifest.Name, key)
 		}
+	}
+	seenComputerCapabilities := map[string]bool{}
+	for _, capability := range manifest.ComputerCapabilities {
+		if capability != "hook" && capability != "plugin" || seenComputerCapabilities[capability] {
+			return fmt.Errorf("adapter %s has invalid or duplicate computer capability %s", manifest.Name, capability)
+		}
+		seenComputerCapabilities[capability] = true
 	}
 	if len(manifest.ShareSpaces) > 0 && !contains(manifest.Capabilities, "share") {
 		return fmt.Errorf("adapter %s declares share spaces without the share capability", manifest.Name)
@@ -437,8 +474,14 @@ func validateManifest(manifest Manifest, directory string) error {
 			return fmt.Errorf("adapter executable is not executable: %s", executable)
 		}
 	}
-	if !contains(manifest.Capabilities, "validate") || !contains(manifest.Capabilities, "doctor") || (!contains(manifest.Capabilities, "run") && !contains(manifest.Capabilities, "open")) {
-		return fmt.Errorf("adapter %s must provide validate, doctor, and run or open", manifest.Name)
+	if !contains(manifest.Capabilities, "validate") || !contains(manifest.Capabilities, "doctor") {
+		return fmt.Errorf("adapter %s must provide validate and doctor", manifest.Name)
+	}
+	if manifest.Kind != "" && !contains(manifest.Capabilities, "run") && !contains(manifest.Capabilities, "open") {
+		return fmt.Errorf("adapter %s must provide run or open", manifest.Name)
+	}
+	if len(manifest.ComputerCommands) > 0 && !contains(manifest.Capabilities, "run") {
+		return fmt.Errorf("adapter %s declares computer commands without the run capability", manifest.Name)
 	}
 	for _, capability := range manifest.Capabilities {
 		switch capability {

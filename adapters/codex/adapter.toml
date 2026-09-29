@@ -1,0 +1,8 @@
+api_version = "1"
+name = "codex"
+executable = "ctx-codex"
+executable_windows = "ctx-codex.ps1"
+description = "Computer-side shim and native hook/plugin bridge for Codex CLI"
+capabilities = "validate,doctor,run"
+computer_commands = "codex"
+computer_capabilities = "hook,plugin"

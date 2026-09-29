@@ -28,10 +28,12 @@ default_provider = "false"
 ~~~
 
 Names use lowercase letters, numbers, and underscores, and cannot collide with a
-context family or ctx command. `validate` and `doctor` are required. At least
-one of `run` and `open` is required. `list` is optional.
+context family or ctx command. `validate` and `doctor` are required. Selector,
+browser, and container adapters also require `run` or `open`; computer shims
+require `run`. `list` is optional.
 
-`kind` defaults to `selector`. A selector adapter adds a top-level ctx selector.
+`kind` defaults to `selector` when no computer endpoint is declared. A selector
+adapter adds a top-level ctx selector.
 A `browser` adapter instead provides an engine to the built-in browser context;
 its `list` output uses `name:profile` values and `validate`, `doctor`, and `open`
 receive the profile portion as their selection.
@@ -44,16 +46,105 @@ may implement `build`, image, and volume capabilities in addition to normal
 `ctx share:container volume copy` resolve qualified endpoints
 dynamically, so third-party container providers need no core changes.
 
-`selector_key` defaults to the adapter name for selector and container adapters,
-and to `browser` for browser adapters. `extra_keys` declares additional profile
-values owned by the adapter. `commands` defaults to the adapter name for selector
-and container adapters and lets `ctx run` route native command names to the
-adapter. `override_env` declares native environment variables, in precedence
-order, that `ctx status` should report instead of the stored selection. The
-provider remains responsible for honoring them during `run`. `default_provider`
+`selector_key` defaults to the adapter name for selector and container
+adapters, and to `browser` for browser adapters. `extra_keys` declares
+additional profile values owned by the adapter. `commands` defaults to the
+adapter name for selector and container adapters and lets `ctx run` route
+native command names to the adapter. `override_env` declares native environment
+variables, in precedence order, that `ctx status` should report instead of the
+stored selection. The provider remains responsible for honoring them during
+`run`. `default_provider`
 lets backward-compatible unqualified build, image-sync, and
 volume endpoints choose a provider without hard-coding an engine in the core;
 multiple trusted defaults are reported as an error.
+
+## Computer-side CLI integrations
+
+Computer integrations declare their host commands and capabilities directly,
+without a dedicated manifest kind. For example, a Claude package can declare:
+
+~~~toml
+name = "claude_code"
+computer_commands = "claude"
+computer_capabilities = "hook,plugin"
+capabilities = "validate,doctor,run"
+~~~
+
+The package includes a `claude` launcher file that delegates to
+`ctx run claude "$@"`. When trusted, ctx installs that launcher beside `ctx`.
+It locates the real CLI with the shim directory excluded from `PATH` and passes
+its absolute path in `CTX_ADAPTER_REAL_COMMAND`, preventing recursive shim
+calls. Computer commands do not require a project selection; the adapter still
+receives the active project and profile environment.
+For a Codex integration, declare `computer_commands = "codex"` and include the
+matching `codex` launcher in its package.
+
+`computer_capabilities` currently accepts `hook` and `plugin`.
+`ctx hook computer <adapter> <event>` passes the native hook payload from stdin
+to the adapter as `hook -- EVENT`; stdout, stderr, and exit status flow back to
+the CLI runtime. The adapter owns the event schema and response contract.
+`ctx plugin computer <adapter> [ARGUMENTS...]` invokes
+`plugin -- ARGUMENTS...` for provider-specific extension setup. These operations
+use the same adapter trust and checksum checks as shims. The core does not parse
+or rewrite provider hook or plugin configuration files.
+
+The bundled `claude_code` and `codex` packages install `claude` and `codex`
+shims. Put ctx's bin directory before the vendor CLI directory on `PATH`, then
+activate them with `ctx setup --adapters claude_code,codex`. `ctx run claude
+--version` and `ctx run codex --version` reach the installed CLIs. For hook
+experiments, set `CTX_COMPUTER_HOOK_COMMAND` to a handler executable; ctx passes
+the event name as its first argument and preserves the vendor's JSON stdin,
+stdout, stderr, and exit status. Plugin operations delegate to each CLI's own
+plugin command:
+
+~~~sh
+ctx plugin computer claude_code marketplace list
+ctx plugin computer codex marketplace list
+~~~
+
+For a local hook smoke test, add a native command hook to the CLI's own settings.
+For example, this Claude Code entry can go in `.claude/settings.local.json`:
+
+~~~json
+{
+  "hooks": {
+    "PreToolUse": [{
+      "matcher": "*",
+      "hooks": [{
+        "type": "command",
+        "command": "ctx hook computer claude_code PreToolUse"
+      }]
+    }]
+  }
+}
+~~~
+
+Codex reads the equivalent event from `~/.codex/hooks.json`:
+
+~~~json
+{
+  "hooks": {
+    "PreToolUse": [{
+      "matcher": "*",
+      "hooks": [{
+        "type": "command",
+        "command": "ctx hook computer codex PreToolUse"
+      }]
+    }]
+  }
+}
+~~~
+
+Both hook declarations require `CTX_COMPUTER_HOOK_COMMAND` to point to a local
+handler before starting the CLI. The handler receives the event name as argv[1]
+and the native hook JSON on stdin. These examples are user-side CLI settings;
+the adapter package itself does not write to either CLI's configuration.
+
+This boundary matches Neura Relay's builder flow: an action is reviewed, a
+decision receipt is returned, and the CLI runtime decides what to do next.
+Local settings can independently control agent authority, outside actions, and
+sensitive changes. See [Neura for Builders](https://www.neurarelay.com/builders)
+and [Neura Local settings](https://www.neurarelay.com/operators#neura-local-settings).
 
 ## Process protocol
 
@@ -71,7 +162,13 @@ ctx-example doctor SELECTION
 ctx-example run SELECTION -- ARGUMENTS...
 ctx-example open SELECTION -- ARGUMENTS...
 ctx-example share SELECTION -- SPACE ARGUMENTS...
+ctx-example hook SELECTION -- EVENT
+ctx-example plugin SELECTION -- ARGUMENTS...
 ~~~
+
+Computer endpoint operations omit the selection argument when none applies, so
+their forms are `run -- ARGUMENTS...`, `hook -- EVENT`, and
+`plugin -- ARGUMENTS...`.
 
 Every declared capability is invoked by the same protocol:
 
@@ -88,10 +185,12 @@ stream to stdout, while volume import reads a tar stream from stdin.
 Container resource transfers are exposed through `ctx share:container`.
 The installed container adapters register the actual image and volume
 capabilities, and ctx rejects a transfer when either endpoint lacks a needed
-capability. `ctx share:browser` is reserved for browser adapters. Browser
-adapters do not currently register cookie, policy, or key transfer operations;
-browser sharing must define source and target scope, compatible data formats,
-and handling for operating-system-bound keys before those operations are added.
+capability. `ctx share:browser cookie` is a shell-only Firefox reader and local
+writer implemented by ctx. It uses a trusted installed Firefox browser adapter
+for provider identity, but cookie access uses the native profile database and
+does not invoke a browser extension. It can write one cookie to another closed
+Firefox profile, a new mode-0600 JSON file, or stdout for a pipe. Other browser
+engines and browser policies and keys still need provider-specific support.
 `ctx share:computer` is also reserved. Any other installed adapter can declare
 the `share` capability and optional `share_spaces` to register
 `ctx share:<space>` commands. When `share_spaces` is omitted, the adapter name

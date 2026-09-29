@@ -1,0 +1,8 @@
+api_version = "1"
+name = "claude_code"
+executable = "ctx-claude-code"
+executable_windows = "ctx-claude-code.ps1"
+description = "Computer-side shim and native hook/plugin bridge for Claude Code"
+capabilities = "validate,doctor,run"
+computer_commands = "claude"
+computer_capabilities = "hook,plugin"

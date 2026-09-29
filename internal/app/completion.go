@@ -19,7 +19,7 @@ Register-ArgumentCompleter -Native -CommandName ctx -ScriptBlock {
     param($wordToComplete, $commandAst, $cursorPosition)
 
     $words = @($commandAst.CommandElements | ForEach-Object { $_.Extent.Text })
-    $commands = @('status', 'resolve', 'explain', 'env', 'set', 'clear', 'profile', 'adapter', 'setup', 'ls', 'open', 'doctor', 'build', 'share:container', 'share:browser', 'share:computer', 'run', 'shell', 'real', 'completion', 'version')
+    $commands = @('status', 'resolve', 'explain', 'env', 'set', 'clear', 'profile', 'adapter', 'setup', 'ls', 'open', 'doctor', 'build', 'share:container', 'share:browser', 'share:computer', 'hook', 'plugin', 'run', 'shell', 'real', 'completion', 'version')
 
     function Emit-CtxCompletion([string[]]$values) {
         $values | Where-Object { $_ -and $_ -like "$wordToComplete*" } | Sort-Object -Unique | ForEach-Object {
@@ -33,6 +33,9 @@ Register-ArgumentCompleter -Native -CommandName ctx -ScriptBlock {
     }
     function Get-CtxContainerProviders {
         @(& ctx adapter ls container 2>$null | ForEach-Object { ($_ -split '\s+')[0] })
+    }
+    function Get-CtxComputerAdapters {
+        @(& ctx adapter ls computer 2>$null | ForEach-Object { ($_ -split '\s+')[0] })
     }
     function Get-CtxAvailableAdapters {
         @(& ctx adapter available 2>$null | Where-Object { $_ -match '\savailable\s' } | ForEach-Object { ($_ -split '\s+')[0] })
@@ -51,10 +54,22 @@ Register-ArgumentCompleter -Native -CommandName ctx -ScriptBlock {
         }
         'clear' { if ($words.Count -le 2) { Emit-CtxCompletion ((Get-CtxSelectors) + 'profile'); return } }
         'completion' { if ($words.Count -le 2) { Emit-CtxCompletion @('powershell'); return } }
+        'hook' {
+            if ($words.Count -le 2) { Emit-CtxCompletion @('bash', 'zsh', 'powershell', 'computer'); return }
+            if ($words[2] -eq 'computer' -and $words.Count -le 3) { Emit-CtxCompletion (Get-CtxComputerAdapters); return }
+        }
+        'plugin' {
+            if ($words.Count -le 2) { Emit-CtxCompletion @('computer'); return }
+            if ($words[2] -eq 'computer' -and $words.Count -le 3) { Emit-CtxCompletion (Get-CtxComputerAdapters); return }
+        }
         'share:container' {
             if ($words.Count -le 2) { Emit-CtxCompletion @('image', 'volume'); return }
             if ($words[2] -eq 'image' -and $words.Count -le 3) { Emit-CtxCompletion @('sync', 'copy'); return }
             if ($words[2] -eq 'volume' -and $words.Count -le 3) { Emit-CtxCompletion @('export', 'import', 'copy'); return }
+        }
+        'share:browser' {
+            if ($words.Count -le 2) { Emit-CtxCompletion @('cookie'); return }
+            if ($words[2] -eq 'cookie' -and $words.Count -le 3) { Emit-CtxCompletion @('list', 'copy'); return }
         }
         'build' { if ($words.Count -le 2) { Emit-CtxCompletion ((Get-CtxContainerProviders) + '--cache-ref'); return } }
         'profile' {

@@ -162,6 +162,43 @@ ctx shell -- npm test
 Environment values are stored as plain text. Use them for ordinary configuration,
 not passwords, tokens, or private keys.
 
+## Computer-side AI CLIs
+
+Computer integrations declare CLI shims, hooks, and plugins in their manifest;
+they do not need a `kind` entry. The installer catalog includes first-party
+Claude Code and Codex packages. Activate one or both with:
+
+```sh
+ctx setup --adapters claude_code,codex
+ctx adapter ls computer
+```
+
+Put the ctx binary directory first on `PATH`, then use either CLI's normal
+command:
+
+```sh
+claude
+codex
+```
+
+The shims launch the real CLIs through ctx. For local hook experiments, set
+`CTX_COMPUTER_HOOK_COMMAND` to a handler executable, then configure the native
+Claude Code or Codex hook to call:
+
+```sh
+ctx hook computer claude_code PreToolUse
+ctx hook computer codex PreToolUse
+```
+
+The event name is passed to the handler as its first argument, and native hook
+JSON flows through stdin/stdout. `ctx plugin computer <adapter> ...` delegates
+plugin and marketplace operations to the CLI's native plugin command. See [the
+adapter API](docs/adapter-api.md#computer-side-cli-integrations) for sample
+settings and setup details. The design follows the runtime-neutral decision
+boundary and local operator controls described by
+[Neura for Builders](https://www.neurarelay.com/builders) and
+[Neura Local settings](https://www.neurarelay.com/operators#neura-local-settings).
+
 ## Sharing container resources and build caches
 
 Share a registry-backed build cache while keeping each engine's cache format
@@ -198,10 +235,35 @@ quiesce databases first. ctx refuses to import into an existing target volume.
 Apple Container image imports require a version newer than 1.3.0 because of
 [GHSA-r3h2-rgqf-9hv9](https://github.com/apple/containerization/security/advisories/GHSA-r3h2-rgqf-9hv9).
 
-`ctx share:browser` is reserved for browser-profile sharing. The bundled
-browser adapters currently only list, validate, and open profiles; they do not
-export cookies, policies, or keys. CTX reports this instead of creating an
-incomplete or unprotected browser copy.
+`ctx share:browser` can select one Firefox cookie by site and name and deliver
+it directly to another Firefox profile, a new JSON file, or a pipe. It runs as
+a shell command and does not require a browser extension:
+
+```sh
+ctx share:browser cookie list --from firefox:personal --site https://example.com
+ctx share:browser cookie copy --from firefox:personal --site https://example.com --name session --to-profile firefox:work
+ctx share:browser cookie copy --from firefox:personal --site https://example.com --name session --to-file ./session-cookie.json
+ctx share:browser cookie copy --from firefox:personal --site https://example.com --name session --stdout | consumer
+```
+
+`--from` defaults to the selected browser. Listing prints cookie metadata, not
+values. The site URL selects the scheme and host; use `--path` to select an
+exact cookie path. A site can have cookies with the same name in different domains, paths,
+or Firefox containers; use `--domain`, `--path`, and `--origin-attributes` to
+select one. Listing is tab-separated: name, domain, path, secure, HTTP-only,
+expiry, and origin attributes. Files are created with mode 0600 and are plain
+JSON containing `version`, `source`, `site`, and a `cookie` object with its
+value and scope fields. `--stdout` requires a pipe; use `--to-file` for a
+protected file. Profile copying requires `sqlite3` and `lsof`, both Firefox
+profiles closed, matching database schemas, and an unpartitioned cookie. It
+refuses to overwrite an existing target cookie unless `--replace` is given.
+The read-only list and file/pipe forms need `sqlite3`; they can read committed
+cookies while Firefox is open, though recent in-memory changes may not yet
+appear. When a read-only SQLite connection cannot open a Firefox write-ahead
+log, ctx makes a private temporary database snapshot and removes it on normal
+completion. A forced process termination can leave that snapshot in the system
+temporary directory. Chrome, Chromium, and Safari cookie extraction, and
+browser policies and keys, are not supported yet.
 
 `ctx share:computer` is reserved for sharing a computer context. Adapters can
 register other spaces through a `share` capability and optional `share_spaces`
@@ -217,6 +279,7 @@ ctx ships maintained adapters for:
 | Browsers | Firefox, Chrome, Chromium, Safari |
 | Cloud and orchestration | Kubernetes, AWS, gcloud |
 | Databases | PostgreSQL, MySQL |
+| Computer integrations | Shell AI CLI shims, hooks, and plugins |
 
 The native installer places bundled adapters in a local catalog. Install only
 what you need:
@@ -255,8 +318,11 @@ See [Adapters](adapters/README.md) for the bundled packages and
 | `ctx run -- <command> ...` | Run any command with the profile environment |
 | `ctx shell` | Start a child shell with the profile environment |
 | `ctx open <url>` | Open a URL with the selected browser profile |
+| `ctx hook computer <adapter> <event>` | Pass a computer hook event through a trusted adapter |
+| `ctx plugin computer <adapter> ...` | Run a computer integration's plugin operation |
 | `ctx share:container image <sync|copy> ...` | Transfer images through installed container providers |
 | `ctx share:container volume <export|import|copy> ...` | Transfer named volumes through installed container providers |
+| `ctx share:browser cookie <list|copy> ...` | List site cookie metadata or share one Firefox cookie |
 | `ctx share:<space> ...` | Invoke a trusted adapter's registered share operation |
 | `ctx doctor` | Validate configured selections and adapters |
 | `ctx hook <bash|zsh|powershell>` | Generate an optional shell prompt observer |

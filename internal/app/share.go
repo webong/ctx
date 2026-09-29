@@ -29,8 +29,7 @@ func shareSpaceCommand(resolver *config.Resolver, space string, args []string, s
 			return 2
 		}
 	case "browser":
-		fmt.Fprintln(stderr, "ctx: browser sharing is not available yet; browser adapters do not export cookies, policies, or keys")
-		return 1
+		return shareBrowserCommand(resolver, args, stdout, stderr)
 	case "computer":
 		fmt.Fprintln(stderr, "ctx: computer sharing is not available yet; no computer transfer format is registered")
 		return 1
