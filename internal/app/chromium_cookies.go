@@ -187,6 +187,19 @@ func readChromiumCookieValue(provider, database string, cookie browserCookie) (s
 	if hasSQLiteColumn(columns, "top_frame_site_key") {
 		statement += " AND top_frame_site_key=" + sqlString(cookie.PartitionKey)
 	}
+	if hasSQLiteColumn(columns, "has_cross_site_ancestor") {
+		ancestor := 0
+		if cookie.CrossSiteAncestor {
+			ancestor = 1
+		}
+		statement += " AND has_cross_site_ancestor=" + strconv.Itoa(ancestor)
+	}
+	if hasSQLiteColumn(columns, "source_scheme") {
+		statement += " AND source_scheme=" + strconv.Itoa(cookie.SourceScheme)
+	}
+	if hasSQLiteColumn(columns, "source_port") {
+		statement += " AND source_port=" + strconv.Itoa(cookie.SourcePort)
+	}
 	output, err := runSQLite(readable, true, statement)
 	if err != nil {
 		return "", err
@@ -223,6 +236,8 @@ func readChromiumCookieValue(provider, database string, cookie browserCookie) (s
 		return "", errors.New("cannot determine Chromium cookie database version")
 	}
 	if versions[0].Version >= 24 {
+		// Chromium database v24 binds the encrypted value to its host key.
+		// See net/extras/sqlite/sqlite_persistent_cookie_store.cc.
 		hostHash := sha256.Sum256([]byte(cookie.Domain))
 		if len(plaintext) < len(hostHash) || !bytes.Equal([]byte(plaintext[:len(hostHash)]), hostHash[:]) {
 			return "", errors.New("Chromium cookie domain hash does not match; cookie was not exported")
@@ -245,7 +260,7 @@ func decryptChromiumCookie(provider string, ciphertext []byte) (string, error) {
 	switch runtime.GOOS {
 	case "darwin":
 		if version != "v10" {
-			return "", fmt.Errorf("Chromium cookie encryption %s is not supported on macOS", version)
+			return "", errors.New("Chromium cookie encryption format is not supported on macOS")
 		}
 		secret, err := chromiumMacKeychainPassword(provider)
 		if err != nil {
@@ -263,7 +278,7 @@ func decryptChromiumCookie(provider string, ciphertext []byte) (string, error) {
 			}
 			password, iterations = secret, 1
 		default:
-			return "", fmt.Errorf("Chromium cookie encryption %s is not supported on Linux", version)
+			return "", errors.New("Chromium cookie encryption format is not supported on Linux")
 		}
 	default:
 		return "", fmt.Errorf("encrypted Chromium cookie export is not supported on %s", runtime.GOOS)
@@ -293,6 +308,8 @@ func decryptChromiumCookie(provider string, ciphertext []byte) (string, error) {
 }
 
 func chromiumPBKDF2Key(password []byte, iterations int) []byte {
+	// Chromium's desktop OSCrypt v10/v11 key derivation uses PBKDF2-HMAC-SHA1
+	// with saltysalt; macOS uses 1003 rounds and Linux uses one.
 	mac := hmac.New(sha1.New, password)
 	_, _ = mac.Write([]byte("saltysalt\x00\x00\x00\x01"))
 	previous := mac.Sum(nil)

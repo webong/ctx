@@ -109,6 +109,10 @@ func shareBrowserCommand(resolver *config.Resolver, args []string, stdout, stder
 	if err != nil {
 		return reportError(stderr, err)
 	}
+	if selectedFlags["origin-attributes"] && source.Adapter.Manifest.Name != "firefox" {
+		fmt.Fprintln(stderr, "ctx: --origin-attributes applies to Firefox; use --id to select a Chrome or Chromium partition")
+		return 2
+	}
 	destinationCount := 0
 	for _, present := range []bool{*toProfile != "", *toFile != "", *toStdout} {
 		if present {
@@ -116,11 +120,11 @@ func shareBrowserCommand(resolver *config.Resolver, args []string, stdout, stder
 		}
 	}
 	if action == "list" {
-		if destinationCount != 0 || *replace || selectedFlags["name"] || selectedFlags["domain"] || selectedFlags["path"] || selectedFlags["id"] || selectedFlags["origin-attributes"] {
+		if destinationCount != 0 || selectedFlags["replace"] || selectedFlags["name"] || selectedFlags["domain"] || selectedFlags["path"] || selectedFlags["id"] || selectedFlags["origin-attributes"] {
 			fmt.Fprintln(stderr, "ctx: cookie list accepts --from and --site only")
 			return 2
 		}
-	} else if *name == "" || *id < 0 || destinationCount != 1 || (*replace && *toProfile == "") {
+	} else if *name == "" || (selectedFlags["id"] && *id <= 0) || destinationCount != 1 || (selectedFlags["replace"] && *toProfile == "") {
 		fmt.Fprintln(stderr, "ctx: cookie copy needs --name and exactly one of --to-profile, --to-file, or --stdout; --replace only applies to --to-profile")
 		return 2
 	}
@@ -165,12 +169,6 @@ func shareBrowserCommand(resolver *config.Resolver, args []string, stdout, stder
 		fmt.Fprintf(stdout, "shared cookie %s for %s into %s\n", cookie.Name, siteURL.Hostname(), *toProfile)
 		return 0
 	}
-	value, err := backend.readValue(sourceDB, cookie)
-	if err != nil {
-		return reportError(stderr, err)
-	}
-	cookie.Value = value
-	bundle := browserCookieBundle{Version: 1, Source: source.Adapter.Manifest.Name + ":" + source.Profile, Site: siteURL.Scheme + "://" + siteURL.Host, Cookie: cookie}
 	if *toStdout {
 		if file, ok := stdout.(*os.File); ok {
 			info, err := file.Stat()
@@ -182,6 +180,19 @@ func shareBrowserCommand(resolver *config.Resolver, args []string, stdout, stder
 				return 2
 			}
 		}
+	} else if _, err := os.Lstat(*toFile); err == nil {
+		fmt.Fprintln(stderr, "ctx: output file already exists; choose a new --to-file path")
+		return 1
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return reportError(stderr, err)
+	}
+	value, err := backend.readValue(sourceDB, cookie)
+	if err != nil {
+		return reportError(stderr, err)
+	}
+	cookie.Value = value
+	bundle := browserCookieBundle{Version: 1, Source: source.Adapter.Manifest.Name + ":" + source.Profile, Site: siteURL.Scheme + "://" + siteURL.Host, Cookie: cookie}
+	if *toStdout {
 		if err := json.NewEncoder(stdout).Encode(bundle); err != nil {
 			return reportError(stderr, err)
 		}

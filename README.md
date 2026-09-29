@@ -269,11 +269,12 @@ portable value; `same_site` retains the source browser's numeric value.
 
 Chrome and Chromium export reads the profile's committed SQLite cookies. On
 macOS, encrypted cookies require access to the browser's Safe Storage item in
-Keychain; ctx requests it only after a cookie is selected. On Linux, v10
-cookies can be decoded locally and v11 cookies require `secret-tool` access to
-the browser's secret-service entry. Plaintext cookies can be exported on any
-platform; encrypted Windows cookies, unsupported encryption versions, and
-unavailable OS keys fail without writing a partial bundle. Chrome and Chromium
+Keychain; ctx requests it only after a cookie is selected and the output is
+valid. On Linux, v10 cookies can be decoded locally and v11 cookies require a
+Secret Service entry retrievable with `secret-tool`; KWallet-only keys are not
+supported. Plaintext cookies can be exported on any platform; encrypted Windows
+cookies, unsupported encryption versions, and unavailable OS keys fail without
+writing a partial bundle. Chrome and Chromium
 profile import, cross-browser profile import, and Safari cookie access are not
 implemented.
 
