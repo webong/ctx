@@ -43,26 +43,19 @@ packages while the core provides common discovery and routing.
 
 ### macOS and Linux
 
-Install the latest native release:
+Install from a source checkout with Go 1.23 or newer:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/webong/ctx/main/install.sh | sh
-```
-
-Ensure the install directory comes before the real container CLIs on `PATH`:
-
-```sh
+git clone https://github.com/webong/ctx.git
+cd ctx
+./install.sh
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-The installer verifies the release checksum and opens the adapter selection flow
-when attached to a terminal. From a source checkout, it builds ctx locally:
-
-```sh
-./install.sh
-```
-
-For unattended installation:
+The installer builds ctx and its Go browser helpers, then opens adapter
+selection when attached to a terminal. Put the install directory before the
+real container CLIs on `PATH`. For unattended installation, run one of these
+from the checkout:
 
 ```sh
 ./install.sh --adapters docker,kube,firefox
@@ -70,13 +63,35 @@ For unattended installation:
 ./install.sh --minimal
 ```
 
-On Windows:
+On Windows, install from a source checkout with Go 1.23 or newer:
 
 ```powershell
+git clone https://github.com/webong/ctx.git
+Set-Location ctx
 .\install.ps1 -Interactive
-.\install.ps1 -Adapters docker,kube,firefox
-.\install.ps1 -AllAdapters
+$env:PATH = (Join-Path $env:LOCALAPPDATA 'Programs\ctx\bin') + ';' + $env:PATH
 ```
+
+For unattended Windows setup, use `-Adapters docker,kube,firefox` or
+`-AllAdapters` in place of `-Interactive`.
+
+When a prebuilt release is available, macOS and Linux can download it without
+Go:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/webong/ctx/main/install.sh | sh
+```
+
+Windows can download the installer script to a temporary file and run it:
+
+```powershell
+$ctxInstaller = Join-Path $env:TEMP 'ctx-install.ps1'
+Invoke-WebRequest https://raw.githubusercontent.com/webong/ctx/main/install.ps1 -OutFile $ctxInstaller
+& $ctxInstaller -Interactive
+```
+
+The remote installers verify release checksums. If GitHub Releases has no
+published version, use the source checkout instructions above.
 
 See [Cross-platform support](docs/cross-platform.md) for platform details. Set
 `CTX_BIN_DIR` and `CTX_HOME` to use custom installation locations.
@@ -283,9 +298,11 @@ image imports require a version newer than 1.3.0 because of
 [GHSA-r3h2-rgqf-9hv9](https://github.com/apple/containerization/security/advisories/GHSA-r3h2-rgqf-9hv9).
 
 `ctx share:browser` bridges browser resources through installed adapters.
-Its versioned JSON contract is documented in the adapter API; CTX's shared Go
-types and validation helpers live in `internal/app/browser/share`. CTX core does
-not contain browser storage or platform-specific code.
+Its versioned JSON contract is documented in the adapter API. External Go
+adapters can use `github.com/webong/ctx/adapter/browser` for the shared types
+and validation helpers. CTX core does not contain browser storage or
+platform-specific code.
+
 Firefox, Chrome, and Chromium can list and export a selected site cookie and
 import a supported cookie into a closed profile. Source and target may be
 different browser providers. It runs as a shell command and does not require
