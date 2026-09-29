@@ -18,6 +18,7 @@ type ContextCandidate struct {
 	SelectionDigest   string    `json:"selection_digest"`
 	SelectionRedacted bool      `json:"selection_redacted,omitempty"`
 	Capabilities      []string  `json:"capabilities"`
+	Supports          []string  `json:"supports,omitempty"`
 	ObservedAt        time.Time `json:"observed_at"`
 }
 
@@ -40,6 +41,8 @@ func (g *Graph) ResolveInventory(ctx context.Context, runtimeName string) (Inven
 	adapters := map[string]graph.Vertex{}
 	capabilityNames := map[string]string{}
 	adapterCapabilities := map[string][]string{}
+	supportNames := map[string]string{}
+	adapterSupports := map[string][]string{}
 	for _, vertex := range snapshot.Vertices {
 		switch vertex.Kind {
 		case Namespace + "/inventory":
@@ -56,12 +59,21 @@ func (g *Graph) ResolveInventory(ctx context.Context, runtimeName string) (Inven
 			if name, ok := vertex.Attributes["name"].(string); ok {
 				capabilityNames[vertex.ID] = name
 			}
+		case Namespace + "/support":
+			if name, ok := vertex.Attributes["name"].(string); ok {
+				supportNames[vertex.ID] = name
+			}
 		}
 	}
 	for _, edge := range snapshot.Edges {
 		if edge.Type == Namespace+"/supports" {
 			if name := capabilityNames[edge.To]; name != "" {
 				adapterCapabilities[edge.From] = append(adapterCapabilities[edge.From], name)
+			}
+		}
+		if edge.Type == Namespace+"/supports-kind" {
+			if name := supportNames[edge.To]; name != "" {
+				adapterSupports[edge.From] = append(adapterSupports[edge.From], name)
 			}
 		}
 	}
@@ -86,8 +98,14 @@ func (g *Graph) ResolveInventory(ctx context.Context, runtimeName string) (Inven
 			// A context without an override inherits its adapter manifest.
 			capabilities = append(capabilities, adapterCapabilities[adapterVertex.ID]...)
 		}
+		supportOverride, hasSupportOverride := vertex.Attributes["supports"]
+		supports := stringList(supportOverride)
+		if !hasSupportOverride {
+			supports = append(supports, adapterSupports[adapterVertex.ID]...)
+		}
 		sort.Strings(capabilities)
-		result.Contexts = append(result.Contexts, ContextCandidate{Adapter: adapter, Runtime: runtimeValue, Selection: selection, SelectionDigest: selectionDigest, SelectionRedacted: selection == "", Capabilities: capabilities, ObservedAt: vertex.Provenance.At})
+		sort.Strings(supports)
+		result.Contexts = append(result.Contexts, ContextCandidate{Adapter: adapter, Runtime: runtimeValue, Selection: selection, SelectionDigest: selectionDigest, SelectionRedacted: selection == "", Capabilities: capabilities, Supports: supports, ObservedAt: vertex.Provenance.At})
 	}
 	sort.Slice(result.Contexts, func(i, j int) bool {
 		if result.Contexts[i].Adapter == result.Contexts[j].Adapter {

@@ -40,10 +40,7 @@ func adapterCommand(resolver *config.Resolver, args []string, stdout, stderr io.
 		filter := ""
 		if len(args) == 2 {
 			filter = args[1]
-			if filter == "container" {
-				filter = "virtualizer"
-			}
-			if filter != "computer" && filter != "virtualizer" && filter != "browser" && filter != "shell" && filter != "web" {
+			if filter != "computer" && filter != "manager" && filter != "browser" && filter != "shell" && filter != "web" {
 				fmt.Fprintf(stderr, "ctx: unknown runtime or surface %s\n", args[1])
 				return 2
 			}
@@ -90,13 +87,16 @@ func adapterCommand(resolver *config.Resolver, args []string, stdout, stderr io.
 			fmt.Fprintf(stdout, "computer capabilities: %s\n", strings.Join(candidate.Manifest.ComputerCapabilities, ","))
 		}
 		fmt.Fprintf(stdout, "capabilities: %s\n", strings.Join(candidate.Manifest.Capabilities, ","))
+		if len(candidate.Manifest.Supports) > 0 {
+			fmt.Fprintf(stdout, "supports:     %s\n", strings.Join(candidate.Manifest.Supports, ","))
+		}
 		if len(candidate.Manifest.ShareSpaces) > 0 {
 			fmt.Fprintf(stdout, "share spaces: %s\n", strings.Join(candidate.Manifest.ShareSpaces, ","))
 		}
 		if len(candidate.Manifest.OverrideEnv) > 0 {
 			fmt.Fprintf(stdout, "override env: %s\n", strings.Join(candidate.Manifest.OverrideEnv, ","))
 		}
-		if candidate.IsRuntime("virtualizer") {
+		if candidate.IsRuntime("manager") {
 			fmt.Fprintf(stdout, "default:      %t\n", candidate.Manifest.DefaultProvider)
 		}
 		fmt.Fprintf(stdout, "executable:   %s\n", candidate.ExecutablePath())
@@ -315,7 +315,7 @@ func runAdapterTool(resolver *config.Resolver, tool string, args []string, stdou
 	if err != nil {
 		return reportError(stderr, err)
 	}
-	if selection == "" && !matched.IsRuntime("virtualizer") && !matched.IsComputerEndpoint() {
+	if selection == "" && !matched.IsRuntime("manager") && !matched.IsComputerEndpoint() {
 		fmt.Fprintf(stderr, "ctx: no %s selection; run ctx set %s <name>\n", matched.Manifest.Name, matched.Manifest.Name)
 		return 1
 	}
@@ -331,8 +331,8 @@ func listContexts(resolver *config.Resolver, args []string, stdout, stderr io.Wr
 	switch selector {
 	case "browser":
 		return listBrowsers(resolver, stdout, stderr)
-	case "virtualizer", "container":
-		return listVirtualizers(resolver, stdout, stderr)
+	case "manager":
+		return listManagers(resolver, stdout, stderr)
 	case "computer":
 		inventory, err := resolvedMachineInventory(resolver)
 		if err != nil {
@@ -394,13 +394,13 @@ func listBrowsers(resolver *config.Resolver, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func listVirtualizers(resolver *config.Resolver, stdout, stderr io.Writer) int {
+func listManagers(resolver *config.Resolver, stdout, stderr io.Writer) int {
 	inventory, err := resolvedMachineInventory(resolver)
 	if err != nil {
 		return reportError(stderr, err)
 	}
-	if printDiscoveredVirtualizers(inventory, stdout) == 0 {
-		fmt.Fprintln(stderr, "ctx: no supported virtualizer contexts found")
+	if printDiscoveredManagers(inventory, stdout) == 0 {
+		fmt.Fprintln(stderr, "ctx: no supported manager contexts found")
 		return 1
 	}
 	return 0
@@ -512,7 +512,7 @@ func doctor(resolver *config.Resolver, stdout, stderr io.Writer) int {
 			continue
 		}
 		selection, err := adapterSelection(resolver, candidate)
-		if err != nil || (selection == "" && candidate.IsSelectable() && !candidate.IsRuntime("virtualizer")) {
+		if err != nil || (selection == "" && candidate.IsSelectable() && !candidate.IsRuntime("manager")) {
 			continue
 		}
 		checked++
@@ -564,6 +564,22 @@ func invokeAdapterIOWithEnv(resolver *config.Resolver, candidate *modpkg.Adapter
 	if err := store.AssertTrusted(candidate); err != nil {
 		return reportError(stderr, err)
 	}
+	if candidate.IsRuntime("manager") && strings.HasPrefix(selection, "@") {
+		registry, err := readManagerRegistry()
+		if err != nil {
+			return reportError(stderr, err)
+		}
+		instance, ok := findManagerInstance(registry, strings.TrimPrefix(selection, "@"))
+		if !ok || instance.Provider != candidate.Manifest.Name {
+			return reportErrorCode(stderr, fmt.Errorf("unknown %s manager instance %s", candidate.Manifest.Name, selection), 2)
+		}
+		selection = instance.Selection
+		merged := managerInstanceEnvironment(instance)
+		for key, value := range extraEnv {
+			merged[key] = value
+		}
+		extraEnv = merged
+	}
 	values := map[string]string{}
 	for _, key := range candidate.ConfigKeys() {
 		resolved, err := resolver.Resolve(key)
@@ -574,7 +590,7 @@ func invokeAdapterIOWithEnv(resolver *config.Resolver, candidate *modpkg.Adapter
 	}
 	profile, _, _ := resolver.ActiveProfile()
 	realCommand := ""
-	if candidate.IsRuntime("virtualizer") || (candidate.IsComputerEndpoint() && (operation == "run" || operation == "doctor" || operation == "plugin" || requestedCommand != "")) {
+	if candidate.IsRuntime("manager") || (candidate.IsComputerEndpoint() && (operation == "run" || operation == "doctor" || operation == "plugin" || requestedCommand != "")) {
 		commandName := ""
 		if candidate.HasCommand(requestedCommand) || candidate.HasComputerCommand(requestedCommand) {
 			commandName = requestedCommand
@@ -586,11 +602,40 @@ func invokeAdapterIOWithEnv(resolver *config.Resolver, candidate *modpkg.Adapter
 		if commandName == "" {
 			return reportErrorCode(stderr, fmt.Errorf("adapter %s does not declare a native command", candidate.Manifest.Name), 127)
 		}
-		var err error
-		realCommand, err = launch.FindReal(commandName)
-		if err != nil {
-			return reportErrorCode(stderr, err, 127)
+		if override := extraEnv["CTX_MANAGER_COMMAND"]; override != "" {
+			if err := validateManagerExecutable(override); err != nil {
+				return reportErrorCode(stderr, err, 127)
+			}
+			realCommand = override
+		} else {
+			var err error
+			realCommand, err = launch.FindReal(commandName)
+			if err != nil {
+				return reportErrorCode(stderr, err, 127)
+			}
 		}
+	}
+	if pluginName := dockerInvokedPlugin(operation, args); candidate.Manifest.Name == "docker" && pluginName != "" && (extraEnv["CTX_MANAGER_PLUGIN_DIR"] != "" || extraEnv["CTX_MANAGER_PLUGIN_BUILDX"] != "" || extraEnv["CTX_MANAGER_PLUGIN_COMPOSE"] != "") {
+		plugins := map[string]string{}
+		for _, name := range []string{"buildx", "compose"} {
+			if path := extraEnv["CTX_MANAGER_PLUGIN_"+strings.ToUpper(name)]; path != "" {
+				plugins[name] = path
+			}
+		}
+		overlay, cleanup, err := dockerConfigOverlay(extraEnv["CTX_MANAGER_PLUGIN_DIR"], plugins)
+		if err != nil {
+			return reportError(stderr, fmt.Errorf("prepare Docker plugins: %w", err))
+		}
+		defer cleanup()
+		if err := validateManagerExecutable(filepath.Join(overlay, "cli-plugins", dockerPluginFilename(pluginName))); err != nil {
+			return reportError(stderr, fmt.Errorf("manager Docker plugin %s: %w", pluginName, err))
+		}
+		copyEnv := make(map[string]string, len(extraEnv)+1)
+		for key, value := range extraEnv {
+			copyEnv[key] = value
+		}
+		copyEnv["DOCKER_CONFIG"] = overlay
+		extraEnv = copyEnv
 	}
 	command, err := candidate.Command(modpkg.Invocation{
 		Operation: operation, Selection: selection, Arguments: args, Values: values,
@@ -609,8 +654,8 @@ func invokeAdapterIOWithEnv(resolver *config.Resolver, candidate *modpkg.Adapter
 	for key, value := range profileValues {
 		command.Env = setEnvironment(command.Env, key, value)
 	}
-	if candidate.IsRuntime("virtualizer") {
-		command.Env = setEnvironment(command.Env, "CTX_VIRTUALIZER_ADDRESS", "")
+	if candidate.IsRuntime("manager") {
+		command.Env = setEnvironment(command.Env, "CTX_MANAGER_ADDRESS", "")
 	}
 	for key, value := range extraEnv {
 		command.Env = setEnvironment(command.Env, key, value)

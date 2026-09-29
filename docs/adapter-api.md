@@ -18,6 +18,7 @@ executable = "ctx-example"
 executable_windows = "ctx-example.ps1"
 description = "Example context adapter"
 capabilities = "list,observe,validate,run,doctor,open,share"
+supports = "virtualizer,container"
 selector_key = "example_context"
 extra_keys = "example_namespace"
 commands = "example,examplectl"
@@ -25,7 +26,7 @@ commands = "example,examplectl"
 share_spaces = "workspace,project"
 # Native variables that take priority over the stored selection.
 override_env = "EXAMPLE_CONTEXT,EXAMPLE_HOST"
-# Optional for the virtualizer runtime. At most one installed provider should set it.
+# Optional for the manager runtime. At most one installed provider should set it.
 default_provider = "false"
 ~~~
 
@@ -43,7 +44,7 @@ JSON object on stdout:
 {
   "version": 1,
   "contexts": [
-    {"selection": "work", "capabilities": ["validate", "run", "share"], "attributes": {"label": "Work"}}
+    {"selection": "work", "capabilities": ["validate", "run", "share"], "supports": ["container"], "attributes": {"label": "Work"}}
   ],
   "resources": [
     {"id": "project-1", "kind": "project", "context": "work", "attributes": {"label": "Example"}}
@@ -53,9 +54,10 @@ JSON object on stdout:
 ~~~
 
 `selection` is the value passed to the adapter's native operations. Context
-capabilities, when supplied, must be a subset of the manifest and narrow what
-the context offers. Resource IDs are local to the adapter and stored as graph
-digests. Relations use resource IDs as `from` and `to` and a plain `kind`.
+capabilities and supports, when supplied, must be subsets of the manifest and
+narrow what the context offers. Resource IDs are local to the adapter and
+stored as graph digests. Relations use resource IDs as `from` and `to` and a
+plain `kind`.
 Contexts and resources may have ordinary JSON metadata; never include cookies,
 keys, tokens, or other credentials. Unknown fields, duplicate IDs, invalid
 relations, or a response over 1 MiB invalidate the observation. CTX limits
@@ -66,22 +68,27 @@ line-oriented `list` behavior documented below.
 
 The public `github.com/webong/ctx/graph/system` package exposes
 `ObserveInventory`, `ResolveInventory`, and `Inventory.Find` for other Go
-consumers. `ctx graph resolve [runtime|all] [capability...]` shows the same
-candidate view as JSON. These are observations; the caller must validate the
-selected context with its trusted adapter before acting.
+consumers. `ctx graph resolve [runtime|all] [capability...] [--supports <kind>]`
+shows the same candidate view as JSON. `ctx graph vertices support` and
+`ctx graph edges supports-kind` expose declarations even for adapters that
+have not listed a context. These are observations; the caller must validate
+the selected context with its trusted adapter before acting.
 
-`runtime` identifies where the selected context executes:
+`runtime` identifies the adapter's role, not whether it uses virtualization:
 
 - `computer` for host-native CLIs and applications, including cloud,
   orchestration, database, and AI tools;
-- `virtualizer` for Docker, Podman, nerdctl/containerd, Apple Container, and
-  other providers that execute isolated workloads;
+- `manager` for providers that manage workload engines or contexts, including
+  Docker, Podman, nerdctl/containerd, and Apple Container;
 - `browser` for browser-profile providers.
 
 `surfaces` identifies how users interact with the adapter. `shell` permits
 `run` and command shims; `web` permits `open`. An adapter may expose both.
-Capabilities describe what the adapter can actually do, so routing does not
-depend on a second category field. API v2.0 does not accept `kind`.
+`capabilities` names executable operations such as `run`, `build`, and
+`image_save`. `supports` names resource kinds that the native tool can manage,
+such as `virtualizer` and `container`. A tool may declare both regardless of
+its runtime. Support declarations aid discovery; they do not add transfer or
+invocation operations. API v2.0 does not accept `kind`.
 
 A browser adapter normally uses `selector_key = "browser"`. Its `list` output
 uses `name:profile` values, while `validate`, `doctor`, and `open` receive only
@@ -98,26 +105,36 @@ share_spaces = "browser"
 browser_share = "cookie.list,cookie.export,cookie.import,policy.export,certificate.list,certificate.export,certificate.import"
 ~~~
 
-A virtualizer adapter's unqualified `list` output contains native context,
-connection, or namespace names. `ctx ls virtualizer` prefixes each result as
+A manager adapter's unqualified `list` output contains native context,
+connection, or namespace names. `ctx ls manager` prefixes each result as
 `name:selection`. A provider may implement `build`, image, and volume
-capabilities in addition to normal `run` routing. `ctx share:virtualizer image
-copy` and `ctx share:virtualizer volume copy` resolve qualified endpoints
+capabilities in addition to normal `run` routing. `ctx share:manager image
+copy` and `ctx share:manager volume copy` resolve qualified endpoints
 dynamically, so additional providers need no core changes.
 
-Users may register named virtualizer instances with `ctx virtualizer add`. Each
+Users may register named manager instances with `ctx manager add`. Each
 instance records an adapter provider and native selection, plus optional
 declared virtualizer product and machine labels. Share and build commands accept `@instance`
-endpoints. The instance registry is stored in `$CTX_HOME/virtualizers.json` (or
+endpoints. The instance registry is stored in `$CTX_HOME/managers.json` (or
 the default ctx configuration home), with owner-only permissions. Registration
-validates the native selection through the trusted adapter. ctx displays the
+validates the native selection through the trusted adapter unless the user
+explicitly passes `--offline` to register an unavailable engine. ctx displays the
 resolved instance before a transfer. The product and machine are user-declared
 labels; the adapter remains responsible for routing to the selected engine.
 For nerdctl, registration can include `--address`, which ctx passes as
-`CTX_VIRTUALIZER_ADDRESS` to adapter invocations. The maintained nerdctl
+`CTX_MANAGER_ADDRESS` to adapter invocations. The maintained nerdctl
 adapter passes this value as its native `--address` flag for validation,
-transfer, and build operations. Other virtualizer adapters need no new
+transfer, and build operations. Other manager adapters need no new
 capability: their native selection already identifies the engine connection.
+Instances may also pin `--command` to an absolute executable. Docker instances
+can provide `--plugin-dir` and repeat `--plugin buildx=/absolute/path` or
+`--plugin compose=/absolute/path`. ctx passes the selected CLI as
+`CTX_ADAPTER_REAL_COMMAND` and gives that invocation a temporary `DOCKER_CONFIG`
+with isolated plugins. Existing contexts and credentials remain available;
+global Docker plugin links are not rewritten. The core resolves `@instance`
+selectors before calling the adapter, so adapters continue to receive their
+native selection. `ctx manager doctor` checks toolchain paths and host-side
+manager issues without changing any configuration.
 
 `selector_key` defaults to the adapter name, or to `browser` for browser
 adapters. Direct computer integrations that only declare `computer_commands`
@@ -128,13 +145,13 @@ names to the adapter. `override_env` declares native environment variables, in
 precedence order, that `ctx status` should report instead of the stored
 selection. The provider remains responsible for honoring them during `run`.
 `default_provider` lets unqualified build, image-sync, and volume endpoints
-choose a virtualizer provider without hard-coding an engine in the core;
+choose a manager provider without hard-coding an engine in the core;
 multiple trusted defaults are reported as an error.
 
 ctx still loads API `1` and `1.0` manifests. Their legacy `kind` is translated
 at load time: `selector` becomes the `computer` runtime on the `shell` surface,
-`browser` becomes `browser` on `web`, and `container` becomes `virtualizer` on
-`shell`. New and updated adapters should use API `2.0`.
+`browser` becomes `browser` on `web`, and `container` becomes `manager` on
+`shell`. New and updated adapters should declare `runtime = "manager"`.
 
 ## Computer-side CLI integrations
 
@@ -263,14 +280,14 @@ Every declared capability is invoked by the same protocol:
 ctx-example CAPABILITY SELECTION -- ARGUMENTS...
 ~~~
 
-Virtualizer capabilities currently understood by the core are `build`,
+Manager capabilities currently understood by the core are `build`,
 `image_push`, `image_pull`, `image_save`, `image_load`, `volume_exists`,
 `volume_create`, `volume_export`, and `volume_import`. Image save arguments are
 `ARCHIVE IMAGE...`; image load receives `ARCHIVE`. Volume export writes a tar
 stream to stdout, while volume import reads a tar stream from stdin.
 
-Virtualizer resource transfers are exposed through `ctx share:virtualizer`.
-The installed virtualizer adapters register the actual image and volume
+Manager resource transfers are exposed through `ctx share:manager`.
+The installed manager adapters register the actual image and volume
 capabilities, and ctx rejects a transfer when either endpoint lacks a needed
 capability. `image sync` uses registry push/pull by default and falls back to
 an archive when an endpoint lacks push/pull. `image copy` and `image sync
@@ -357,7 +374,7 @@ adapter owns their meaning.
 
 The process receives `CTX_ADAPTER_API`, `CTX_ADAPTER_NAME`,
 `CTX_ADAPTER_COMMAND`, `CTX_ADAPTER_REAL_COMMAND`, `CTX_PROJECT_DIR`, and
-`CTX_PROFILE`. For virtualizer providers, `CTX_ADAPTER_REAL_COMMAND` is the
+`CTX_PROFILE`. For manager providers, `CTX_ADAPTER_REAL_COMMAND` is the
 resolved underlying CLI path with ctx's transparent shim excluded. Values for declared
 keys are exported as `CTX_ADAPTER_VALUE_<UPPERCASE_KEY>`. A `configure` operation
 prints tab-separated `key<TAB>value` records for declared keys; ctx validates and

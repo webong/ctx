@@ -10,7 +10,7 @@ if (-not $nerdctl -or -not (Test-Path -LiteralPath $nerdctl -PathType Leaf)) { [
 if ($Arguments.Count -gt 0 -and $Arguments[0] -eq '--') { $Arguments = @($Arguments | Select-Object -Skip 1) }
 $volumeImage = if ($env:CTX_VOLUME_IMAGE) { $env:CTX_VOLUME_IMAGE } else { 'alpine:3.21' }
 
-function Get-AddressPrefix { if ($env:CTX_VIRTUALIZER_ADDRESS) { return @('--address', $env:CTX_VIRTUALIZER_ADDRESS) }; return @() }
+function Get-AddressPrefix { if ($env:CTX_MANAGER_ADDRESS) { return @('--address', $env:CTX_MANAGER_ADDRESS) }; return @() }
 function Invoke-Nerdctl([string[]]$CommandArguments) { $prefix = @(Get-AddressPrefix); & $nerdctl @prefix @CommandArguments; exit $LASTEXITCODE }
 function Get-Namespaces { $prefix = @(Get-AddressPrefix); @(& $nerdctl @prefix namespace ls --quiet) }
 function Has-RunOverride {

@@ -7,11 +7,14 @@ External Go adapters can use the public `github.com/webong/ctx/adapter` process
 parser and ship a platform-specific `.ctxadapter` archive. A bare ctx binary
 installs that archive without Go; source builds use `ctx adapter build`.
 
-`docker`, `podman`, `nerdctl`, and `apple` are maintained virtualizer providers.
-Their manifests declare `runtime = "virtualizer"` and `surfaces = "shell"`;
+`docker`, `podman`, `nerdctl`, and `apple` are maintained manager providers.
+Their manifests declare `runtime = "manager"` and `surfaces = "shell"`;
 each package owns its native CLI syntax, context discovery, validation, routing,
 build behavior, and supported image and volume operations. The ctx core sees
 only the common capability protocol.
+Manifest `supports` declarations describe resource kinds independently of
+runtime. For example, the Podman manager and AWS computer adapters both
+declare `virtualizer` and `container`.
 Docker also implements the versioned `observe` operation for the system graph;
 the other providers continue to use their `list` fallback until they expose
 additional context or resource observations.

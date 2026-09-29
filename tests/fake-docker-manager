@@ -1,0 +1,12 @@
+#!/usr/bin/env sh
+set -eu
+
+if [ "${1:-}" = context ]; then
+  exec "$(dirname "$0")/docker" "$@"
+fi
+
+printf 'managed %s' "$*"
+if [ -n "${DOCKER_CONFIG:-}" ]; then
+  printf ' plugin=%s' "$(readlink "$DOCKER_CONFIG/cli-plugins/docker-buildx")"
+fi
+printf '\n'

@@ -14,6 +14,8 @@ PowerShell implementations where Windows needs them.
 - Native compilation on macOS, Linux, and Windows.
 - Windows `.cmd` engine shims and a PowerShell source installer.
 - Adapter API v2.0 discovery, checksum trust, lifecycle commands, and process dispatch.
+- Runtime-independent `supports` declarations for resource kinds such as
+  virtualizers and containers, projected into the system graph.
 - Platform-specific `.ctxadapter` archives and checksum-pinned indexes, so a bare
   ctx binary can install compiled adapters without a Go toolchain.
 - Computer-runtime adapters for Kubernetes, cloud CLIs, and databases.
@@ -50,7 +52,7 @@ The intended 0.8 command surface is implemented and the native executable is the
 default installer target. Release candidates must still pass real-machine soak
 testing on Windows, macOS, and Linux before a stable tag is published.
 
-The architecture separates three runtimes—`computer`, `virtualizer`, and
+The architecture separates three runtimes—`computer`, `manager`, and
 `browser`—from two interaction surfaces: `shell` and `web`. Individual
 applications are maintained or external providers, so operating-system support
 and CLI-specific behavior live in adapter packages rather than accumulating

@@ -16,7 +16,7 @@ import (
 type endpoint struct {
 	Provider *modpkg.Adapter
 	Name     string
-	Instance *virtualizerInstance
+	Instance *managerInstance
 }
 
 func buildImage(resolver *config.Resolver, args []string, stdout, stderr io.Writer) int {
@@ -29,7 +29,7 @@ func buildImage(resolver *config.Resolver, args []string, stdout, stderr io.Writ
 				return reportErrorCode(stderr, err, 2)
 			}
 			named, args = &selected, args[1:]
-		} else if candidate, err := virtualizerProvider(args[0]); err == nil {
+		} else if candidate, err := managerProvider(args[0]); err == nil {
 			providerName, args = candidate.Manifest.Name, args[1:]
 		}
 	}
@@ -69,7 +69,7 @@ parsed:
 		fmt.Fprintf(stderr, "ctx: building in %s\n", named.description())
 		return invokeEndpoint(resolver, *named, "build", operationArgs, os.Stdin, stdout, stderr)
 	}
-	provider, err := virtualizerProviderForBuild(resolver, providerName)
+	provider, err := managerProviderForBuild(resolver, providerName)
 	if err != nil {
 		return reportErrorCode(stderr, err, 2)
 	}
@@ -87,9 +87,9 @@ parsed:
 	return invokeAdapter(resolver, provider, "build", selection, operationArgs, "", stdout, stderr)
 }
 
-func virtualizerProviderForBuild(resolver *config.Resolver, name string) (*modpkg.Adapter, error) {
+func managerProviderForBuild(resolver *config.Resolver, name string) (*modpkg.Adapter, error) {
 	if name != "" {
-		return virtualizerProvider(name)
+		return managerProvider(name)
 	}
 	inventory, err := freshMachineInventory(resolver)
 	if err != nil {
@@ -97,21 +97,21 @@ func virtualizerProviderForBuild(resolver *config.Resolver, name string) (*modpk
 	}
 	providers := map[string]bool{}
 	for _, candidate := range inventory.Contexts {
-		if candidate.Runtime == "virtualizer" && candidateOffers(candidate, "build") {
+		if candidate.Runtime == "manager" && candidateOffers(candidate, "build") {
 			providers[candidate.Adapter] = true
 		}
 	}
 	if len(providers) == 1 {
 		for provider := range providers {
-			return virtualizerProvider(provider)
+			return managerProvider(provider)
 		}
 	}
-	return virtualizerProvider("")
+	return managerProvider("")
 }
 
 func imageCommand(resolver *config.Resolver, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "ctx: share:virtualizer image requires sync or copy")
+		fmt.Fprintln(stderr, "ctx: share:manager image requires sync or copy")
 		return 2
 	}
 	switch args[0] {
@@ -120,7 +120,7 @@ func imageCommand(resolver *config.Resolver, args []string, stdout, stderr io.Wr
 	case "copy":
 		return imageCopy(resolver, args[1:], stdout, stderr)
 	default:
-		fmt.Fprintln(stderr, "ctx: share:virtualizer image requires sync or copy")
+		fmt.Fprintln(stderr, "ctx: share:manager image requires sync or copy")
 		return 2
 	}
 }
@@ -237,7 +237,7 @@ func copyImagesArchive(resolver *config.Resolver, source, target endpoint, image
 
 func volumeCommand(resolver *config.Resolver, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "ctx: share:virtualizer volume requires export, import, or copy")
+		fmt.Fprintln(stderr, "ctx: share:manager volume requires export, import, or copy")
 		return 2
 	}
 	switch args[0] {
@@ -285,7 +285,7 @@ func volumeCommand(resolver *config.Resolver, args []string, stdout, stderr io.W
 		}
 		return volumeCopy(resolver, args[1:], stdout, stderr)
 	default:
-		fmt.Fprintln(stderr, "ctx: share:virtualizer volume requires export, import, or copy")
+		fmt.Fprintln(stderr, "ctx: share:manager volume requires export, import, or copy")
 		return 2
 	}
 }
@@ -370,15 +370,15 @@ func createAndImportVolume(resolver *config.Resolver, target endpoint, volume st
 
 func parseEndpoint(value string) (endpoint, error) {
 	if strings.HasPrefix(value, "@") {
-		registry, err := readVirtualizerRegistry()
+		registry, err := readManagerRegistry()
 		if err != nil {
 			return endpoint{}, err
 		}
-		instance, ok := findVirtualizerInstance(registry, strings.TrimPrefix(value, "@"))
+		instance, ok := findManagerInstance(registry, strings.TrimPrefix(value, "@"))
 		if !ok {
-			return endpoint{}, fmt.Errorf("unknown virtualizer instance %s; run ctx virtualizer ls", value)
+			return endpoint{}, fmt.Errorf("unknown manager instance %s; run ctx manager ls", value)
 		}
-		provider, err := virtualizerProvider(instance.Provider)
+		provider, err := managerProvider(instance.Provider)
 		if err != nil {
 			return endpoint{}, err
 		}
@@ -386,9 +386,9 @@ func parseEndpoint(value string) (endpoint, error) {
 	}
 	providerName, selection, ok := strings.Cut(value, ":")
 	if !ok || providerName == "" || selection == "" {
-		return endpoint{}, fmt.Errorf("endpoint must be @<instance> or <virtualizer-provider>:<context>")
+		return endpoint{}, fmt.Errorf("endpoint must be @<instance> or <manager-provider>:<context>")
 	}
-	provider, err := virtualizerProvider(providerName)
+	provider, err := managerProvider(providerName)
 	if err != nil {
 		return endpoint{}, err
 	}
@@ -405,7 +405,7 @@ func parseEndpointWithDefault(resolver *config.Resolver, value string) (endpoint
 	}
 	providers := map[string]bool{}
 	for _, candidate := range inventory.Contexts {
-		if candidate.Runtime != "virtualizer" {
+		if candidate.Runtime != "manager" {
 			continue
 		}
 		if _, err := inventory.Find(candidate.Adapter, value); err == nil {
@@ -414,27 +414,27 @@ func parseEndpointWithDefault(resolver *config.Resolver, value string) (endpoint
 	}
 	if len(providers) == 1 {
 		for name := range providers {
-			provider, err := virtualizerProvider(name)
+			provider, err := managerProvider(name)
 			if err != nil {
 				return endpoint{}, err
 			}
 			return endpoint{Provider: provider, Name: value}, nil
 		}
 	}
-	provider, err := virtualizerProvider("")
+	provider, err := managerProvider("")
 	if err != nil {
 		if len(providers) > 1 {
-			return endpoint{}, fmt.Errorf("context %s is offered by multiple virtualizer adapters; use <provider>:<context>", value)
+			return endpoint{}, fmt.Errorf("context %s is offered by multiple manager adapters; use <provider>:<context>", value)
 		}
 		return endpoint{}, err
 	}
 	if len(providers) > 1 && !providers[provider.Manifest.Name] {
-		return endpoint{}, fmt.Errorf("context %s is offered by multiple virtualizer adapters; use <provider>:<context>", value)
+		return endpoint{}, fmt.Errorf("context %s is offered by multiple manager adapters; use <provider>:<context>", value)
 	}
 	return endpoint{Provider: provider, Name: value}, nil
 }
 
-func virtualizerProvider(name string) (*modpkg.Adapter, error) {
+func managerProvider(name string) (*modpkg.Adapter, error) {
 	if name == "" {
 		store := adapterStore()
 		installed, err := store.List()
@@ -443,7 +443,7 @@ func virtualizerProvider(name string) (*modpkg.Adapter, error) {
 		}
 		var defaultProvider *modpkg.Adapter
 		for _, candidate := range installed {
-			if !candidate.IsRuntime("virtualizer") || !candidate.Manifest.DefaultProvider {
+			if !candidate.IsRuntime("manager") || !candidate.Manifest.DefaultProvider {
 				continue
 			}
 			trusted, trustErr := store.IsTrusted(candidate)
@@ -451,21 +451,21 @@ func virtualizerProvider(name string) (*modpkg.Adapter, error) {
 				continue
 			}
 			if defaultProvider != nil {
-				return nil, fmt.Errorf("multiple default virtualizer providers: %s and %s", defaultProvider.Manifest.Name, candidate.Manifest.Name)
+				return nil, fmt.Errorf("multiple default manager providers: %s and %s", defaultProvider.Manifest.Name, candidate.Manifest.Name)
 			}
 			defaultProvider = candidate
 		}
 		if defaultProvider == nil {
-			return nil, fmt.Errorf("no trusted default virtualizer provider is installed; use <provider>:<context>")
+			return nil, fmt.Errorf("no trusted default manager provider is installed; use <provider>:<context>")
 		}
 		return defaultProvider, nil
 	}
 	provider, err := adapterStore().Load(name)
 	if err != nil {
-		return nil, fmt.Errorf("unknown virtualizer provider %s: %w", name, err)
+		return nil, fmt.Errorf("unknown manager provider %s: %w", name, err)
 	}
-	if !provider.IsRuntime("virtualizer") {
-		return nil, fmt.Errorf("adapter %s is not a virtualizer provider", name)
+	if !provider.IsRuntime("manager") {
+		return nil, fmt.Errorf("adapter %s is not a manager provider", name)
 	}
 	return provider, nil
 }
@@ -491,7 +491,7 @@ func requireEndpointCapability(value endpoint, operation string, stderr io.Write
 	if endpointSupports(value, operation) {
 		return 0
 	}
-	fmt.Fprintf(stderr, "ctx: virtualizer provider %s does not support %s\n", value.Provider.Manifest.Name, operation)
+	fmt.Fprintf(stderr, "ctx: manager provider %s does not support %s\n", value.Provider.Manifest.Name, operation)
 	return 2
 }
 
@@ -504,7 +504,7 @@ func endpointSupports(value endpoint, operation string) bool {
 		return true
 	}
 	defer system.Close()
-	inventory, err := system.ResolveInventory(context.Background(), "virtualizer")
+	inventory, err := system.ResolveInventory(context.Background(), "manager")
 	if err != nil || !inventory.FreshWithin(5*time.Second) {
 		return true
 	}
@@ -537,7 +537,12 @@ func (value endpoint) environment() map[string]string {
 		environment[key] = ""
 	}
 	if value.Instance != nil && value.Instance.Address != "" {
-		environment["CTX_VIRTUALIZER_ADDRESS"] = value.Instance.Address
+		environment["CTX_MANAGER_ADDRESS"] = value.Instance.Address
+	}
+	if value.Instance != nil {
+		for key, val := range managerInstanceEnvironment(*value.Instance) {
+			environment[key] = val
+		}
 	}
 	return environment
 }
@@ -547,7 +552,7 @@ func (value endpoint) description() string {
 	if value.Instance == nil {
 		return selection
 	}
-	return fmt.Sprintf("@%s (%s via %s)", value.Instance.Name, virtualizerDescription(*value.Instance), selection)
+	return fmt.Sprintf("@%s (%s via %s)", value.Instance.Name, managerDescription(*value.Instance), selection)
 }
 
 func showTransferEndpoints(stderr io.Writer, source, target endpoint) {

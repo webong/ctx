@@ -65,10 +65,10 @@ func setContext(resolver *config.Resolver, args []string, stdout, stderr io.Writ
 			fmt.Fprintf(stderr, "ctx: unknown selector %s\n", selector)
 			return 2
 		}
-		if candidate.IsRuntime("virtualizer") {
+		if candidate.IsRuntime("manager") {
 			global := len(options) == 1 && options[0] == "--global"
 			if len(options) != 0 && !global {
-				fmt.Fprintln(stderr, "ctx: virtualizer provider set only accepts --global")
+				fmt.Fprintln(stderr, "ctx: manager provider set only accepts --global")
 				return 2
 			}
 			if code := invokeAdapter(resolver, candidate, "validate", selection, nil, "", io.Discard, stderr); code != 0 {

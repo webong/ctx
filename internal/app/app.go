@@ -102,8 +102,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return adapterCommand(resolver, args[1:], stdout, stderr)
 	case "computer":
 		return computerCommand(args[1:], stdout, stderr)
-	case "virtualizer":
-		return virtualizerCommand(resolver, args[1:], stdout, stderr)
+	case "manager":
+		return managerCommand(resolver, args[1:], stdout, stderr)
 	case "plugin":
 		if len(args) < 2 || args[1] != "computer" {
 			fmt.Fprintln(stderr, "ctx: plugin requires computer <adapter> [arguments...]")
@@ -184,16 +184,19 @@ usage:
   ctx profile <ls|show|use|set|unset|env|env-unset|clear> [arguments...]
   ctx adapter <ls [runtime|surface]|available|add|refresh|inspect|build|pack|index|install|trust|test|doctor|remove> [arguments...]
   ctx computer hooks <print|install|remove> <adapter> [--events <name,...>] [--handler <executable>]
-  ctx virtualizer add <name> --provider <adapter> --selection <context>
+  ctx manager add <name> --provider <adapter> --selection <context>
       [--virtualizer <product>] [--machine <vm>] [--address <adapter-address>]
-  ctx virtualizer <ls|show|remove> [name]
+      [--command </absolute/path>] [--plugin-dir </absolute/path>]
+      [--plugin buildx=</absolute/path>] [--plugin compose=</absolute/path>]
+      [--offline]
+  ctx manager <ls|show|doctor|remove> [name]
   ctx setup [adapters] [--all|--minimal|--adapters <name,...>]
   ctx ls <selector>
   ctx open [URL...]
   ctx doctor
   ctx build [provider|@instance] --cache-ref <registry-ref> [--] <build arguments>
-  ctx share:virtualizer image <sync|copy> <source> <target> <image>...
-  ctx share:virtualizer volume <export|import|copy> [arguments...]
+  ctx share:manager image <sync|copy> <source> <target> <image>...
+  ctx share:manager volume <export|import|copy> [arguments...]
       endpoints: @instance or provider:selection
   ctx share:browser cookie list [--from <browser:profile>] --site <URL>
   ctx share:browser cookie copy [--from <browser:profile>] --site <URL> --name <cookie>
@@ -210,7 +213,8 @@ usage:
   ctx run -- <command> [arguments...]
   ctx shell [--shell <executable>] [-- <command> [arguments...]]
   ctx graph scan
-  ctx graph <scan|resolve|status|vertices|edges|snapshot|changes> [arguments...]
+  ctx graph resolve [runtime|all] [capability...] [--supports <kind>]
+  ctx graph <scan|status|vertices|edges|snapshot|changes> [arguments...]
   ctx version`)
 }
 

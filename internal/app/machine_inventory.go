@@ -45,7 +45,7 @@ func scanMachineInventory(resolver *config.Resolver, system *systemgraph.Graph) 
 	if system == nil {
 		return observations, nil
 	}
-	registry, err := readVirtualizerRegistry()
+	registry, err := readManagerRegistry()
 	if err != nil {
 		return observations, err
 	}
@@ -59,7 +59,7 @@ func scanMachineInventory(resolver *config.Resolver, system *systemgraph.Graph) 
 			metadata["machine"] = instance.Machine
 		}
 		aliases = append(aliases, systemgraph.AliasObservation{
-			Space: "virtualizer", Name: instance.Name, Adapter: instance.Provider,
+			Space: "manager", Name: instance.Name, Adapter: instance.Provider,
 			Selection: instance.Selection, Metadata: metadata,
 		})
 	}
@@ -76,6 +76,7 @@ func observeAdapterCandidate(resolver *config.Resolver, store *modpkg.Store, can
 		Selector:         candidate.Manifest.SelectorKey,
 		Surfaces:         append([]string(nil), candidate.Manifest.Surfaces...),
 		Capabilities:     append([]string(nil), candidate.Manifest.Capabilities...),
+		Supports:         append([]string(nil), candidate.Manifest.Supports...),
 		Trusted:          trusted,
 		ListSupported:    candidate.HasCapability("list"),
 		ObserveSupported: candidate.HasCapability("observe"),
@@ -88,7 +89,7 @@ func observeAdapterCandidate(resolver *config.Resolver, store *modpkg.Store, can
 		var output boundedObservationBuffer
 		var adapterError boundedObservationBuffer
 		if code := invokeAdapter(resolver, candidate, "observe", "", nil, "", &output, &adapterError); code == 0 {
-			contexts, resources, relations, parseErr := parseAdapterObservation(output.Bytes(), candidate.Manifest.Capabilities)
+			contexts, resources, relations, parseErr := parseAdapterObservation(output.Bytes(), candidate.Manifest.Capabilities, candidate.Manifest.Supports)
 			if parseErr != nil {
 				observation.DiscoveryStatus = "invalid-response"
 			} else {
@@ -107,7 +108,7 @@ func observeAdapterCandidate(resolver *config.Resolver, store *modpkg.Store, can
 		if code := invokeAdapter(resolver, candidate, "list", "", nil, "", &output, &adapterError); code == 0 {
 			observation.Listed = true
 			observation.DiscoveryStatus = "ok"
-			if candidate.IsRuntime("browser") || candidate.IsRuntime("virtualizer") {
+			if candidate.IsRuntime("browser") || candidate.IsRuntime("manager") {
 				seen := map[string]bool{}
 				for _, line := range strings.Split(output.String(), "\n") {
 					selection := strings.TrimSuffix(line, "\r")
@@ -167,10 +168,10 @@ func freshMachineInventory(resolver *config.Resolver) (systemgraph.Inventory, er
 	return system.ResolveInventory(context.Background(), "")
 }
 
-func printDiscoveredVirtualizers(inventory systemgraph.Inventory, stdout io.Writer) int {
+func printDiscoveredManagers(inventory systemgraph.Inventory, stdout io.Writer) int {
 	count := 0
 	for _, candidate := range inventory.Contexts {
-		if candidate.Runtime != "virtualizer" || candidate.Selection == "" {
+		if candidate.Runtime != "manager" || candidate.Selection == "" {
 			continue
 		}
 		fmt.Fprintf(stdout, "%s:%s\n", candidate.Adapter, candidate.Selection)

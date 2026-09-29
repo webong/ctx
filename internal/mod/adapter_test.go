@@ -23,7 +23,7 @@ func fixtureAdapter(t *testing.T, root, name, runtimeName string) string {
 		capabilities = "list,validate,open,doctor"
 		surfaces = "web"
 		commands = ""
-	} else if runtimeName == "virtualizer" {
+	} else if runtimeName == "manager" {
 		capabilities = "list,validate,run,doctor,image_save"
 	}
 	manifest := `api_version = "2.0"
@@ -103,14 +103,14 @@ func TestManifestRuntimeAndSurface(t *testing.T) {
 }
 
 func TestLegacyKindIsTranslated(t *testing.T) {
-	directory := fixtureAdapter(t, t.TempDir(), "engine", "virtualizer")
+	directory := fixtureAdapter(t, t.TempDir(), "engine", "manager")
 	manifestPath := filepath.Join(directory, "adapter.toml")
 	contents, err := os.ReadFile(manifestPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	legacy := strings.ReplaceAll(string(contents), `api_version = "2.0"`, `api_version = "1"`)
-	legacy = strings.ReplaceAll(legacy, "runtime = \"virtualizer\"\n", "kind = \"container\"\n")
+	legacy = strings.ReplaceAll(legacy, "runtime = \"manager\"\n", "kind = \"container\"\n")
 	legacy = strings.ReplaceAll(legacy, "surfaces = \"shell\"\n", "")
 	if err := os.WriteFile(manifestPath, []byte(legacy), 0o644); err != nil {
 		t.Fatal(err)
@@ -119,7 +119,7 @@ func TestLegacyKindIsTranslated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !loaded.IsRuntime("virtualizer") || !loaded.SupportsSurface("shell") {
+	if !loaded.IsRuntime("manager") || !loaded.SupportsSurface("shell") {
 		t.Fatalf("legacy manifest was not translated: %#v", loaded.Manifest)
 	}
 }
@@ -143,8 +143,8 @@ func TestAPIV2RejectsKind(t *testing.T) {
 	}
 }
 
-func TestVirtualizerProviderCommandProtocol(t *testing.T) {
-	directory := fixtureAdapter(t, t.TempDir(), "engine", "virtualizer")
+func TestManagerProviderCommandProtocol(t *testing.T) {
+	directory := fixtureAdapter(t, t.TempDir(), "engine", "manager")
 	loaded, err := LoadDirectory(directory)
 	if err != nil {
 		t.Fatal(err)

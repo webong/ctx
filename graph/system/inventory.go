@@ -21,7 +21,7 @@ import (
 type AdapterObservation struct {
 	Name, Runtime, Selector                          string
 	DiscoveryStatus                                  string
-	Surfaces, Capabilities                           []string
+	Surfaces, Capabilities, Supports                 []string
 	Trusted, ListSupported, ObserveSupported, Listed bool
 	Contexts                                         []ContextObservation
 	Resources                                        []ResourceObservation
@@ -29,10 +29,11 @@ type AdapterObservation struct {
 }
 
 // ContextObservation is a native adapter selection with optional narrower
-// capabilities and ordinary, non-secret metadata.
+// capabilities and resource support, plus ordinary non-secret metadata.
 type ContextObservation struct {
 	Selection    string         `json:"selection"`
 	Capabilities []string       `json:"capabilities,omitempty"`
+	Supports     []string       `json:"supports,omitempty"`
 	Attributes   map[string]any `json:"attributes,omitempty"`
 }
 
@@ -76,10 +77,12 @@ func (g *Graph) ObserveInventory(ctx context.Context, adapters []AdapterObservat
 		}
 		adapterID := "adapter/" + adapter.Name
 		capabilities := append([]string(nil), adapter.Capabilities...)
+		supports := append([]string(nil), adapter.Supports...)
 		surfaces := append([]string(nil), adapter.Surfaces...)
 		sort.Strings(capabilities)
+		sort.Strings(supports)
 		sort.Strings(surfaces)
-		vertices[adapterID] = graph.Vertex{ID: adapterID, Kind: Namespace + "/adapter", Attributes: map[string]any{"name": adapter.Name, "runtime": adapter.Runtime, "surfaces": surfaces, "selector": adapter.Selector, "trusted": adapter.Trusted, "list_supported": adapter.ListSupported, "observe_supported": adapter.ObserveSupported, "listed": adapter.Listed, "discovery_status": adapter.DiscoveryStatus}, Provenance: graph.Provenance{Source: "ctx", Operation: "adapter-inventory", At: now}}
+		vertices[adapterID] = graph.Vertex{ID: adapterID, Kind: Namespace + "/adapter", Attributes: map[string]any{"name": adapter.Name, "runtime": adapter.Runtime, "surfaces": surfaces, "supports": supports, "selector": adapter.Selector, "trusted": adapter.Trusted, "list_supported": adapter.ListSupported, "observe_supported": adapter.ObserveSupported, "listed": adapter.Listed, "discovery_status": adapter.DiscoveryStatus}, Provenance: graph.Provenance{Source: "ctx", Operation: "adapter-inventory", At: now}}
 		edgeID := "machine-adapter/" + adapter.Name
 		edges[edgeID] = graph.Edge{ID: edgeID, From: "machine/local", To: adapterID, Type: Namespace + "/has-adapter"}
 		for _, capability := range capabilities {
@@ -87,6 +90,12 @@ func (g *Graph) ObserveInventory(ctx context.Context, adapters []AdapterObservat
 			vertices[capabilityID] = graph.Vertex{ID: capabilityID, Kind: Namespace + "/capability", Attributes: map[string]any{"name": capability}, Provenance: graph.Provenance{Source: "ctx", Operation: "adapter-declared", At: now}}
 			edgeID := "adapter-capability/" + digest(adapter.Name+"\x00"+capability)
 			edges[edgeID] = graph.Edge{ID: edgeID, From: adapterID, To: capabilityID, Type: Namespace + "/supports"}
+		}
+		for _, kind := range supports {
+			supportID := "support/" + digest(kind)
+			vertices[supportID] = graph.Vertex{ID: supportID, Kind: Namespace + "/support", Attributes: map[string]any{"name": kind}, Provenance: graph.Provenance{Source: "ctx", Operation: "adapter-declared", At: now}}
+			edgeID := "adapter-support/" + digest(adapter.Name+"\x00"+kind)
+			edges[edgeID] = graph.Edge{ID: edgeID, From: adapterID, To: supportID, Type: Namespace + "/supports-kind"}
 		}
 		if !adapter.Trusted || !adapter.Listed {
 			continue
@@ -100,6 +109,9 @@ func (g *Graph) ObserveInventory(ctx context.Context, adapters []AdapterObservat
 			attributes := map[string]any{"adapter": adapter.Name, "runtime": adapter.Runtime, "selection_digest": digest(selection)}
 			if context.Capabilities != nil {
 				attributes["capabilities"] = context.Capabilities
+			}
+			if context.Supports != nil {
+				attributes["supports"] = context.Supports
 			}
 			if len(context.Attributes) > 0 {
 				attributes["metadata"] = context.Attributes
@@ -206,7 +218,7 @@ func (g *Graph) ObserveInventory(ctx context.Context, adapters []AdapterObservat
 
 func isInventoryVertex(vertex graph.Vertex) bool {
 	switch vertex.Kind {
-	case Namespace + "/inventory", Namespace + "/adapter", Namespace + "/capability", Namespace + "/context", Namespace + "/resource", Namespace + "/alias":
+	case Namespace + "/inventory", Namespace + "/adapter", Namespace + "/capability", Namespace + "/support", Namespace + "/context", Namespace + "/resource", Namespace + "/alias":
 		return true
 	}
 	return false
@@ -214,7 +226,7 @@ func isInventoryVertex(vertex graph.Vertex) bool {
 
 func isInventoryEdge(edge graph.Edge) bool {
 	switch edge.Type {
-	case Namespace + "/has-adapter", Namespace + "/supports", Namespace + "/offers", Namespace + "/contains", Namespace + "/relates", Namespace + "/resolves-to":
+	case Namespace + "/has-adapter", Namespace + "/supports", Namespace + "/supports-kind", Namespace + "/offers", Namespace + "/contains", Namespace + "/relates", Namespace + "/resolves-to":
 		return true
 	}
 	return false

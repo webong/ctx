@@ -128,8 +128,8 @@ echo %*
         Assert-Output 'Docker native-default routing' 'ps' @(& $ctx run docker ps)
         Assert-Success 'Docker native-default routing'
         & $ctx set docker alpha | Out-Null; Assert-Success 'Docker selection restore'
-        if (@(& $ctx ls virtualizer) -notcontains 'docker:alpha') { throw 'virtualizer provider listing did not include docker:alpha' }
-        Assert-Success 'virtualizer provider listing'
+        if (@(& $ctx ls manager) -notcontains 'docker:alpha') { throw 'manager provider listing did not include docker:alpha' }
+        Assert-Success 'manager provider listing'
         & $ctx doctor | Out-Null; Assert-Success 'ctx doctor'
     }
     finally {

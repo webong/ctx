@@ -29,7 +29,7 @@ type adapterObservationDocument struct {
 	} `json:"relations,omitempty"`
 }
 
-func parseAdapterObservation(data []byte, declared []string) ([]systemgraph.ContextObservation, []systemgraph.ResourceObservation, []systemgraph.RelationObservation, error) {
+func parseAdapterObservation(data []byte, declaredCapabilities, declaredSupports []string) ([]systemgraph.ContextObservation, []systemgraph.ResourceObservation, []systemgraph.RelationObservation, error) {
 	if len(data) > maxAdapterObservationBytes {
 		return nil, nil, nil, fmt.Errorf("adapter observation exceeds 1 MiB")
 	}
@@ -50,8 +50,12 @@ func parseAdapterObservation(data []byte, declared []string) ([]systemgraph.Cont
 		return nil, nil, nil, fmt.Errorf("adapter observation has too many records")
 	}
 	capabilities := map[string]bool{}
-	for _, capability := range declared {
+	for _, capability := range declaredCapabilities {
 		capabilities[capability] = true
+	}
+	supports := map[string]bool{}
+	for _, kind := range declaredSupports {
+		supports[kind] = true
 	}
 	contexts := map[string]bool{}
 	for _, item := range document.Contexts {
@@ -66,6 +70,13 @@ func parseAdapterObservation(data []byte, declared []string) ([]systemgraph.Cont
 			if !capabilities[capability] {
 				return nil, nil, nil, fmt.Errorf("adapter context declares undeclared capability %q", capability)
 			}
+		}
+		seenSupports := map[string]bool{}
+		for _, kind := range item.Supports {
+			if !supports[kind] || seenSupports[kind] {
+				return nil, nil, nil, fmt.Errorf("adapter context declares undeclared or duplicate support %q", kind)
+			}
+			seenSupports[kind] = true
 		}
 	}
 	resources := make([]systemgraph.ResourceObservation, 0, len(document.Resources))

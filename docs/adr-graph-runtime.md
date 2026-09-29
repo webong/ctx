@@ -89,7 +89,9 @@ Successful browser opens add the provider, profile, and URL origin. URL paths,
 query strings, fragments, arbitrary environment values, and shell history are
 not collected. `ctx graph scan` records installed adapters, their declared
 capabilities and surfaces, and versioned observations from trusted adapters.
-The fallback `list` collector handles existing browser and virtualizer adapters.
+The fallback `list` collector handles existing browser and manager adapters.
+Adapters also project declared resource support, such as `virtualizer` and
+`container`, separately from executable capabilities.
 The CLI owns native adapter probing; the public package accepts generic
 contexts, resources, and relationships and projects them under the machine and
 adapter. Named aliases are recorded as declarations. Each scan reconciles

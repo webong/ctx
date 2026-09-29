@@ -171,10 +171,12 @@ func addCatalogAdapter(name string) (*modpkg.Adapter, error) {
 	}
 	store := adapterStore()
 	var installed *modpkg.Adapter
-	if _, loadErr := store.Load(name); loadErr == nil {
+	if _, statErr := os.Lstat(filepath.Join(store.Home, name)); statErr == nil {
 		installed, err = store.Replace(source.Directory)
-	} else {
+	} else if errors.Is(statErr, os.ErrNotExist) {
 		installed, err = store.Install(source.Directory)
+	} else {
+		return nil, statErr
 	}
 	if err != nil {
 		return nil, err
@@ -189,18 +191,24 @@ func addCatalogAdapter(name string) (*modpkg.Adapter, error) {
 }
 
 func refreshCatalogAdapters(stdout io.Writer) error {
-	installed, err := adapterStore().List()
+	installed, err := os.ReadDir(adapterStore().Home)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}
-	for _, candidate := range installed {
-		if _, err := catalogStore().Load(candidate.Manifest.Name); err != nil {
+	for _, entry := range installed {
+		if !entry.IsDir() {
 			continue
 		}
-		if _, err := addCatalogAdapter(candidate.Manifest.Name); err != nil {
+		if _, err := catalogStore().Load(entry.Name()); err != nil {
+			continue
+		}
+		if _, err := addCatalogAdapter(entry.Name()); err != nil {
 			return err
 		}
-		fmt.Fprintf(stdout, "refreshed adapter %s\n", candidate.Manifest.Name)
+		fmt.Fprintf(stdout, "refreshed adapter %s\n", entry.Name())
 	}
 	return nil
 }

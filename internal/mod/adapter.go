@@ -31,7 +31,7 @@ var validComputerHookEvent = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9]*$`)
 
 var reservedNames = map[string]bool{
 	"browser": true, "container": true, "profile": true, "shell": true, "env": true, "image": true,
-	"volume": true, "build": true, "adapter": true, "share": true, "computer": true, "virtualizer": true,
+	"volume": true, "build": true, "adapter": true, "share": true, "computer": true, "manager": true,
 }
 
 type Manifest struct {
@@ -43,6 +43,7 @@ type Manifest struct {
 	ExecutableWindows    string
 	Description          string
 	Capabilities         []string
+	Supports             []string
 	SelectorKey          string
 	ExtraKeys            []string
 	Commands             []string
@@ -103,6 +104,7 @@ func LoadDirectoryForOS(directory, goos string) (*Adapter, error) {
 		ExecutableWindows:    values["executable_windows"],
 		Description:          values["description"],
 		Capabilities:         splitList(values["capabilities"]),
+		Supports:             splitList(values["supports"]),
 		SelectorKey:          values["selector_key"],
 		ExtraKeys:            splitList(values["extra_keys"]),
 		Commands:             splitList(values["commands"]),
@@ -237,7 +239,7 @@ func normalizeLegacyManifest(manifest *Manifest, kind string) error {
 		manifest.Runtime = "browser"
 		manifest.Surfaces = []string{"web"}
 	case "container":
-		manifest.Runtime = "virtualizer"
+		manifest.Runtime = "manager"
 		manifest.Surfaces = []string{"shell"}
 	default:
 		return fmt.Errorf("adapter %s has invalid legacy kind %s", manifest.Name, kind)
@@ -485,7 +487,7 @@ func validateManifest(manifest Manifest, directory, goos string) error {
 	if !validName.MatchString(manifest.Name) || reservedNames[manifest.Name] {
 		return fmt.Errorf("invalid or reserved adapter name %s", manifest.Name)
 	}
-	if manifest.Runtime != "computer" && manifest.Runtime != "virtualizer" && manifest.Runtime != "browser" {
+	if manifest.Runtime != "computer" && manifest.Runtime != "manager" && manifest.Runtime != "browser" {
 		return fmt.Errorf("adapter %s has invalid runtime %s", manifest.Name, manifest.Runtime)
 	}
 	if len(manifest.Surfaces) == 0 {
@@ -501,8 +503,8 @@ func validateManifest(manifest Manifest, directory, goos string) error {
 	if hasComputerEndpoint(manifest) && manifest.Runtime != "computer" {
 		return fmt.Errorf("adapter %s computer endpoint requires the computer runtime", manifest.Name)
 	}
-	if manifest.DefaultProvider && manifest.Runtime != "virtualizer" {
-		return fmt.Errorf("adapter %s can only be a default provider for the virtualizer runtime", manifest.Name)
+	if manifest.DefaultProvider && manifest.Runtime != "manager" {
+		return fmt.Errorf("adapter %s can only be a default provider for the manager runtime", manifest.Name)
 	}
 	if !hasComputerEndpoint(manifest) && manifest.SelectorKey == "" {
 		return fmt.Errorf("adapter %s must declare a selector key", manifest.Name)
@@ -579,7 +581,7 @@ func validateManifest(manifest Manifest, directory, goos string) error {
 	}
 	seenShareSpaces := map[string]bool{}
 	for _, space := range manifest.ShareSpaces {
-		if !validName.MatchString(space) || space == "virtualizer" || space == "container" || (space == "browser" && manifest.Runtime != "browser") || space == "computer" || seenShareSpaces[space] {
+		if !validName.MatchString(space) || space == "manager" || space == "container" || (space == "browser" && manifest.Runtime != "browser") || space == "computer" || seenShareSpaces[space] {
 			return fmt.Errorf("adapter %s has invalid or duplicate share space %s", manifest.Name, space)
 		}
 		seenShareSpaces[space] = true
@@ -631,6 +633,13 @@ func validateManifest(manifest Manifest, directory, goos string) error {
 		default:
 			return fmt.Errorf("adapter %s declares unknown capability %s", manifest.Name, capability)
 		}
+	}
+	seenSupports := map[string]bool{}
+	for _, kind := range manifest.Supports {
+		if !validName.MatchString(kind) || seenSupports[kind] {
+			return fmt.Errorf("adapter %s declares invalid or duplicate support %s", manifest.Name, kind)
+		}
+		seenSupports[kind] = true
 	}
 	return nil
 }

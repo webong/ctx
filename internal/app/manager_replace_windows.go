@@ -4,7 +4,7 @@ package app
 
 import "os"
 
-func replaceVirtualizerRegistry(source, target string) error {
+func replaceManagerRegistry(source, target string) error {
 	if err := os.Remove(target); err != nil && !os.IsNotExist(err) {
 		return err
 	}

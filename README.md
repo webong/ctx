@@ -34,10 +34,19 @@ command runs through ctx or one of its container shims.
   core.
 - Keep credentials in the native tools; ctx stores selectors, not secrets.
 
-Adapters describe one runtime—`computer`, `virtualizer`, or `browser`—and one
+Adapters describe one runtime—`computer`, `manager`, or `browser`—and one
 or more interaction surfaces: `shell` and `web`. Their capabilities decide what
 ctx can list, run, open, or share. This keeps tool-specific behavior in adapter
 packages while the core provides common discovery and routing.
+The runtime describes the adapter's role, not whether its implementation uses
+virtualization. Computer, manager, and browser adapters may each observe
+virtualized resources; capabilities and graph observations describe what is
+actually available.
+Adapters may declare `supports = "virtualizer,container"` independently of
+their runtime. `supports` describes resource kinds the native tool can manage;
+`capabilities` declares executable ctx operations. Inspect both with
+`ctx adapter inspect <name>`, or find observed contexts with
+`ctx graph resolve all --supports virtualizer`.
 
 ## What works today
 
@@ -45,7 +54,7 @@ packages while the core provides common discovery and routing.
 | --- | --- |
 | Project contexts | Select native tool contexts in `.ctx`, group selections in profiles, inspect resolution, and apply profile environment values to a command or child shell. |
 | Computer tools | Route Kubernetes, AWS, gcloud, PostgreSQL, and MySQL commands through their selected contexts. Claude Code and Codex adapters provide CLI shims, project hooks, and native plugin delegation. |
-| Virtualizers | Route Docker, Podman, nerdctl, and Apple Container commands. Register named engine connections, use supported registry build caches, and transfer images or named volumes between engines. |
+| Managers | Route Docker, Podman, nerdctl, and Apple Container commands. Register named engine connections, use supported registry build caches, and transfer images or named volumes between engines. |
 | Browsers | Open URLs in a selected Firefox, Chrome, Chromium, or Safari profile. Browser adapters can share the resources listed [below](#browser-sharing). |
 | System graph | Scan trusted adapters for available contexts and capabilities, resolve usable providers, and inspect or export the local inventory. Other services can import the graph and supervisor Go packages. |
 | Extensions | Install bundled or third-party adapters. A prebuilt, platform-specific adapter archive works with a bare ctx binary; building an adapter from Go source requires Go. |
@@ -124,7 +133,7 @@ List the contexts available for a tool, select one in the current project, and
 inspect the result:
 
 ```sh
-ctx ls virtualizer
+ctx ls manager
 ctx ls docker
 ctx set docker orbstack
 ctx status
@@ -255,10 +264,10 @@ follows the runtime-neutral decision boundary and local operator controls descri
 [Neura for Builders](https://www.neurarelay.com/builders) and
 [Neura Local settings](https://www.neurarelay.com/operators#neura-local-settings).
 
-## Virtualizer sharing and build caches
+## Manager sharing and build caches
 
 `ctx graph scan` discovers installed adapters and their declared capabilities.
-Trusted browser and virtualizer adapters can also supply named contexts. The
+Trusted browser and manager adapters can also supply named contexts. The
 inventory is available through `ctx graph vertices adapter`, `ctx graph
 vertices capability`, and `ctx graph vertices context`; it does not presume
 which providers or host products are installed.
@@ -269,19 +278,52 @@ connection, or namespace. `--virtualizer` and `--machine` add descriptive
 metadata when known; neither is required by the core.
 
 ```sh
-ctx virtualizer add orb --virtualizer orbstack --provider docker --selection orbstack
-ctx virtualizer add desktop --virtualizer docker-desktop --provider docker --selection desktop-linux
-ctx virtualizer add dev-vm --virtualizer utm --machine dev-vm --provider docker --selection utm-dev
-ctx virtualizer add local-apple --virtualizer apple-container --provider apple --selection local
-ctx virtualizer ls
-ctx virtualizer show dev-vm
+ctx manager add orb --virtualizer orbstack --provider docker --selection orbstack
+ctx manager add desktop --virtualizer docker-desktop --provider docker --selection desktop-linux
+ctx manager add dev-vm --virtualizer utm --machine dev-vm --provider docker --selection utm-dev
+ctx manager add local-apple --virtualizer apple-container --provider apple --selection local
+ctx manager ls
+ctx manager show dev-vm
 ```
+
+On macOS, Docker-based managers can use their own CLI and Compose/Buildx
+plugins without changing `~/.docker/cli-plugins` symlinks. For example:
+
+```sh
+ctx manager add rancher --virtualizer rancher-desktop --provider docker \
+  --selection rancher-desktop \
+  --command "$HOME/.rd/bin/docker" --plugin-dir "$HOME/.rd/bin"
+ctx set docker @rancher
+ctx run docker compose version
+ctx manager doctor
+```
+
+This Docker example applies when Rancher Desktop uses its Docker/Moby engine.
+With Rancher Desktop's containerd engine, use its `nerdctl` provider instead;
+there is no Rancher Docker daemon for ctx to select. Use the Docker context
+name shown by `ctx ls docker` for `--selection`; `rancher-desktop` is an
+example, not a guaranteed context name. `--plugin buildx=/absolute/path` and
+`--plugin compose=/absolute/path` can override individual plugins. ctx creates
+a temporary Docker config for each invocation, retaining your contexts and
+credentials while routing Compose/Buildx through that manager's directory.
+Ordinary Docker commands, including `docker login`, keep the normal config;
+an explicit Docker `--config` also takes precedence over plugin routing. ctx
+does not modify the global links. `ctx manager doctor` reports contested
+global links and the last recorded Rancher Desktop VM boot. It also checks
+available host disk space, but it does not repair an EXT4 filesystem or reset
+the VM; back up important volumes before attempting either repair.
+If the VM is down, add `--offline` to register its selection without contacting
+the engine; `ctx set docker @rancher` still requires it to be available.
+For the containerd mode, a registration can instead start with
+`ctx manager add rancher-ctr --virtualizer rancher-desktop --provider nerdctl
+--selection default --command "$HOME/.rd/bin/nerdctl" --offline`; verify the
+namespace with `ctx ls nerdctl` once the VM starts.
 
 For the maintained nerdctl adapter, pin the daemon address separately from its
 namespace:
 
 ```sh
-ctx virtualizer add local-containerd --virtualizer containerd --provider nerdctl \
+ctx manager add local-containerd --provider nerdctl \
   --selection default --address /run/containerd/containerd.sock
 ```
 
@@ -293,6 +335,13 @@ commands. `ctx` shows the resolved source and target before transferring.
 Native `provider:selection` endpoints continue to work without registration.
 The graph records aliases as declarations and contexts as adapter observations;
 share commands still validate the selected endpoint before transferring.
+This runtime rename is a clean break: use `ctx manager` and
+`ctx share:manager`, update external adapter manifests to `runtime = "manager"`,
+and recreate any named registrations previously stored in
+`$CTX_HOME/virtualizers.json`. Project selections such as `docker=orbstack`
+continue to use their adapter selector keys. Re-run the installer to refresh
+bundled adapter packages; replacing only the ctx binary leaves older packages
+with the removed runtime name.
 
 Share a registry-backed build cache using a registered instance:
 
@@ -305,7 +354,7 @@ ctx build @orb \
 Copy images between supported engines through a temporary archive:
 
 ```sh
-ctx share:virtualizer image copy \
+ctx share:manager image copy \
   @orb \
   @desktop \
   acme/api:dev
@@ -314,7 +363,7 @@ ctx share:virtualizer image copy \
 Copy a named volume between engines:
 
 ```sh
-ctx share:virtualizer volume copy \
+ctx share:manager volume copy \
   @orb \
   @dev-vm \
   postgres-data \
@@ -323,12 +372,11 @@ ctx share:virtualizer volume copy \
 
 `image sync` pushes and pulls a registry reference when both adapters support
 it, and falls back to an archive transfer otherwise. `image copy` always uses
-an archive. `ctx share:container` is an alias for `ctx share:virtualizer`.
-You can also stream a named volume through a file or pipe:
+an archive. You can also stream a named volume through a file or pipe:
 
 ```sh
-ctx share:virtualizer volume export @orb postgres-data > postgres-data.tar
-ctx share:virtualizer volume import @desktop restored-data < postgres-data.tar
+ctx share:manager volume export @orb postgres-data > postgres-data.tar
+ctx share:manager volume import @desktop restored-data < postgres-data.tar
 ```
 
 Volume copy is a point-in-time migration, not live synchronization. Stop or
@@ -447,7 +495,7 @@ ctx ships maintained adapters for:
 
 | Family | Adapters |
 | --- | --- |
-| Virtualizers | Docker, Podman, nerdctl/containerd, Apple Container |
+| Managers | Docker, Podman, nerdctl/containerd, Apple Container |
 | Browsers | Firefox, Chrome, Chromium, Safari |
 | Cloud and orchestration | Kubernetes, AWS, gcloud |
 | Databases | PostgreSQL, MySQL |
@@ -525,10 +573,10 @@ See [Adapters](adapters/README.md) for the bundled packages and
 | `ctx adapter pack <directory>` | Archive an already built adapter package |
 | `ctx adapter index <output> <archives...>` | Create a platform index with archive checksums |
 | `ctx adapter install <source>` | Install a local directory, archive, or pinned HTTPS package |
-| `ctx virtualizer <add|ls|show|remove> ...` | Register named virtualizer instances for sharing and builds |
-| `ctx build [provider|@instance] --cache-ref <ref> -- <args>` | Build with a registry-backed cache on a capable virtualizer |
-| `ctx share:virtualizer image <sync|copy> ...` | Transfer images through installed virtualizer providers |
-| `ctx share:virtualizer volume <export|import|copy> ...` | Transfer named volumes through installed virtualizer providers |
+| `ctx manager <add|ls|show|doctor|remove> ...` | Register named manager instances and diagnose their toolchains |
+| `ctx build [provider|@instance] --cache-ref <ref> -- <args>` | Build with a registry-backed cache on a capable manager |
+| `ctx share:manager image <sync|copy> ...` | Transfer images through installed manager providers |
+| `ctx share:manager volume <export|import|copy> ...` | Transfer named volumes through installed manager providers |
 | `ctx share:browser cookie <list|copy|import> ...` | List, export, or import one site cookie through browser adapters |
 | `ctx share:browser policy export ...` | Export browser policy sources to a protected bundle or pipe |
 | `ctx share:browser certificate <list|export|copy|import> ...` | Share an exportable certificate through a capable browser adapter |
@@ -540,6 +588,7 @@ See [Adapters](adapters/README.md) for the bundled packages and
 | `ctx graph status` | Show the local system graph revision and size |
 | `ctx graph scan` | Refresh the machine's adapter, capability, and context inventory |
 | `ctx graph resolve [runtime|all] [capability...]` | Discover usable contexts from the refreshed graph |
+| `ctx graph resolve all --supports <kind>` | Find observed contexts whose adapter supports a resource kind |
 | `ctx graph vertices [kind]` | Inspect observed graph vertices |
 | `ctx graph edges [relationship]` | Inspect observed graph relationships |
 | `ctx graph snapshot` | Export the CTX system graph as JSON |
@@ -558,16 +607,16 @@ shell history, and browser credentials are not collected.
 
 `ctx graph scan` asks trusted installed adapters for their available contexts
 and ordinary resource metadata. Adapters declaring `observe` return versioned
-JSON; older browser and virtualizer adapters use their line-oriented `list`
+JSON; older browser and manager adapters use their line-oriented `list`
 output. The scan reconciles removed contexts and records when it ran.
-`ctx graph resolve virtualizer image_save` returns contexts that currently offer that
-capability. `ctx ls`, `ctx status`, browser share, virtualizer share, and build
+`ctx graph resolve manager image_save` returns contexts that currently offer that
+capability. `ctx ls`, `ctx status`, browser share, manager share, and build
 read the graph projection; adapter trust and live validation still govern each
 operation.
 `ctx status` marks a selected browser or adapter context `[observed]` when the
 current graph scan found it.
 
-An unqualified virtualizer context resolves to the sole observed provider when
+An unqualified manager context resolves to the sole observed provider when
 there is one; ambiguous names require `provider:context` or a registered
 `@instance`. Build can choose the sole observed provider that offers `build`.
 
@@ -606,8 +655,8 @@ the repository's local exclude list instead of modifying `.gitignore`.
 Global defaults, project mappings, profiles, and profile environments live in
 `$HOME/.config/ctx/config.toml` on macOS and Linux, and
 `$env:APPDATA\ctx\config.toml` on Windows. `CTX_HOME` overrides the containing
-directory. A virtualizer's global fallback can be set with
-`ctx set docker <context> --global` (or another capable virtualizer adapter).
+directory. A manager's global fallback can be set with
+`ctx set docker <context> --global` (or another capable manager adapter).
 
 Resolution follows this order:
 
