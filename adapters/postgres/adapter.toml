@@ -1,5 +1,7 @@
-api_version = "1"
+api_version = "2.0"
 name = "postgres"
+runtime = "computer"
+surfaces = "shell"
 executable = "ctx-postgres"
 executable_windows = "ctx-postgres.ps1"
 description = "First-party PostgreSQL service adapter"

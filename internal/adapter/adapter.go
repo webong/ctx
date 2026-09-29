@@ -17,20 +17,24 @@ import (
 	"strings"
 )
 
-const APIVersion = "1"
+const APIVersion = "2.0"
+
+const legacyAPIVersion = "1"
+const legacyDecimalAPIVersion = "1.0"
 
 var validName = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 var validEnvironmentName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 var reservedNames = map[string]bool{
 	"browser": true, "container": true, "profile": true, "shell": true, "env": true, "image": true,
-	"volume": true, "build": true, "adapter": true, "share": true, "computer": true,
+	"volume": true, "build": true, "adapter": true, "share": true, "computer": true, "virtualizer": true,
 }
 
 type Manifest struct {
 	APIVersion           string
 	Name                 string
-	Kind                 string
+	Runtime              string
+	Surfaces             []string
 	Executable           string
 	ExecutableWindows    string
 	Description          string
@@ -79,7 +83,8 @@ func LoadDirectory(directory string) (*Adapter, error) {
 	manifest := Manifest{
 		APIVersion:           values["api_version"],
 		Name:                 values["name"],
-		Kind:                 values["kind"],
+		Runtime:              values["runtime"],
+		Surfaces:             splitList(values["surfaces"]),
 		Executable:           values["executable"],
 		ExecutableWindows:    values["executable_windows"],
 		Description:          values["description"],
@@ -93,17 +98,21 @@ func LoadDirectory(directory string) (*Adapter, error) {
 		OverrideEnv:          splitList(values["override_env"]),
 		DefaultProvider:      values["default_provider"] == "true",
 	}
-	if manifest.Kind == "" && !hasComputerEndpoint(manifest) {
-		manifest.Kind = "selector"
+	if manifest.APIVersion == legacyAPIVersion || manifest.APIVersion == legacyDecimalAPIVersion {
+		if err := normalizeLegacyManifest(&manifest, values["kind"]); err != nil {
+			return nil, err
+		}
+	} else if values["kind"] != "" {
+		return nil, fmt.Errorf("adapter %s uses removed manifest field kind; declare runtime and surfaces", manifest.Name)
 	}
-	if manifest.SelectorKey == "" && manifest.Kind != "" {
-		if manifest.Kind == "browser" {
+	if manifest.SelectorKey == "" && !hasComputerEndpoint(manifest) {
+		if manifest.Runtime == "browser" {
 			manifest.SelectorKey = "browser"
 		} else {
 			manifest.SelectorKey = manifest.Name
 		}
 	}
-	if len(manifest.Commands) == 0 && (manifest.Kind == "selector" || manifest.Kind == "container") {
+	if len(manifest.Commands) == 0 && manifest.SelectorKey != "" && manifest.Runtime != "browser" {
 		manifest.Commands = []string{manifest.Name}
 	}
 	if contains(manifest.Capabilities, "share") && len(manifest.ShareSpaces) == 0 {
@@ -156,6 +165,18 @@ func (a *Adapter) HasCapability(capability string) bool {
 	return contains(a.Manifest.Capabilities, capability) || a.HasComputerCapability(capability)
 }
 
+func (a *Adapter) IsRuntime(runtimeName string) bool {
+	return a.Manifest.Runtime == runtimeName
+}
+
+func (a *Adapter) SupportsSurface(surface string) bool {
+	return contains(a.Manifest.Surfaces, surface)
+}
+
+func (a *Adapter) IsSelectable() bool {
+	return a.Manifest.SelectorKey != ""
+}
+
 func (a *Adapter) HasCommand(command string) bool {
 	return contains(a.Manifest.Commands, command)
 }
@@ -174,6 +195,31 @@ func (a *Adapter) IsComputerEndpoint() bool {
 
 func hasComputerEndpoint(manifest Manifest) bool {
 	return len(manifest.ComputerCommands) > 0 || len(manifest.ComputerCapabilities) > 0
+}
+
+func normalizeLegacyManifest(manifest *Manifest, kind string) error {
+	if kind == "" {
+		if hasComputerEndpoint(*manifest) {
+			manifest.Runtime = "computer"
+			manifest.Surfaces = []string{"shell"}
+			return nil
+		}
+		kind = "selector"
+	}
+	switch kind {
+	case "selector":
+		manifest.Runtime = "computer"
+		manifest.Surfaces = []string{"shell"}
+	case "browser":
+		manifest.Runtime = "browser"
+		manifest.Surfaces = []string{"web"}
+	case "container":
+		manifest.Runtime = "virtualizer"
+		manifest.Surfaces = []string{"shell"}
+	default:
+		return fmt.Errorf("adapter %s has invalid legacy kind %s", manifest.Name, kind)
+	}
+	return nil
 }
 
 func (a *Adapter) ConfigKeys() []string {
@@ -410,25 +456,35 @@ func parseManifest(path string) (map[string]string, error) {
 }
 
 func validateManifest(manifest Manifest, directory string) error {
-	if manifest.APIVersion != APIVersion {
+	if manifest.APIVersion != APIVersion && manifest.APIVersion != legacyAPIVersion && manifest.APIVersion != legacyDecimalAPIVersion {
 		return fmt.Errorf("adapter %s uses unsupported API %s (expected %s)", manifest.Name, manifest.APIVersion, APIVersion)
 	}
 	if !validName.MatchString(manifest.Name) || reservedNames[manifest.Name] {
 		return fmt.Errorf("invalid or reserved adapter name %s", manifest.Name)
 	}
-	if manifest.Kind != "" && manifest.Kind != "selector" && manifest.Kind != "browser" && manifest.Kind != "container" {
-		return fmt.Errorf("adapter %s has invalid kind %s", manifest.Name, manifest.Kind)
+	if manifest.Runtime != "computer" && manifest.Runtime != "virtualizer" && manifest.Runtime != "browser" {
+		return fmt.Errorf("adapter %s has invalid runtime %s", manifest.Name, manifest.Runtime)
 	}
-	if manifest.Kind == "" && !hasComputerEndpoint(manifest) {
-		return fmt.Errorf("adapter %s must declare a kind or computer endpoint", manifest.Name)
+	if len(manifest.Surfaces) == 0 {
+		return fmt.Errorf("adapter %s must declare at least one surface", manifest.Name)
 	}
-	if manifest.Kind != "" && hasComputerEndpoint(manifest) {
-		return fmt.Errorf("adapter %s computer endpoint cannot be combined with kind %s", manifest.Name, manifest.Kind)
+	seenSurfaces := map[string]bool{}
+	for _, surface := range manifest.Surfaces {
+		if surface != "shell" && surface != "web" || seenSurfaces[surface] {
+			return fmt.Errorf("adapter %s has invalid or duplicate surface %s", manifest.Name, surface)
+		}
+		seenSurfaces[surface] = true
 	}
-	if manifest.DefaultProvider && manifest.Kind != "container" {
-		return fmt.Errorf("adapter %s can only be a default provider when kind is container", manifest.Name)
+	if hasComputerEndpoint(manifest) && manifest.Runtime != "computer" {
+		return fmt.Errorf("adapter %s computer endpoint requires the computer runtime", manifest.Name)
 	}
-	if manifest.Kind != "" && !validName.MatchString(manifest.SelectorKey) {
+	if manifest.DefaultProvider && manifest.Runtime != "virtualizer" {
+		return fmt.Errorf("adapter %s can only be a default provider for the virtualizer runtime", manifest.Name)
+	}
+	if !hasComputerEndpoint(manifest) && manifest.SelectorKey == "" {
+		return fmt.Errorf("adapter %s must declare a selector key", manifest.Name)
+	}
+	if manifest.SelectorKey != "" && !validName.MatchString(manifest.SelectorKey) {
 		return fmt.Errorf("adapter %s has invalid selector key %s", manifest.Name, manifest.SelectorKey)
 	}
 	for _, key := range append(append(append([]string{}, manifest.ExtraKeys...), manifest.Commands...), manifest.ComputerCommands...) {
@@ -448,7 +504,7 @@ func validateManifest(manifest Manifest, directory string) error {
 	}
 	seenShareSpaces := map[string]bool{}
 	for _, space := range manifest.ShareSpaces {
-		if !validName.MatchString(space) || space == "container" || space == "browser" || space == "computer" || seenShareSpaces[space] {
+		if !validName.MatchString(space) || space == "virtualizer" || space == "container" || space == "browser" || space == "computer" || seenShareSpaces[space] {
 			return fmt.Errorf("adapter %s has invalid or duplicate share space %s", manifest.Name, space)
 		}
 		seenShareSpaces[space] = true
@@ -477,8 +533,17 @@ func validateManifest(manifest Manifest, directory string) error {
 	if !contains(manifest.Capabilities, "validate") || !contains(manifest.Capabilities, "doctor") {
 		return fmt.Errorf("adapter %s must provide validate and doctor", manifest.Name)
 	}
-	if manifest.Kind != "" && !contains(manifest.Capabilities, "run") && !contains(manifest.Capabilities, "open") {
+	if !contains(manifest.Capabilities, "run") && !contains(manifest.Capabilities, "open") {
 		return fmt.Errorf("adapter %s must provide run or open", manifest.Name)
+	}
+	if contains(manifest.Capabilities, "run") && !contains(manifest.Surfaces, "shell") {
+		return fmt.Errorf("adapter %s provides run without the shell surface", manifest.Name)
+	}
+	if contains(manifest.Capabilities, "open") && !contains(manifest.Surfaces, "web") {
+		return fmt.Errorf("adapter %s provides open without the web surface", manifest.Name)
+	}
+	if (len(manifest.Commands) > 0 || len(manifest.ComputerCommands) > 0) && !contains(manifest.Surfaces, "shell") {
+		return fmt.Errorf("adapter %s declares commands without the shell surface", manifest.Name)
 	}
 	if len(manifest.ComputerCommands) > 0 && !contains(manifest.Capabilities, "run") {
 		return fmt.Errorf("adapter %s declares computer commands without the run capability", manifest.Name)

@@ -3,10 +3,11 @@
 This directory contains every tool-specific integration maintained in the ctx
 repository.
 
-`docker`, `podman`, `nerdctl`, and `apple` are first-party container providers.
-Their manifests use `kind = "container"`; each package owns its native CLI syntax,
-context discovery, validation, routing, build behavior, and supported image and
-volume operations. The ctx core sees only the common capability protocol.
+`docker`, `podman`, `nerdctl`, and `apple` are maintained virtualizer providers.
+Their manifests declare `runtime = "virtualizer"` and `surfaces = "shell"`;
+each package owns its native CLI syntax, context discovery, validation, routing,
+build behavior, and supported image and volume operations. The ctx core sees
+only the common capability protocol.
 
 The Docker, Podman, and nerdctl directories also contain tiny command shims. The
 installer copies those launcher files into the binary directory under the native
@@ -18,17 +19,17 @@ implementations themselves remain installed and trusted under
 `browser` context aggregates them while each provider owns application-specific
 profile discovery, validation, and launching.
 
-`kube`, `aws`, `gcloud`, `postgres`, and `mysql` are maintained selector
+`kube`, `aws`, `gcloud`, `postgres`, and `mysql` are maintained computer-runtime
 adapters. Every adapter has an `adapter.toml` manifest and implements ctx adapter
-API v1. Native installers copy maintained packages into
+API v2.0. Native installers copy maintained packages into
 `$CTX_HOME/catalog/adapters`; `ctx setup` or `ctx adapter add` activates selected
 packages under `$CTX_HOME/adapters` and records their checksum trust. A package
 can declare `executable_windows` alongside its default executable; the native
 core selects the platform implementation at runtime while keeping one manifest,
 capability set, and trust record.
 
-Shell-launched AI CLIs declare `computer_commands` and optional
-`computer_capabilities` in their manifest, with no special adapter kind.
+Shell-launched AI CLIs use the `computer` runtime and declare
+`computer_commands` and optional `computer_capabilities` in their manifest.
 Computer integrations can install command shims and provide native hook and
 plugin operations. Hook payloads stream through stdin/stdout; provider config
 and plugin formats remain adapter-owned. See [the adapter API](../docs/adapter-api.md#computer-side-cli-integrations).

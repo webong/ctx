@@ -99,7 +99,7 @@ func promptAdapterSelection(available []*adapterpkg.Adapter, input io.Reader, ou
 		if installed[candidate.Manifest.Name] {
 			state = " [installed]"
 		}
-		fmt.Fprintf(output, "  %2d) %-12s %-9s %s%s\n", index+1, candidate.Manifest.Name, candidate.Manifest.Kind, candidate.Manifest.Description, state)
+		fmt.Fprintf(output, "  %2d) %-12s %-12s %s%s\n", index+1, candidate.Manifest.Name, candidate.Manifest.Runtime, candidate.Manifest.Description, state)
 	}
 	fmt.Fprint(output, "Select names or numbers separated by commas (all/none): ")
 	line, err := bufio.NewReader(input).ReadString('\n')

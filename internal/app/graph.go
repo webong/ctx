@@ -153,7 +153,7 @@ func observedSelections(resolver *config.Resolver) map[string]string {
 	selections := map[string]string{}
 	if installed, err := adapterStore().List(); err == nil {
 		for _, candidate := range installed {
-			if candidate.Manifest.Kind != "browser" && candidate.Manifest.Kind != "selector" && candidate.Manifest.Kind != "container" {
+			if !candidate.IsSelectable() {
 				continue
 			}
 			if resolved, resolveErr := resolver.Resolve(candidate.Manifest.SelectorKey); resolveErr == nil && resolved.Value != "" {

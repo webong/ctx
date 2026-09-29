@@ -1,5 +1,7 @@
-api_version = "1"
+api_version = "2.0"
 name = "claude_code"
+runtime = "computer"
+surfaces = "shell"
 executable = "ctx-claude-code"
 executable_windows = "ctx-claude-code.ps1"
 description = "Computer-side shim and native hook/plugin bridge for Claude Code"

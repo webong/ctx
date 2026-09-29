@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func fixtureAdapter(t *testing.T, root, name, kind string) string {
+func fixtureAdapter(t *testing.T, root, name, runtimeName string) string {
 	t.Helper()
 	directory := filepath.Join(root, name)
 	if err := os.MkdirAll(directory, 0o755); err != nil {
@@ -16,21 +16,25 @@ func fixtureAdapter(t *testing.T, root, name, kind string) string {
 	}
 	selector := name
 	capabilities := "list,validate,run,doctor"
-	if kind == "browser" {
+	surfaces := "shell"
+	commands := "commands = \"" + name + "\"\n"
+	if runtimeName == "browser" {
 		selector = "browser"
 		capabilities = "list,validate,open,doctor"
-	} else if kind == "container" {
+		surfaces = "web"
+		commands = ""
+	} else if runtimeName == "virtualizer" {
 		capabilities = "list,validate,run,doctor,image_save"
 	}
-	manifest := `api_version = "1"
+	manifest := `api_version = "2.0"
 name = "` + name + `"
-kind = "` + kind + `"
+runtime = "` + runtimeName + `"
+surfaces = "` + surfaces + `"
 executable = "ctx-` + name + `"
 description = "Test adapter"
 capabilities = "` + capabilities + `"
 selector_key = "` + selector + `"
-commands = "` + name + `"
-`
+` + commands
 	if err := os.WriteFile(filepath.Join(directory, "adapter.toml"), []byte(manifest), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +47,7 @@ commands = "` + name + `"
 
 func TestStoreInstallTrustAndTamper(t *testing.T) {
 	root := t.TempDir()
-	source := fixtureAdapter(t, filepath.Join(root, "source"), "echo", "selector")
+	source := fixtureAdapter(t, filepath.Join(root, "source"), "echo", "computer")
 	store := NewStore(filepath.Join(root, "installed"))
 	installed, err := store.Install(source)
 	if err != nil {
@@ -68,8 +72,8 @@ func TestStoreInstallTrustAndTamper(t *testing.T) {
 
 func TestStoreReplace(t *testing.T) {
 	root := t.TempDir()
-	first := fixtureAdapter(t, filepath.Join(root, "first"), "echo", "selector")
-	second := fixtureAdapter(t, filepath.Join(root, "second"), "echo", "selector")
+	first := fixtureAdapter(t, filepath.Join(root, "first"), "echo", "computer")
+	second := fixtureAdapter(t, filepath.Join(root, "second"), "echo", "computer")
 	if err := os.WriteFile(filepath.Join(second, "extra"), []byte("updated\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -86,20 +90,61 @@ func TestStoreReplace(t *testing.T) {
 	}
 }
 
-func TestManifestDefaultsAndKinds(t *testing.T) {
+func TestManifestRuntimeAndSurface(t *testing.T) {
 	root := t.TempDir()
 	directory := fixtureAdapter(t, root, "firefox", "browser")
 	loaded, err := LoadDirectory(directory)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded.Manifest.Kind != "browser" || loaded.Manifest.SelectorKey != "browser" || !loaded.HasCapability("open") {
+	if loaded.Manifest.Runtime != "browser" || !loaded.SupportsSurface("web") || loaded.Manifest.SelectorKey != "browser" || !loaded.HasCapability("open") {
 		t.Fatalf("unexpected manifest: %#v", loaded.Manifest)
 	}
 }
 
-func TestContainerProviderCommandProtocol(t *testing.T) {
-	directory := fixtureAdapter(t, t.TempDir(), "engine", "container")
+func TestLegacyKindIsTranslated(t *testing.T) {
+	directory := fixtureAdapter(t, t.TempDir(), "engine", "virtualizer")
+	manifestPath := filepath.Join(directory, "adapter.toml")
+	contents, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := strings.ReplaceAll(string(contents), `api_version = "2.0"`, `api_version = "1"`)
+	legacy = strings.ReplaceAll(legacy, "runtime = \"virtualizer\"\n", "kind = \"container\"\n")
+	legacy = strings.ReplaceAll(legacy, "surfaces = \"shell\"\n", "")
+	if err := os.WriteFile(manifestPath, []byte(legacy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadDirectory(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !loaded.IsRuntime("virtualizer") || !loaded.SupportsSurface("shell") {
+		t.Fatalf("legacy manifest was not translated: %#v", loaded.Manifest)
+	}
+}
+
+func TestAPIV2RejectsKind(t *testing.T) {
+	directory := fixtureAdapter(t, t.TempDir(), "echo", "computer")
+	manifestPath := filepath.Join(directory, "adapter.toml")
+	file, err := os.OpenFile(manifestPath, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.WriteString("kind = \"selector\"\n"); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadDirectory(directory); err == nil || !strings.Contains(err.Error(), "removed manifest field kind") {
+		t.Fatalf("API v2 kind field was accepted: %v", err)
+	}
+}
+
+func TestVirtualizerProviderCommandProtocol(t *testing.T) {
+	directory := fixtureAdapter(t, t.TempDir(), "engine", "virtualizer")
 	loaded, err := LoadDirectory(directory)
 	if err != nil {
 		t.Fatal(err)
@@ -120,7 +165,7 @@ func TestContainerProviderCommandProtocol(t *testing.T) {
 }
 
 func TestManifestSelectsPlatformExecutable(t *testing.T) {
-	directory := fixtureAdapter(t, t.TempDir(), "echo", "selector")
+	directory := fixtureAdapter(t, t.TempDir(), "echo", "computer")
 	manifestPath := filepath.Join(directory, "adapter.toml")
 	manifest, err := os.ReadFile(manifestPath)
 	if err != nil {
@@ -146,7 +191,7 @@ func TestManifestSelectsPlatformExecutable(t *testing.T) {
 }
 
 func TestCommandProtocol(t *testing.T) {
-	directory := fixtureAdapter(t, t.TempDir(), "echo", "selector")
+	directory := fixtureAdapter(t, t.TempDir(), "echo", "computer")
 	loaded, err := LoadDirectory(directory)
 	if err != nil {
 		t.Fatal(err)
@@ -163,7 +208,7 @@ func TestCommandProtocol(t *testing.T) {
 		t.Fatalf("unexpected command arguments: %q", joined)
 	}
 	environment := strings.Join(command.Env, "\n")
-	for _, expected := range []string{"CTX_ADAPTER_API=1", "CTX_ADAPTER_NAME=echo", "CTX_ADAPTER_COMMAND=echoctl", "CTX_ADAPTER_VALUE_ECHO=staging"} {
+	for _, expected := range []string{"CTX_ADAPTER_API=2.0", "CTX_ADAPTER_NAME=echo", "CTX_ADAPTER_COMMAND=echoctl", "CTX_ADAPTER_VALUE_ECHO=staging"} {
 		if !strings.Contains(environment, expected) {
 			t.Fatalf("missing %s", expected)
 		}
@@ -174,7 +219,7 @@ func TestRejectsSymlinks(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("creating symlinks may require elevated Windows privileges")
 	}
-	directory := fixtureAdapter(t, t.TempDir(), "echo", "selector")
+	directory := fixtureAdapter(t, t.TempDir(), "echo", "computer")
 	if err := os.Symlink("adapter.toml", filepath.Join(directory, "linked")); err != nil {
 		t.Fatal(err)
 	}

@@ -34,6 +34,11 @@ command runs through ctx or one of its container shims.
   core.
 - Keep credentials in the native tools; ctx stores selectors, not secrets.
 
+Adapters describe one runtime—`computer`, `virtualizer`, or `browser`—and one
+or more interaction surfaces: `shell` and `web`. Their capabilities decide what
+ctx can list, run, open, or share. This keeps tool-specific behavior in adapter
+packages while the core provides common discovery and routing.
+
 ## Install
 
 ### macOS and Linux
@@ -82,7 +87,7 @@ List the contexts available for a tool, select one in the current project, and
 inspect the result:
 
 ```sh
-ctx ls container
+ctx ls virtualizer
 ctx ls docker
 ctx set docker orbstack
 ctx status
@@ -164,9 +169,9 @@ not passwords, tokens, or private keys.
 
 ## Computer-side AI CLIs
 
-Computer integrations declare CLI shims, hooks, and plugins in their manifest;
-they do not need a `kind` entry. The installer catalog includes first-party
-Claude Code and Codex packages. Activate one or both with:
+Computer integrations use the `computer` runtime on the `shell` surface and
+declare CLI shims, hooks, and plugins in their manifest. The installer catalog
+includes maintained Claude Code and Codex packages. Activate one or both with:
 
 ```sh
 ctx setup --adapters claude_code,codex
@@ -213,7 +218,7 @@ ctx build docker \
 Copy images between supported engines through a temporary archive:
 
 ```sh
-ctx share:container image copy \
+ctx share:virtualizer image copy \
   docker:orbstack \
   podman:podman-machine-default \
   acme/api:dev
@@ -222,7 +227,7 @@ ctx share:container image copy \
 Copy a named volume between engines:
 
 ```sh
-ctx share:container volume copy \
+ctx share:virtualizer volume copy \
   docker:orbstack \
   podman:podman-machine-default \
   postgres-data \
@@ -235,35 +240,52 @@ quiesce databases first. ctx refuses to import into an existing target volume.
 Apple Container image imports require a version newer than 1.3.0 because of
 [GHSA-r3h2-rgqf-9hv9](https://github.com/apple/containerization/security/advisories/GHSA-r3h2-rgqf-9hv9).
 
-`ctx share:browser` can select one Firefox cookie by site and name and deliver
-it directly to another Firefox profile, a new JSON file, or a pipe. It runs as
-a shell command and does not require a browser extension:
+`ctx share:browser` can select one site cookie from a Firefox, Chrome, or
+Chromium profile and deliver it to a new JSON file or a pipe. Firefox cookies
+can also be copied directly into another Firefox profile. It runs as a shell
+command and does not require a browser extension:
 
 ```sh
 ctx share:browser cookie list --from firefox:personal --site https://example.com
 ctx share:browser cookie copy --from firefox:personal --site https://example.com --name session --to-profile firefox:work
 ctx share:browser cookie copy --from firefox:personal --site https://example.com --name session --to-file ./session-cookie.json
 ctx share:browser cookie copy --from firefox:personal --site https://example.com --name session --stdout | consumer
+ctx share:browser cookie list --from chrome:Default --site https://example.com
+ctx share:browser cookie copy --from chrome:Default --site https://example.com --name session --to-file ./chrome-cookie.json
+ctx share:browser cookie copy --from chromium:Default --site https://example.com --name session --stdout | consumer
 ```
 
 `--from` defaults to the selected browser. Listing prints cookie metadata, not
-values. The site URL selects the scheme and host; use `--path` to select an
-exact cookie path. A site can have cookies with the same name in different domains, paths,
-or Firefox containers; use `--domain`, `--path`, and `--origin-attributes` to
-select one. Listing is tab-separated: name, domain, path, secure, HTTP-only,
-expiry, and origin attributes. Files are created with mode 0600 and are plain
-JSON containing `version`, `source`, `site`, and a `cookie` object with its
-value and scope fields. `--stdout` requires a pipe; use `--to-file` for a
-protected file. Profile copying requires `sqlite3` and `lsof`, both Firefox
-profiles closed, matching database schemas, and an unpartitioned cookie. It
-refuses to overwrite an existing target cookie unless `--replace` is given.
-The read-only list and file/pipe forms need `sqlite3`; they can read committed
-cookies while Firefox is open, though recent in-memory changes may not yet
-appear. When a read-only SQLite connection cannot open a Firefox write-ahead
-log, ctx makes a private temporary database snapshot and removes it on normal
-completion. A forced process termination can leave that snapshot in the system
-temporary directory. Chrome, Chromium, and Safari cookie extraction, and
-browser policies and keys, are not supported yet.
+values, and does not unlock the OS cookie key. The site URL selects the scheme
+and host; use `--path` to select an exact cookie path. A site can have cookies
+with the same name in different domains, paths, or partitions. Use `--id` from
+`cookie list` to select an exact row, or narrow Firefox cookies with
+`--origin-attributes`. Listing is tab-separated and includes name, domain,
+path, expiry, SameSite policy, row ID, and partition scope. Files are created
+with mode 0600 and are plain JSON containing `version`, `source`, `site`, and a
+`cookie` object with its value and scope fields. `same_site_policy` is the
+portable value; `same_site` retains the source browser's numeric value.
+`--stdout` requires a pipe; use `--to-file` for a protected file.
+
+Chrome and Chromium export reads the profile's committed SQLite cookies. On
+macOS, encrypted cookies require access to the browser's Safe Storage item in
+Keychain; ctx requests it only after a cookie is selected. On Linux, v10
+cookies can be decoded locally and v11 cookies require `secret-tool` access to
+the browser's secret-service entry. Plaintext cookies can be exported on any
+platform; encrypted Windows cookies, unsupported encryption versions, and
+unavailable OS keys fail without writing a partial bundle. Chrome and Chromium
+profile import, cross-browser profile import, and Safari cookie access are not
+implemented.
+
+Firefox profile copying requires `sqlite3` and `lsof`, both Firefox profiles
+closed, matching database schemas, and an unpartitioned cookie. It refuses to
+overwrite an existing target cookie unless `--replace` is given. The read-only
+list and file/pipe forms need `sqlite3`; they can read committed cookies while
+the browser is open, though recent in-memory changes may not yet appear. When a
+read-only SQLite connection cannot open a write-ahead log, ctx makes a private
+temporary database snapshot and removes it on normal completion. A forced
+process termination can leave that snapshot in the system temporary directory.
+Browser policies and keys are not supported yet.
 
 `ctx share:computer` is reserved for sharing a computer context. Adapters can
 register other spaces through a `share` capability and optional `share_spaces`
@@ -275,7 +297,7 @@ ctx ships maintained adapters for:
 
 | Family | Adapters |
 | --- | --- |
-| Containers | Docker, Podman, nerdctl/containerd, Apple Container |
+| Virtualizers | Docker, Podman, nerdctl/containerd, Apple Container |
 | Browsers | Firefox, Chrome, Chromium, Safari |
 | Cloud and orchestration | Kubernetes, AWS, gcloud |
 | Databases | PostgreSQL, MySQL |
@@ -303,13 +325,13 @@ ctx adapter trust azure
 ```
 
 See [Adapters](adapters/README.md) for the bundled packages and
-[Adapter API v1](docs/adapter-api.md) to build an integration.
+[Adapter API v2.0](docs/adapter-api.md) to build an integration.
 
 ## Command reference
 
 | Command | Purpose |
 | --- | --- |
-| `ctx ls <selector>` | List available contexts |
+| `ctx ls <runtime-or-selector>` | List available contexts |
 | `ctx set <selector> <name>` | Select a context for the current project |
 | `ctx clear [selector]` | Remove one or all project selections |
 | `ctx status` | Show active selections |
@@ -320,9 +342,9 @@ See [Adapters](adapters/README.md) for the bundled packages and
 | `ctx open <url>` | Open a URL with the selected browser profile |
 | `ctx hook computer <adapter> <event>` | Pass a computer hook event through a trusted adapter |
 | `ctx plugin computer <adapter> ...` | Run a computer integration's plugin operation |
-| `ctx share:container image <sync|copy> ...` | Transfer images through installed container providers |
-| `ctx share:container volume <export|import|copy> ...` | Transfer named volumes through installed container providers |
-| `ctx share:browser cookie <list|copy> ...` | List site cookie metadata or share one Firefox cookie |
+| `ctx share:virtualizer image <sync|copy> ...` | Transfer images through installed virtualizer providers |
+| `ctx share:virtualizer volume <export|import|copy> ...` | Transfer named volumes through installed virtualizer providers |
+| `ctx share:browser cookie <list|copy> ...` | List site cookie metadata or export one Firefox, Chrome, or Chromium cookie |
 | `ctx share:<space> ...` | Invoke a trusted adapter's registered share operation |
 | `ctx doctor` | Validate configured selections and adapters |
 | `ctx hook <bash|zsh|powershell>` | Generate an optional shell prompt observer |

@@ -18,7 +18,7 @@ type endpoint struct {
 func buildImage(resolver *config.Resolver, args []string, stdout, stderr io.Writer) int {
 	providerName := ""
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-		if candidate, err := containerProvider(args[0]); err == nil {
+		if candidate, err := virtualizerProvider(args[0]); err == nil {
 			providerName, args = candidate.Manifest.Name, args[1:]
 		}
 	}
@@ -50,7 +50,7 @@ parsed:
 		fmt.Fprintln(stderr, "ctx: build needs build arguments")
 		return 2
 	}
-	provider, err := containerProvider(providerName)
+	provider, err := virtualizerProvider(providerName)
 	if err != nil {
 		return reportErrorCode(stderr, err, 2)
 	}
@@ -64,7 +64,7 @@ parsed:
 
 func imageCommand(resolver *config.Resolver, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "ctx: share:container image requires sync or copy")
+		fmt.Fprintln(stderr, "ctx: share:virtualizer image requires sync or copy")
 		return 2
 	}
 	switch args[0] {
@@ -73,7 +73,7 @@ func imageCommand(resolver *config.Resolver, args []string, stdout, stderr io.Wr
 	case "copy":
 		return imageCopy(resolver, args[1:], stdout, stderr)
 	default:
-		fmt.Fprintln(stderr, "ctx: share:container image requires sync or copy")
+		fmt.Fprintln(stderr, "ctx: share:virtualizer image requires sync or copy")
 		return 2
 	}
 }
@@ -172,7 +172,7 @@ func imageCopy(resolver *config.Resolver, args []string, stdout, stderr io.Write
 
 func volumeCommand(resolver *config.Resolver, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "ctx: share:container volume requires export, import, or copy")
+		fmt.Fprintln(stderr, "ctx: share:virtualizer volume requires export, import, or copy")
 		return 2
 	}
 	switch args[0] {
@@ -210,7 +210,7 @@ func volumeCommand(resolver *config.Resolver, args []string, stdout, stderr io.W
 		}
 		return volumeCopy(resolver, args[1:], stdout, stderr)
 	default:
-		fmt.Fprintln(stderr, "ctx: share:container volume requires export, import, or copy")
+		fmt.Fprintln(stderr, "ctx: share:virtualizer volume requires export, import, or copy")
 		return 2
 	}
 }
@@ -287,9 +287,9 @@ func createAndImportVolume(resolver *config.Resolver, target endpoint, volume st
 func parseEndpoint(value string) (endpoint, error) {
 	providerName, selection, ok := strings.Cut(value, ":")
 	if !ok || providerName == "" || selection == "" {
-		return endpoint{}, fmt.Errorf("endpoint must be <container-provider>:<context>")
+		return endpoint{}, fmt.Errorf("endpoint must be <virtualizer-provider>:<context>")
 	}
-	provider, err := containerProvider(providerName)
+	provider, err := virtualizerProvider(providerName)
 	if err != nil {
 		return endpoint{}, err
 	}
@@ -300,14 +300,14 @@ func parseEndpointWithDefault(value string) (endpoint, error) {
 	if strings.Contains(value, ":") {
 		return parseEndpoint(value)
 	}
-	provider, err := containerProvider("")
+	provider, err := virtualizerProvider("")
 	if err != nil {
 		return endpoint{}, err
 	}
 	return endpoint{Provider: provider, Name: value}, nil
 }
 
-func containerProvider(name string) (*adapterpkg.Adapter, error) {
+func virtualizerProvider(name string) (*adapterpkg.Adapter, error) {
 	if name == "" {
 		store := adapterStore()
 		installed, err := store.List()
@@ -316,7 +316,7 @@ func containerProvider(name string) (*adapterpkg.Adapter, error) {
 		}
 		var defaultProvider *adapterpkg.Adapter
 		for _, candidate := range installed {
-			if candidate.Manifest.Kind != "container" || !candidate.Manifest.DefaultProvider {
+			if !candidate.IsRuntime("virtualizer") || !candidate.Manifest.DefaultProvider {
 				continue
 			}
 			trusted, trustErr := store.IsTrusted(candidate)
@@ -324,21 +324,21 @@ func containerProvider(name string) (*adapterpkg.Adapter, error) {
 				continue
 			}
 			if defaultProvider != nil {
-				return nil, fmt.Errorf("multiple default container providers: %s and %s", defaultProvider.Manifest.Name, candidate.Manifest.Name)
+				return nil, fmt.Errorf("multiple default virtualizer providers: %s and %s", defaultProvider.Manifest.Name, candidate.Manifest.Name)
 			}
 			defaultProvider = candidate
 		}
 		if defaultProvider == nil {
-			return nil, fmt.Errorf("no trusted default container provider is installed; use <provider>:<context>")
+			return nil, fmt.Errorf("no trusted default virtualizer provider is installed; use <provider>:<context>")
 		}
 		return defaultProvider, nil
 	}
 	provider, err := adapterStore().Load(name)
 	if err != nil {
-		return nil, fmt.Errorf("unknown container provider %s: %w", name, err)
+		return nil, fmt.Errorf("unknown virtualizer provider %s: %w", name, err)
 	}
-	if provider.Manifest.Kind != "container" {
-		return nil, fmt.Errorf("adapter %s is not a container provider", name)
+	if !provider.IsRuntime("virtualizer") {
+		return nil, fmt.Errorf("adapter %s is not a virtualizer provider", name)
 	}
 	return provider, nil
 }
@@ -349,7 +349,7 @@ func validateEndpoint(resolver *config.Resolver, value endpoint, stderr io.Write
 
 func invokeEndpoint(resolver *config.Resolver, value endpoint, operation string, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if !value.Provider.HasCapability(operation) {
-		fmt.Fprintf(stderr, "ctx: container provider %s does not support %s\n", value.Provider.Manifest.Name, operation)
+		fmt.Fprintf(stderr, "ctx: virtualizer provider %s does not support %s\n", value.Provider.Manifest.Name, operation)
 		return 2
 	}
 	return invokeAdapterIO(resolver, value.Provider, operation, value.Name, args, "", stdin, stdout, stderr)

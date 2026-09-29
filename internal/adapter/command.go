@@ -38,7 +38,7 @@ func (a *Adapter) Command(invocation Invocation) (*exec.Cmd, error) {
 	}
 	command := adapterCommand(a.ExecutablePath(), args)
 	command.Env = os.Environ()
-	command.Env = setEnvironment(command.Env, "CTX_ADAPTER_API", APIVersion)
+	command.Env = setEnvironment(command.Env, "CTX_ADAPTER_API", a.Manifest.APIVersion)
 	command.Env = setEnvironment(command.Env, "CTX_ADAPTER_NAME", a.Manifest.Name)
 	requestedCommand := invocation.Command
 	if requestedCommand == "" {

@@ -42,14 +42,14 @@ test "$("$CTX_BIN_DIR/ctx" version)" = 'ctx 0.8.0-dev'
 for engine in docker podman nerdctl; do
   test -x "$CTX_BIN_DIR/$engine"
   test -d "$CTX_HOME/adapters/$engine"
-  CTX_HOME="$CTX_HOME" "$CTX_BIN_DIR/ctx" adapter ls container | grep -Eq "^${engine}[[:space:]]+trusted"
+  CTX_HOME="$CTX_HOME" "$CTX_BIN_DIR/ctx" adapter ls virtualizer | grep -Eq "^${engine}[[:space:]]+trusted"
 done
 test -d "$CTX_HOME/adapters/kube"
 test -d "$CTX_HOME/adapters/echo"
 test -d "$CTX_HOME/catalog/adapters/podman"
 cmp "$TEST_ROOT/config.before.toml" "$CTX_HOME/config.toml"
 grep -Fxq 'profile = "client-a"' "$TEST_ROOT/project/.ctx"
-CTX_HOME="$CTX_HOME" "$CTX_BIN_DIR/ctx" adapter available | grep -Eq '^podman[[:space:]]+container[[:space:]]+installed'
+CTX_HOME="$CTX_HOME" "$CTX_BIN_DIR/ctx" adapter available | grep -Eq '^podman[[:space:]]+virtualizer[[:space:]]+installed'
 
 # A non-interactive install keeps the complete catalog but selects no adapters.
 minimal_home="$TEST_ROOT/minimal-home"
@@ -69,7 +69,7 @@ release_dir="$TEST_ROOT/release"
 bundle_stage="$TEST_ROOT/bundle-stage"
 mkdir -p "$release_dir" "$bundle_stage/ctx/bin" "$bundle_stage/ctx/adapters"
 cp "$CTX_BIN_DIR/ctx" "$bundle_stage/ctx/bin/ctx"
-for adapter in docker podman nerdctl apple firefox chrome chromium safari kube aws gcloud postgres mysql; do
+for adapter in docker podman nerdctl apple firefox chrome chromium safari kube aws gcloud postgres mysql claude_code codex; do
   cp -R "$ROOT/adapters/$adapter" "$bundle_stage/ctx/adapters/$adapter"
 done
 os=$(uname -s)

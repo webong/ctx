@@ -55,16 +55,7 @@ func readFirefoxSiteCookies(profile string, site *url.URL, name string) ([]brows
 	if host == "" {
 		return nil, "", errors.New("site has no hostname")
 	}
-	var hosts []string
-	for part := host; part != ""; {
-		hosts = append(hosts, sqlString(part), sqlString("."+part))
-		dot := strings.IndexByte(part, '.')
-		if dot < 0 {
-			break
-		}
-		part = part[dot+1:]
-	}
-	statement := "SELECT id,name,value,host,path,expiry,isSecure,isHttpOnly,sameSite,originAttributes FROM moz_cookies WHERE host IN (" + strings.Join(hosts, ",") + ")"
+	statement := "SELECT id,name,host,path,expiry,isSecure,isHttpOnly,sameSite,originAttributes FROM moz_cookies WHERE host IN (" + cookieHostSQL(host) + ")"
 	if name != "" {
 		statement += " AND name=" + sqlString(name)
 	}
@@ -81,15 +72,65 @@ func readFirefoxSiteCookies(profile string, site *url.URL, name string) ([]brows
 	cookies := make([]browserCookie, 0, len(rows))
 	for _, row := range rows {
 		cookie := browserCookie{
-			ID: row.ID, Name: row.Name, Value: row.Value, Domain: row.Host, Path: row.Path,
+			ID: row.ID, Name: row.Name, Domain: row.Host, Path: row.Path,
 			Expiry: row.Expiry, Secure: row.IsSecure != 0, HTTPOnly: row.IsHTTPOnly != 0,
-			SameSite: row.SameSite, OriginAttributes: row.OriginAttributes,
+			SameSite: row.SameSite, SameSitePolicy: firefoxSameSitePolicy(row.SameSite), OriginAttributes: row.OriginAttributes,
 		}
 		if cookieDomainMatches(host, cookie.Domain) && (!cookie.Secure || site.Scheme == "https") && cookieActive(cookie) {
 			cookies = append(cookies, cookie)
 		}
 	}
 	return cookies, database, nil
+}
+
+func readFirefoxCookieValue(database string, cookie browserCookie) (string, error) {
+	readableDB, cleanup, _, err := readableFirefoxCookieDatabase(database)
+	if err != nil {
+		return "", err
+	}
+	defer cleanup()
+	statement := "SELECT value FROM moz_cookies WHERE id=" + strconv.FormatInt(cookie.ID, 10) +
+		" AND name=" + sqlString(cookie.Name) + " AND host=" + sqlString(cookie.Domain) +
+		" AND path=" + sqlString(cookie.Path) + " AND originAttributes=" + sqlString(cookie.OriginAttributes)
+	output, err := runSQLite(readableDB, true, statement)
+	if err != nil {
+		return "", err
+	}
+	var rows []struct {
+		Value string `json:"value"`
+	}
+	if err := json.Unmarshal(output, &rows); err != nil || len(rows) != 1 {
+		return "", errors.New("Firefox cookie changed since listing; retry")
+	}
+	return rows[0].Value, nil
+}
+
+func firefoxSameSitePolicy(raw int) string {
+	switch raw {
+	case 0:
+		return "none"
+	case 1:
+		return "lax"
+	case 2:
+		return "strict"
+	case 256:
+		return "unspecified"
+	default:
+		return "unknown"
+	}
+}
+
+func cookieHostSQL(host string) string {
+	var hosts []string
+	for part := host; part != ""; {
+		hosts = append(hosts, sqlString(part), sqlString("."+part))
+		dot := strings.IndexByte(part, '.')
+		if dot < 0 {
+			break
+		}
+		part = part[dot+1:]
+	}
+	return strings.Join(hosts, ",")
 }
 
 func cookieDomainMatches(siteHost, cookieDomain string) bool {
@@ -183,13 +224,17 @@ func firefoxProfilesINI() (string, error) {
 }
 
 func firefoxCookieColumns(database string) ([]string, error) {
-	output, err := runSQLite(database, true, "PRAGMA table_info(moz_cookies)")
+	return cookieDatabaseColumns(database, "moz_cookies")
+}
+
+func cookieDatabaseColumns(database, table string) ([]string, error) {
+	output, err := runSQLite(database, true, "PRAGMA table_info("+sqlIdentifier(table)+")")
 	if err != nil {
 		return nil, err
 	}
 	var columns []sqliteColumn
 	if err := json.Unmarshal(output, &columns); err != nil || len(columns) == 0 {
-		return nil, errors.New("Firefox moz_cookies table is unavailable")
+		return nil, fmt.Errorf("cookie table %s is unavailable", table)
 	}
 	names := make([]string, 0, len(columns))
 	for _, column := range columns {
@@ -202,18 +247,22 @@ func firefoxCookieColumns(database string) ([]string, error) {
 // is absent and the caller cannot create one beside the profile. A private
 // snapshot lets sqlite3 replay the WAL without changing the browser profile.
 func readableFirefoxCookieDatabase(database string) (string, func(), []string, error) {
-	columns, err := firefoxCookieColumns(database)
+	return readableCookieDatabase(database, "moz_cookies")
+}
+
+func readableCookieDatabase(database, table string) (string, func(), []string, error) {
+	columns, err := cookieDatabaseColumns(database, table)
 	if err == nil {
 		return database, func() {}, columns, nil
 	}
 	if !strings.Contains(err.Error(), "unable to open database file") && !strings.Contains(err.Error(), "attempt to write a readonly database") {
 		return "", nil, nil, err
 	}
-	snapshot, cleanup, snapshotErr := snapshotFirefoxCookieDatabase(database)
+	snapshot, cleanup, snapshotErr := snapshotCookieDatabase(database)
 	if snapshotErr != nil {
-		return "", nil, nil, fmt.Errorf("cannot read Firefox cookie database: %w", snapshotErr)
+		return "", nil, nil, fmt.Errorf("cannot read cookie database: %w", snapshotErr)
 	}
-	columns, snapshotErr = firefoxCookieColumns(snapshot)
+	columns, snapshotErr = cookieDatabaseColumns(snapshot, table)
 	if snapshotErr != nil {
 		cleanup()
 		return "", nil, nil, snapshotErr
@@ -222,8 +271,12 @@ func readableFirefoxCookieDatabase(database string) (string, func(), []string, e
 }
 
 func snapshotFirefoxCookieDatabase(database string) (string, func(), error) {
+	return snapshotCookieDatabase(database)
+}
+
+func snapshotCookieDatabase(database string) (string, func(), error) {
 	for attempt := 0; attempt < 3; attempt++ {
-		directory, err := os.MkdirTemp("", "ctx-firefox-cookies-")
+		directory, err := os.MkdirTemp("", "ctx-cookies-")
 		if err != nil {
 			return "", nil, err
 		}
@@ -239,7 +292,7 @@ func snapshotFirefoxCookieDatabase(database string) (string, func(), error) {
 			cleanup()
 			return "", nil, walErr
 		}
-		snapshot := filepath.Join(directory, "cookies.sqlite")
+		snapshot := filepath.Join(directory, filepath.Base(database))
 		if err := copyPrivateFile(database, snapshot); err != nil {
 			cleanup()
 			return "", nil, err

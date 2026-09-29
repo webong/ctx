@@ -31,14 +31,17 @@ func adapterCommand(resolver *config.Resolver, args []string, stdout, stderr io.
 	switch args[0] {
 	case "ls", "list":
 		if len(args) > 2 {
-			fmt.Fprintln(stderr, "ctx: adapter ls accepts an optional kind or computer")
+			fmt.Fprintln(stderr, "ctx: adapter ls accepts an optional runtime or surface")
 			return 2
 		}
-		kind := ""
+		filter := ""
 		if len(args) == 2 {
-			kind = args[1]
-			if kind != "selector" && kind != "browser" && kind != "container" && kind != "computer" {
-				fmt.Fprintf(stderr, "ctx: unknown adapter kind %s\n", kind)
+			filter = args[1]
+			if filter == "container" {
+				filter = "virtualizer"
+			}
+			if filter != "computer" && filter != "virtualizer" && filter != "browser" && filter != "shell" && filter != "web" {
+				fmt.Fprintf(stderr, "ctx: unknown runtime or surface %s\n", args[1])
 				return 2
 			}
 		}
@@ -47,10 +50,7 @@ func adapterCommand(resolver *config.Resolver, args []string, stdout, stderr io.
 			return reportError(stderr, err)
 		}
 		for _, candidate := range installed {
-			if kind == "computer" && !candidate.IsComputerEndpoint() {
-				continue
-			}
-			if kind != "" && kind != "computer" && candidate.Manifest.Kind != kind {
+			if filter != "" && !candidate.IsRuntime(filter) && !candidate.SupportsSurface(filter) {
 				continue
 			}
 			state := "untrusted"
@@ -75,11 +75,8 @@ func adapterCommand(resolver *config.Resolver, args []string, stdout, stderr io.
 		}
 		fmt.Fprintf(stdout, "name:         %s\n", candidate.Manifest.Name)
 		fmt.Fprintf(stdout, "api:          %s\n", candidate.Manifest.APIVersion)
-		kind := candidate.Manifest.Kind
-		if kind == "" && candidate.IsComputerEndpoint() {
-			kind = "computer endpoint"
-		}
-		fmt.Fprintf(stdout, "kind:         %s\n", kind)
+		fmt.Fprintf(stdout, "runtime:      %s\n", candidate.Manifest.Runtime)
+		fmt.Fprintf(stdout, "surfaces:     %s\n", strings.Join(candidate.Manifest.Surfaces, ","))
 		fmt.Fprintf(stdout, "state:        %s\n", state)
 		fmt.Fprintf(stdout, "selector:     %s\n", candidate.Manifest.SelectorKey)
 		fmt.Fprintf(stdout, "commands:     %s\n", strings.Join(candidate.Manifest.Commands, ","))
@@ -96,7 +93,7 @@ func adapterCommand(resolver *config.Resolver, args []string, stdout, stderr io.
 		if len(candidate.Manifest.OverrideEnv) > 0 {
 			fmt.Fprintf(stdout, "override env: %s\n", strings.Join(candidate.Manifest.OverrideEnv, ","))
 		}
-		if candidate.Manifest.Kind == "container" {
+		if candidate.IsRuntime("virtualizer") {
 			fmt.Fprintf(stdout, "default:      %t\n", candidate.Manifest.DefaultProvider)
 		}
 		fmt.Fprintf(stdout, "executable:   %s\n", candidate.ExecutablePath())
@@ -117,7 +114,7 @@ func adapterCommand(resolver *config.Resolver, args []string, stdout, stderr io.
 			if installed[candidate.Manifest.Name] {
 				state = "installed"
 			}
-			fmt.Fprintf(stdout, "%-16s %-10s %-10s %s\n", candidate.Manifest.Name, candidate.Manifest.Kind, state, candidate.Manifest.Description)
+			fmt.Fprintf(stdout, "%-16s %-12s %-10s %s\n", candidate.Manifest.Name, candidate.Manifest.Runtime, state, candidate.Manifest.Description)
 		}
 		return 0
 	case "add":
@@ -189,7 +186,7 @@ func adapterCommand(resolver *config.Resolver, args []string, stdout, stderr io.
 		if code := runPrepared(invocation, stdout, stderr); code != 0 {
 			return code
 		}
-		fmt.Fprintf(stdout, "adapter %s satisfies ctx adapter API v%s\n", candidate.Manifest.Name, adapterpkg.APIVersion)
+		fmt.Fprintf(stdout, "adapter %s satisfies ctx adapter API v%s\n", candidate.Manifest.Name, candidate.Manifest.APIVersion)
 		return 0
 	case "doctor":
 		if len(args) != 2 {
@@ -236,7 +233,7 @@ func runAdapterTool(resolver *config.Resolver, tool string, args []string, stdou
 	var matched *adapterpkg.Adapter
 	for _, candidate := range installed {
 		commandMatch := candidate.HasCommand(tool) || candidate.HasComputerCommand(tool)
-		if (candidate.Manifest.Kind != "selector" && candidate.Manifest.Kind != "container" && !candidate.IsComputerEndpoint()) || (candidate.Manifest.Name != tool && !commandMatch) {
+		if !candidate.SupportsSurface("shell") || !candidate.HasCapability("run") || (candidate.Manifest.Name != tool && !commandMatch) {
 			continue
 		}
 		if matched != nil {
@@ -253,7 +250,7 @@ func runAdapterTool(resolver *config.Resolver, tool string, args []string, stdou
 	if err != nil {
 		return reportError(stderr, err)
 	}
-	if selection == "" && matched.Manifest.Kind != "container" && !matched.IsComputerEndpoint() {
+	if selection == "" && !matched.IsRuntime("virtualizer") && !matched.IsComputerEndpoint() {
 		fmt.Fprintf(stderr, "ctx: no %s selection; run ctx set %s <name>\n", matched.Manifest.Name, matched.Manifest.Name)
 		return 1
 	}
@@ -269,11 +266,13 @@ func listContexts(resolver *config.Resolver, args []string, stdout, stderr io.Wr
 	switch selector {
 	case "browser":
 		return listBrowsers(resolver, stdout, stderr)
-	case "container":
-		return listContainers(resolver, stdout, stderr)
+	case "virtualizer", "container":
+		return listVirtualizers(resolver, stdout, stderr)
+	case "computer":
+		return listProviderFamily(resolver, "computer", true, stdout, stderr)
 	}
 	candidate, err := adapterStore().Load(selector)
-	if err != nil || (candidate.Manifest.Kind != "selector" && candidate.Manifest.Kind != "container") {
+	if err != nil || !candidate.IsSelectable() || !candidate.HasCapability("list") {
 		fmt.Fprintf(stderr, "ctx: unknown selector %s\n", selector)
 		return 2
 	}
@@ -284,11 +283,11 @@ func listBrowsers(resolver *config.Resolver, stdout, stderr io.Writer) int {
 	return listProviderFamily(resolver, "browser", true, stdout, stderr)
 }
 
-func listContainers(resolver *config.Resolver, stdout, stderr io.Writer) int {
-	return listProviderFamily(resolver, "container", true, stdout, stderr)
+func listVirtualizers(resolver *config.Resolver, stdout, stderr io.Writer) int {
+	return listProviderFamily(resolver, "virtualizer", true, stdout, stderr)
 }
 
-func listProviderFamily(resolver *config.Resolver, kind string, prefix bool, stdout, stderr io.Writer) int {
+func listProviderFamily(resolver *config.Resolver, runtimeName string, prefix bool, stdout, stderr io.Writer) int {
 	installed, err := adapterStore().List()
 	if err != nil {
 		return reportError(stderr, err)
@@ -296,7 +295,7 @@ func listProviderFamily(resolver *config.Resolver, kind string, prefix bool, std
 	found := false
 	var failures bytes.Buffer
 	for _, candidate := range installed {
-		if candidate.Manifest.Kind != kind {
+		if !candidate.IsRuntime(runtimeName) || !candidate.HasCapability("list") {
 			continue
 		}
 		var output, adapterError bytes.Buffer
@@ -312,7 +311,7 @@ func listProviderFamily(resolver *config.Resolver, kind string, prefix bool, std
 		}
 		if output.Len() > 0 {
 			found = true
-			if prefix && kind == "container" {
+			if prefix && runtimeName != "browser" {
 				for _, selection := range strings.Split(strings.TrimSpace(output.String()), "\n") {
 					if selection != "" {
 						fmt.Fprintf(stdout, "%s:%s\n", candidate.Manifest.Name, selection)
@@ -325,7 +324,7 @@ func listProviderFamily(resolver *config.Resolver, kind string, prefix bool, std
 	}
 	if !found {
 		_, _ = io.Copy(stderr, &failures)
-		fmt.Fprintf(stderr, "ctx: no supported %s contexts found\n", kind)
+		fmt.Fprintf(stderr, "ctx: no supported %s contexts found\n", runtimeName)
 		return 1
 	}
 	return 0
@@ -346,7 +345,7 @@ func openBrowser(resolver *config.Resolver, args []string, stdout, stderr io.Wri
 		return 1
 	}
 	candidate, err := adapterStore().Load(provider)
-	if err != nil || candidate.Manifest.Kind != "browser" {
+	if err != nil || !candidate.IsRuntime("browser") || !candidate.SupportsSurface("web") {
 		fmt.Fprintf(stderr, "ctx: invalid browser provider %s\n", provider)
 		return 1
 	}
@@ -377,7 +376,7 @@ func doctor(resolver *config.Resolver, stdout, stderr io.Writer) int {
 		checked++
 		provider, profile, ok := strings.Cut(resolved.Value, ":")
 		candidate, loadErr := adapterStore().Load(provider)
-		if !ok || loadErr != nil || candidate.Manifest.Kind != "browser" || invokeAdapter(resolver, candidate, "doctor", profile, nil, "", io.Discard, io.Discard) != 0 {
+		if !ok || loadErr != nil || !candidate.IsRuntime("browser") || invokeAdapter(resolver, candidate, "doctor", profile, nil, "", io.Discard, io.Discard) != 0 {
 			fmt.Fprintf(stdout, "fail browser %s is unavailable\n", resolved.Value)
 			failures++
 		} else {
@@ -390,20 +389,15 @@ func doctor(resolver *config.Resolver, stdout, stderr io.Writer) int {
 		return reportError(stderr, err)
 	}
 	for _, candidate := range installed {
-		if candidate.Manifest.Kind != "selector" && candidate.Manifest.Kind != "container" && !candidate.IsComputerEndpoint() {
+		if candidate.IsRuntime("browser") || !candidate.SupportsSurface("shell") {
 			continue
 		}
 		selection, err := adapterSelection(resolver, candidate)
-		if err != nil || (selection == "" && !candidate.IsComputerEndpoint()) {
+		if err != nil || (selection == "" && candidate.IsSelectable() && !candidate.IsRuntime("virtualizer")) {
 			continue
 		}
 		checked++
-		label := candidate.Manifest.Kind
-		if candidate.IsComputerEndpoint() {
-			label = "computer"
-		} else if label == "selector" {
-			label = "adapter"
-		}
+		label := candidate.Manifest.Runtime
 		if invokeAdapter(resolver, candidate, "doctor", selection, nil, "", io.Discard, io.Discard) != 0 {
 			fmt.Fprintf(stdout, "fail %s %s %s is unavailable\n", label, candidate.Manifest.Name, selection)
 			failures++
@@ -421,14 +415,14 @@ func doctor(resolver *config.Resolver, stdout, stderr io.Writer) int {
 }
 
 func adapterSelection(resolver *config.Resolver, candidate *adapterpkg.Adapter) (string, error) {
-	if candidate.Manifest.Kind == "" {
+	if !candidate.IsSelectable() {
 		return "", nil
 	}
 	resolved, err := resolver.Resolve(candidate.Manifest.SelectorKey)
 	if err != nil {
 		return "", err
 	}
-	if candidate.Manifest.Kind != "browser" || resolved.Value == "" {
+	if !candidate.IsRuntime("browser") || resolved.Value == "" {
 		return resolved.Value, nil
 	}
 	provider, profile, ok := strings.Cut(resolved.Value, ":")
@@ -457,7 +451,7 @@ func invokeAdapterIO(resolver *config.Resolver, candidate *adapterpkg.Adapter, o
 	}
 	profile, _, _ := resolver.ActiveProfile()
 	realCommand := ""
-	if candidate.Manifest.Kind == "container" || (candidate.IsComputerEndpoint() && (operation == "run" || operation == "doctor" || operation == "plugin" || requestedCommand != "")) {
+	if candidate.IsRuntime("virtualizer") || (candidate.IsComputerEndpoint() && (operation == "run" || operation == "doctor" || operation == "plugin" || requestedCommand != "")) {
 		commandName := ""
 		if candidate.HasCommand(requestedCommand) || candidate.HasComputerCommand(requestedCommand) {
 			commandName = requestedCommand

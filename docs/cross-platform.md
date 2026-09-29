@@ -13,8 +13,8 @@ PowerShell implementations where Windows needs them.
   selection through `ctx run`.
 - Native compilation on macOS, Linux, and Windows.
 - Windows `.cmd` engine shims and a PowerShell source installer.
-- Adapter v1 discovery, checksum trust, lifecycle commands, and process dispatch.
-- Selector adapters for Kubernetes, cloud CLIs, and databases.
+- Adapter API v2.0 discovery, checksum trust, lifecycle commands, and process dispatch.
+- Computer-runtime adapters for Kubernetes, cloud CLIs, and databases.
 - Browser-provider aggregation, validation, launching, and diagnostics.
 - Atomic, lock-protected `set`, `clear`, and profile configuration mutations.
 - Registry-backed build caches plus image and named-volume transfers across
@@ -48,9 +48,10 @@ The intended 0.8 command surface is implemented and the native executable is the
 default installer target. Release candidates must still pass real-machine soak
 testing on Windows, macOS, and Linux before a stable tag is published.
 
-The target architecture keeps `shell`, `browser`, and `container` as ctx context
-families. Individual applications are first-party or external providers, so
-operating-system support and CLI-specific behavior live in provider packages
-rather than accumulating platform or engine switches in the core. Container
-providers are discovered from installed `kind = "container"` adapters; adding one
-does not require recompiling ctx.
+The architecture separates three runtimes—`computer`, `virtualizer`, and
+`browser`—from two interaction surfaces: `shell` and `web`. Individual
+applications are maintained or external providers, so operating-system support
+and CLI-specific behavior live in adapter packages rather than accumulating
+platform or engine switches in the core. Providers are discovered from their
+API v2.0 `runtime`, `surfaces`, and `capabilities`; adding one does not require
+recompiling ctx.

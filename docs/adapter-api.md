@@ -1,4 +1,4 @@
-# ctx adapter API v1
+# ctx adapter API v2.0
 
 An external adapter is a directory containing `adapter.toml` and at least one
 executable.
@@ -8,9 +8,10 @@ code from the current directory or arbitrary `PATH` entries.
 ## Manifest
 
 ~~~toml
-api_version = "1"
+api_version = "2.0"
 name = "example"
-kind = "selector"
+runtime = "computer"
+surfaces = "shell,web"
 executable = "ctx-example"
 # Optional native Windows implementation. When absent, executable is used.
 executable_windows = "ctx-example.ps1"
@@ -23,48 +24,65 @@ commands = "example,examplectl"
 share_spaces = "workspace,project"
 # Native variables that take priority over the stored selection.
 override_env = "EXAMPLE_CONTEXT,EXAMPLE_HOST"
-# Optional for kind = "container". At most one installed provider should set it.
+# Optional for the virtualizer runtime. At most one installed provider should set it.
 default_provider = "false"
 ~~~
 
 Names use lowercase letters, numbers, and underscores, and cannot collide with a
-context family or ctx command. `validate` and `doctor` are required. Selector,
-browser, and container adapters also require `run` or `open`; computer shims
-require `run`. `list` is optional.
+runtime, surface, or ctx command. `validate` and `doctor` are required. An
+adapter must provide `run` or `open`; `list` is optional.
 
-`kind` defaults to `selector` when no computer endpoint is declared. A selector
-adapter adds a top-level ctx selector.
-A `browser` adapter instead provides an engine to the built-in browser context;
-its `list` output uses `name:profile` values and `validate`, `doctor`, and `open`
-receive the profile portion as their selection.
+`runtime` identifies where the selected context executes:
 
-A `container` adapter provides an engine to the built-in container family. Its
-unqualified `list` output contains native context, connection, or namespace
-names; `ctx ls container` prefixes each result as `name:selection`. The provider
-may implement `build`, image, and volume capabilities in addition to normal
-`run` routing. `ctx share:container image copy` and
-`ctx share:container volume copy` resolve qualified endpoints
-dynamically, so third-party container providers need no core changes.
+- `computer` for host-native CLIs and applications, including cloud,
+  orchestration, database, and AI tools;
+- `virtualizer` for Docker, Podman, nerdctl/containerd, Apple Container, and
+  other providers that execute isolated workloads;
+- `browser` for browser-profile providers.
 
-`selector_key` defaults to the adapter name for selector and container
-adapters, and to `browser` for browser adapters. `extra_keys` declares
-additional profile values owned by the adapter. `commands` defaults to the
-adapter name for selector and container adapters and lets `ctx run` route
-native command names to the adapter. `override_env` declares native environment
-variables, in precedence order, that `ctx status` should report instead of the
-stored selection. The provider remains responsible for honoring them during
-`run`. `default_provider`
-lets backward-compatible unqualified build, image-sync, and
-volume endpoints choose a provider without hard-coding an engine in the core;
+`surfaces` identifies how users interact with the adapter. `shell` permits
+`run` and command shims; `web` permits `open`. An adapter may expose both.
+Capabilities describe what the adapter can actually do, so routing does not
+depend on a second category field. API v2.0 does not accept `kind`.
+
+A browser adapter normally uses `selector_key = "browser"`. Its `list` output
+uses `name:profile` values, while `validate`, `doctor`, and `open` receive only
+the profile portion as their selection.
+
+A virtualizer adapter's unqualified `list` output contains native context,
+connection, or namespace names. `ctx ls virtualizer` prefixes each result as
+`name:selection`. A provider may implement `build`, image, and volume
+capabilities in addition to normal `run` routing. `ctx share:virtualizer image
+copy` and `ctx share:virtualizer volume copy` resolve qualified endpoints
+dynamically, so additional providers need no core changes.
+
+`selector_key` defaults to the adapter name, or to `browser` for browser
+adapters. Direct computer integrations that only declare `computer_commands`
+or `computer_capabilities` need no selector. `extra_keys` declares additional
+profile values owned by the adapter. `commands` defaults to the adapter name
+for selectable non-browser adapters and lets `ctx run` route native command
+names to the adapter. `override_env` declares native environment variables, in
+precedence order, that `ctx status` should report instead of the stored
+selection. The provider remains responsible for honoring them during `run`.
+`default_provider` lets unqualified build, image-sync, and volume endpoints
+choose a virtualizer provider without hard-coding an engine in the core;
 multiple trusted defaults are reported as an error.
+
+ctx still loads API `1` and `1.0` manifests. Their legacy `kind` is translated
+at load time: `selector` becomes the `computer` runtime on the `shell` surface,
+`browser` becomes `browser` on `web`, and `container` becomes `virtualizer` on
+`shell`. New and updated adapters should use API `2.0`.
 
 ## Computer-side CLI integrations
 
-Computer integrations declare their host commands and capabilities directly,
-without a dedicated manifest kind. For example, a Claude package can declare:
+Computer integrations declare their host commands and capabilities directly.
+For example, a Claude package can declare:
 
 ~~~toml
+api_version = "2.0"
 name = "claude_code"
+runtime = "computer"
+surfaces = "shell"
 computer_commands = "claude"
 computer_capabilities = "hook,plugin"
 capabilities = "validate,doctor,run"
@@ -176,21 +194,25 @@ Every declared capability is invoked by the same protocol:
 ctx-example CAPABILITY SELECTION -- ARGUMENTS...
 ~~~
 
-Container capabilities currently understood by the core are `build`,
+Virtualizer capabilities currently understood by the core are `build`,
 `image_push`, `image_pull`, `image_save`, `image_load`, `volume_exists`,
 `volume_create`, `volume_export`, and `volume_import`. Image save arguments are
 `ARCHIVE IMAGE...`; image load receives `ARCHIVE`. Volume export writes a tar
 stream to stdout, while volume import reads a tar stream from stdin.
 
-Container resource transfers are exposed through `ctx share:container`.
-The installed container adapters register the actual image and volume
+Virtualizer resource transfers are exposed through `ctx share:virtualizer`.
+The installed virtualizer adapters register the actual image and volume
 capabilities, and ctx rejects a transfer when either endpoint lacks a needed
-capability. `ctx share:browser cookie` is a shell-only Firefox reader and local
-writer implemented by ctx. It uses a trusted installed Firefox browser adapter
-for provider identity, but cookie access uses the native profile database and
-does not invoke a browser extension. It can write one cookie to another closed
-Firefox profile, a new mode-0600 JSON file, or stdout for a pipe. Other browser
-engines and browser policies and keys still need provider-specific support.
+capability. `ctx share:browser cookie` is a shell-only browser profile reader
+implemented by ctx. It uses trusted installed browser adapters for provider
+identity, with internal cookie backends for Firefox, Chrome, and Chromium. The
+list path reads metadata only; file and pipe export load one selected value.
+The bundle includes normalized `same_site_policy` alongside the source numeric
+`same_site`, and preserves partition scope where available. Firefox can copy
+one unpartitioned cookie into another closed Firefox profile. Chrome and
+Chromium can export to a new mode-0600 JSON file or stdout for a pipe, but do
+not yet write native profiles. Safari, cross-browser profile import, browser
+policies, and keys still need provider-specific support.
 `ctx share:computer` is also reserved. Any other installed adapter can declare
 the `share` capability and optional `share_spaces` to register
 `ctx share:<space>` commands. When `share_spaces` is omitted, the adapter name
@@ -201,8 +223,8 @@ adapter owns their meaning.
 
 The process receives `CTX_ADAPTER_API`, `CTX_ADAPTER_NAME`,
 `CTX_ADAPTER_COMMAND`, `CTX_ADAPTER_REAL_COMMAND`, `CTX_PROJECT_DIR`, and
-`CTX_PROFILE`. For container providers, `CTX_ADAPTER_REAL_COMMAND` is the resolved
-underlying CLI path with ctx's transparent shim excluded. Values for declared
+`CTX_PROFILE`. For virtualizer providers, `CTX_ADAPTER_REAL_COMMAND` is the
+resolved underlying CLI path with ctx's transparent shim excluded. Values for declared
 keys are exported as `CTX_ADAPTER_VALUE_<UPPERCASE_KEY>`. A `configure` operation
 prints tab-separated `key<TAB>value` records for declared keys; ctx validates and
 writes them to `.ctx`. Selections are identifiers, never credentials. Exit status 0

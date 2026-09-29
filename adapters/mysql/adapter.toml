@@ -1,5 +1,7 @@
-api_version = "1"
+api_version = "2.0"
 name = "mysql"
+runtime = "computer"
+surfaces = "shell"
 executable = "ctx-mysql"
 executable_windows = "ctx-mysql.ps1"
 description = "First-party MySQL login-path adapter"

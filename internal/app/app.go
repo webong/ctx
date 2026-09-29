@@ -177,17 +177,17 @@ usage:
   ctx set <selector> <name> [options]
   ctx clear [selector|profile]
   ctx profile <ls|show|use|set|unset|env|env-unset|clear> [arguments...]
-  ctx adapter <ls [kind]|available|add|refresh|inspect|install|trust|test|doctor|remove> [arguments...]
+  ctx adapter <ls [runtime|surface]|available|add|refresh|inspect|install|trust|test|doctor|remove> [arguments...]
   ctx setup [adapters] [--all|--minimal|--adapters <name,...>]
   ctx ls <selector>
   ctx open [URL...]
   ctx doctor
   ctx build [provider] --cache-ref <registry-ref> [--] <build arguments>
-  ctx share:container image <sync|copy> [arguments...]
-  ctx share:container volume <export|import|copy> [arguments...]
+  ctx share:virtualizer image <sync|copy> [arguments...]
+  ctx share:virtualizer volume <export|import|copy> [arguments...]
   ctx share:browser cookie list [--from <browser:profile>] --site <URL>
   ctx share:browser cookie copy [--from <browser:profile>] --site <URL> --name <cookie>
-      [--domain <domain>] [--path <path>] [--origin-attributes <value>]
+      [--domain <domain>] [--path <path>] [--id <row-id>] [--origin-attributes <value>]
       (--to-profile <browser:profile> | --to-file <path> | --stdout) [--replace]
   ctx share:computer (reserved; unavailable)
   ctx share:<space> [arguments...] (when an adapter registers the space)
@@ -223,7 +223,7 @@ func status(resolver *config.Resolver, selectors []string, stdout, stderr io.Wri
 		selectors = []string{"browser", "profile"}
 		if installed, err := adapterStore().List(); err == nil {
 			for _, candidate := range installed {
-				if candidate.Manifest.Kind == "selector" || candidate.Manifest.Kind == "container" {
+				if candidate.IsSelectable() && !candidate.IsRuntime("browser") {
 					selectors = append(selectors, candidate.Manifest.Name)
 				}
 			}
@@ -236,7 +236,7 @@ func status(resolver *config.Resolver, selectors []string, stdout, stderr io.Wri
 	for _, selector := range selectors {
 		candidate, _ := adapterStore().Load(selector)
 		overrideEnv := []string(nil)
-		if candidate != nil && (candidate.Manifest.Kind == "selector" || candidate.Manifest.Kind == "container") {
+		if candidate != nil && candidate.IsSelectable() {
 			overrideEnv = candidate.Manifest.OverrideEnv
 		}
 		if value, source := environmentOverride(selector, overrideEnv); value != "" {
@@ -244,7 +244,7 @@ func status(resolver *config.Resolver, selectors []string, stdout, stderr io.Wri
 			continue
 		}
 		key := selector
-		if candidate != nil && (candidate.Manifest.Kind == "selector" || candidate.Manifest.Kind == "container") {
+		if candidate != nil && candidate.IsSelectable() {
 			key = candidate.Manifest.SelectorKey
 		}
 		resolved, err := resolver.Resolve(key)
@@ -278,7 +278,7 @@ func explain(resolver *config.Resolver, stdout, stderr io.Writer) int {
 	items := []struct{ label, key string }{{"profile", "profile"}, {"browser", "browser"}, {"shell-path", "shell_path"}}
 	if installed, err := adapterStore().List(); err == nil {
 		for _, candidate := range installed {
-			if candidate.Manifest.Kind == "container" || candidate.Manifest.Kind == "selector" {
+			if candidate.IsSelectable() && !candidate.IsRuntime("browser") {
 				items = append(items, struct{ label, key string }{candidate.Manifest.Name, candidate.Manifest.SelectorKey})
 			}
 		}

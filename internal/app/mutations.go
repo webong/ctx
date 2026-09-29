@@ -37,7 +37,7 @@ func setContext(resolver *config.Resolver, args []string, stdout, stderr io.Writ
 		}
 		provider, profile, ok := strings.Cut(selection, ":")
 		candidate, err := adapterStore().Load(provider)
-		if !ok || err != nil || candidate.Manifest.Kind != "browser" || invokeAdapter(resolver, candidate, "validate", profile, nil, "", io.Discard, stderr) != 0 {
+		if !ok || err != nil || !candidate.IsRuntime("browser") || invokeAdapter(resolver, candidate, "validate", profile, nil, "", io.Discard, stderr) != 0 {
 			fmt.Fprintf(stderr, "ctx: browser selection %s is unavailable\n", selection)
 			return 1
 		}
@@ -46,14 +46,14 @@ func setContext(resolver *config.Resolver, args []string, stdout, stderr io.Writ
 		}
 	default:
 		candidate, err := adapterStore().Load(selector)
-		if err != nil || (candidate.Manifest.Kind != "selector" && candidate.Manifest.Kind != "container") {
+		if err != nil || !candidate.IsSelectable() || candidate.IsRuntime("browser") {
 			fmt.Fprintf(stderr, "ctx: unknown selector %s\n", selector)
 			return 2
 		}
-		if candidate.Manifest.Kind == "container" {
+		if candidate.IsRuntime("virtualizer") {
 			global := len(options) == 1 && options[0] == "--global"
 			if len(options) != 0 && !global {
-				fmt.Fprintln(stderr, "ctx: container set only accepts --global")
+				fmt.Fprintln(stderr, "ctx: virtualizer provider set only accepts --global")
 				return 2
 			}
 			if code := invokeAdapter(resolver, candidate, "validate", selection, nil, "", io.Discard, stderr); code != 0 {
@@ -139,7 +139,7 @@ func clearContext(args []string, stdout, stderr io.Writer) int {
 	keys := []string{selector}
 	if selector == "profile" || selector == "browser" {
 		// The selector key is identical to its command name.
-	} else if candidate, err := adapterStore().Load(selector); err == nil && (candidate.Manifest.Kind == "selector" || candidate.Manifest.Kind == "container") {
+	} else if candidate, err := adapterStore().Load(selector); err == nil && candidate.IsSelectable() {
 		keys = candidate.ConfigKeys()
 	} else {
 		fmt.Fprintf(stderr, "ctx: cannot clear %s\n", selector)
@@ -273,7 +273,7 @@ func validProfileKey(key string) bool {
 		return false
 	}
 	for _, candidate := range installed {
-		if candidate.Manifest.Kind != "selector" && candidate.Manifest.Kind != "container" {
+		if !candidate.IsSelectable() {
 			continue
 		}
 		for _, configKey := range candidate.ConfigKeys() {

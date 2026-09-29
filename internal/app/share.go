@@ -14,9 +14,9 @@ func shareSpaceCommand(resolver *config.Resolver, space string, args []string, s
 		return 2
 	}
 	switch space {
-	case "container":
+	case "virtualizer", "container":
 		if len(args) == 0 {
-			fmt.Fprintln(stderr, "ctx: share:container requires image or volume")
+			fmt.Fprintln(stderr, "ctx: share:virtualizer requires image or volume")
 			return 2
 		}
 		switch args[0] {
@@ -25,7 +25,7 @@ func shareSpaceCommand(resolver *config.Resolver, space string, args []string, s
 		case "volume":
 			return volumeCommand(resolver, args[1:], stdout, stderr)
 		default:
-			fmt.Fprintln(stderr, "ctx: share:container requires image or volume")
+			fmt.Fprintln(stderr, "ctx: share:virtualizer requires image or volume")
 			return 2
 		}
 	case "browser":
