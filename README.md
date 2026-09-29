@@ -39,6 +39,21 @@ or more interaction surfaces: `shell` and `web`. Their capabilities decide what
 ctx can list, run, open, or share. This keeps tool-specific behavior in adapter
 packages while the core provides common discovery and routing.
 
+## What works today
+
+| Area | Current capability |
+| --- | --- |
+| Project contexts | Select native tool contexts in `.ctx`, group selections in profiles, inspect resolution, and apply profile environment values to a command or child shell. |
+| Computer tools | Route Kubernetes, AWS, gcloud, PostgreSQL, and MySQL commands through their selected contexts. Claude Code and Codex adapters provide CLI shims, project hooks, and native plugin delegation. |
+| Virtualizers | Route Docker, Podman, nerdctl, and Apple Container commands. Register named engine connections, use supported registry build caches, and transfer images or named volumes between engines. |
+| Browsers | Open URLs in a selected Firefox, Chrome, Chromium, or Safari profile. Browser adapters can share the resources listed [below](#browser-sharing). |
+| System graph | Scan trusted adapters for available contexts and capabilities, resolve usable providers, and inspect or export the local inventory. Other services can import the graph and supervisor Go packages. |
+| Extensions | Install bundled or third-party adapters. A prebuilt, platform-specific adapter archive works with a bare ctx binary; building an adapter from Go source requires Go. |
+
+Available operations depend on the installed, trusted adapter and its native
+tool. Use `ctx adapter inspect <name>` and `ctx share:browser capabilities
+--from <browser:profile>` to inspect a particular installation.
+
 ## Install
 
 ### macOS and Linux
@@ -74,6 +89,13 @@ $env:PATH = (Join-Path $env:LOCALAPPDATA 'Programs\ctx\bin') + ';' + $env:PATH
 
 For unattended Windows setup, use `-Adapters docker,kube,firefox` or
 `-AllAdapters` in place of `-Interactive`.
+The Windows installer writes PowerShell completion to
+`$env:APPDATA\ctx\ctx-completion.ps1` by default. Add this line to your
+PowerShell profile to enable it:
+
+```powershell
+. "$env:APPDATA\ctx\ctx-completion.ps1"
+```
 
 When a prebuilt release is available, macOS and Linux can download it without
 Go:
@@ -132,6 +154,7 @@ ctx run gcloud projects list
 ```
 
 Explicit CLI flags and environment variables still take priority over ctx.
+`ctx real docker` shows which Docker executable the ctx shim will launch.
 
 ## Browser and database contexts
 
@@ -171,6 +194,12 @@ ctx profile show client-a
 ctx doctor
 ```
 
+Use `ctx profile ls` to list profiles, `ctx profile unset <name> <key>` or
+`ctx profile env-unset <name> <variable>` to remove individual values, and
+`ctx profile clear` to stop using the project profile. A profile can also set
+`shell_path` to prepend a directory to `PATH` for commands launched through
+ctx.
+
 Apply the profile environment to one command or start a child shell:
 
 ```sh
@@ -178,6 +207,10 @@ ctx run -- npm test
 ctx shell
 ctx shell -- npm test
 ```
+
+`ctx env` prints the environment additions for the current profile, and
+`ctx shell --shell <executable>` chooses the child shell explicitly. `CTX_SHELL`
+sets the default child shell when `--shell` is omitted.
 
 Environment values are stored as plain text. Use them for ordinary configuration,
 not passwords, tokens, or private keys.
@@ -222,7 +255,7 @@ follows the runtime-neutral decision boundary and local operator controls descri
 [Neura for Builders](https://www.neurarelay.com/builders) and
 [Neura Local settings](https://www.neurarelay.com/operators#neura-local-settings).
 
-## Sharing container resources and build caches
+## Virtualizer sharing and build caches
 
 `ctx graph scan` discovers installed adapters and their declared capabilities.
 Trusted browser and virtualizer adapters can also supply named contexts. The
@@ -288,20 +321,42 @@ ctx share:virtualizer volume copy \
   postgres-data
 ```
 
+`image sync` pushes and pulls a registry reference when both adapters support
+it, and falls back to an archive transfer otherwise. `image copy` always uses
+an archive. `ctx share:container` is an alias for `ctx share:virtualizer`.
+You can also stream a named volume through a file or pipe:
+
+```sh
+ctx share:virtualizer volume export @orb postgres-data > postgres-data.tar
+ctx share:virtualizer volume import @desktop restored-data < postgres-data.tar
+```
+
 Volume copy is a point-in-time migration, not live synchronization. Stop or
 quiesce databases first. ctx refuses to import into an existing target volume.
 
-Apple Container uses the archive image copy path. `image sync` automatically
-uses an archive when an endpoint lacks registry push/pull; `image copy` always
-uses an archive. Apple Container
-image imports require a version newer than 1.3.0 because of
+Docker, Podman, and nerdctl adapters declare build, registry image transfer,
+archive image transfer, and named-volume transfer capabilities. Apple Container
+declares archive image and named-volume transfer, but no build or registry
+push/pull capability. Apple Container image imports require a version newer
+than 1.3.0 because of
 [GHSA-r3h2-rgqf-9hv9](https://github.com/apple/containerization/security/advisories/GHSA-r3h2-rgqf-9hv9).
+
+## Browser sharing
 
 `ctx share:browser` bridges browser resources through installed adapters.
 Its versioned JSON contract is documented in the adapter API. External Go
 adapters can use `github.com/webong/ctx/adapter/browser` for the shared types
 and validation helpers. CTX core does not contain browser storage or
 platform-specific code.
+
+| Bundled adapter | Declared share operations |
+| --- | --- |
+| Firefox | Cookie list, export, and import; policy export; certificate list, export, and import |
+| Chrome and Chromium | Cookie list, export, and import; policy export |
+| Safari | Policy export |
+
+The adapter's declared operations are the starting point; OS encryption and
+profile state can further limit an individual transfer.
 
 Firefox, Chrome, and Chromium can list and export a selected site cookie and
 import a supported cookie into a closed profile. Source and target may be
@@ -446,31 +501,42 @@ See [Adapters](adapters/README.md) for the bundled packages and
 
 | Command | Purpose |
 | --- | --- |
+| `ctx version` | Show the installed ctx version |
 | `ctx ls <runtime-or-selector>` | List available contexts |
 | `ctx set <adapter>:<selection>` | Select a context using its adapter's declared runtime |
 | `ctx set <selector> <name>` | Select a context with the existing two-argument form |
 | `ctx clear [selector]` | Remove one or all project selections |
+| `ctx profile <ls|show|use|set|unset|env|env-unset|clear> ...` | Manage named profiles and their environment values |
 | `ctx status` | Show active selections |
+| `ctx resolve <key>` | Print one resolved configuration value |
 | `ctx explain` | Show resolved values and their sources |
+| `ctx env` | Print environment additions for the active profile |
+| `ctx real <command>` | Find the native executable behind a ctx shim |
 | `ctx run <tool> ...` | Run a tool with its selected context |
 | `ctx run -- <command> ...` | Run any command with the profile environment |
-| `ctx shell` | Start a child shell with the profile environment |
+| `ctx shell [--shell <executable>]` | Start a child shell with the profile environment |
 | `ctx open <url>` | Open a URL with the selected browser profile |
 | `ctx hook computer <adapter> <event>` | Pass a computer hook event through a trusted adapter |
+| `ctx computer hooks <print|install|remove> ...` | Manage ctx entries in supported AI CLI project settings |
 | `ctx plugin computer <adapter> ...` | Run a computer integration's plugin operation |
+| `ctx setup [--all|--minimal|--adapters <names>]` | Select bundled adapters to activate |
+| `ctx adapter <ls|available|add|refresh|inspect|trust|test|doctor|remove> ...` | Inspect and manage adapter packages |
 | `ctx adapter build <source>` | Compile a Go adapter into a platform archive |
 | `ctx adapter pack <directory>` | Archive an already built adapter package |
 | `ctx adapter index <output> <archives...>` | Create a platform index with archive checksums |
 | `ctx adapter install <source>` | Install a local directory, archive, or pinned HTTPS package |
 | `ctx virtualizer <add|ls|show|remove> ...` | Register named virtualizer instances for sharing and builds |
+| `ctx build [provider|@instance] --cache-ref <ref> -- <args>` | Build with a registry-backed cache on a capable virtualizer |
 | `ctx share:virtualizer image <sync|copy> ...` | Transfer images through installed virtualizer providers |
 | `ctx share:virtualizer volume <export|import|copy> ...` | Transfer named volumes through installed virtualizer providers |
 | `ctx share:browser cookie <list|copy|import> ...` | List, export, or import one site cookie through browser adapters |
 | `ctx share:browser policy export ...` | Export browser policy sources to a protected bundle or pipe |
+| `ctx share:browser certificate <list|export|copy|import> ...` | Share an exportable certificate through a capable browser adapter |
 | `ctx share:browser capabilities ...` | Show a browser adapter's share operations |
 | `ctx share:<space> ...` | Invoke a trusted adapter's registered share operation |
 | `ctx doctor` | Validate configured selections and adapters |
 | `ctx hook <bash|zsh|powershell>` | Generate an optional shell prompt observer |
+| `ctx completion powershell` | Generate dynamic PowerShell command completion |
 | `ctx graph status` | Show the local system graph revision and size |
 | `ctx graph scan` | Refresh the machine's adapter, capability, and context inventory |
 | `ctx graph resolve [runtime|all] [capability...]` | Discover usable contexts from the refreshed graph |
@@ -537,11 +603,11 @@ browser windows is not collected yet.
 Project selections live in `.ctx`. In Git repositories, ctx adds that file to
 the repository's local exclude list instead of modifying `.gitignore`.
 
-Global defaults, project mappings, profiles, and profile environments live in:
-
-```text
-$HOME/.config/ctx/config.toml
-```
+Global defaults, project mappings, profiles, and profile environments live in
+`$HOME/.config/ctx/config.toml` on macOS and Linux, and
+`$env:APPDATA\ctx\config.toml` on Windows. `CTX_HOME` overrides the containing
+directory. A virtualizer's global fallback can be set with
+`ctx set docker <context> --global` (or another capable virtualizer adapter).
 
 Resolution follows this order:
 
@@ -560,9 +626,10 @@ not imported automatically.
 
 ## Uninstall
 
-Remove the ctx-owned executables from `$HOME/.local/bin`. Configuration and
-installed adapters are stored under `$HOME/.config/ctx` unless `CTX_HOME` was
-changed.
+Remove the ctx-owned executables from `$HOME/.local/bin` on macOS and Linux, or
+`$env:LOCALAPPDATA\Programs\ctx\bin` on Windows. Configuration and installed
+adapters are stored under `$HOME/.config/ctx` on macOS and Linux, or
+`$env:APPDATA\ctx` on Windows, unless `CTX_HOME` was changed.
 
 ## License
 
