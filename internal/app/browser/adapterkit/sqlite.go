@@ -1,4 +1,4 @@
-package browsercommon
+package adapterkit
 
 import (
 	"context"

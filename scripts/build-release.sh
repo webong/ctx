@@ -35,6 +35,7 @@ build_bundle() {
       -o "$bundle/adapters/$adapter/ctx-$adapter-share$extension" "./adapters/$adapter/native")
     rm -rf "$bundle/adapters/$adapter/native"
   done
+  rm -rf "$bundle/adapters/chromium/engine"
   cp "$ROOT/LICENSE" "$ROOT/README.md" "$bundle/"
 
   if [ "$os" = windows ]; then

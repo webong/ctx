@@ -283,9 +283,9 @@ image imports require a version newer than 1.3.0 because of
 [GHSA-r3h2-rgqf-9hv9](https://github.com/apple/containerization/security/advisories/GHSA-r3h2-rgqf-9hv9).
 
 `ctx share:browser` bridges browser resources through installed adapters.
-Its versioned wire types and validation helpers are available to other Go
-adapters in `github.com/webong/ctx/browser/share`; CTX core does not contain
-browser storage or platform-specific code.
+Its versioned JSON contract is documented in the adapter API; CTX's shared Go
+types and validation helpers live in `internal/app/browser/share`. CTX core does
+not contain browser storage or platform-specific code.
 Firefox, Chrome, and Chromium can list and export a selected site cookie and
 import a supported cookie into a closed profile. Source and target may be
 different browser providers. It runs as a shell command and does not require

@@ -6,7 +6,7 @@ import (
 	"os"
 	"runtime"
 
-	native "github.com/webong/ctx/adapters/browsercommon"
+	kit "github.com/webong/ctx/internal/app/browser/adapterkit"
 )
 
 func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) }
@@ -16,5 +16,5 @@ func run(args []string, input io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "ctx: Safari sharing supports policy export from the default macOS profile")
 		return 2
 	}
-	return native.RunPolicyExport(input, stdout, stderr, native.PolicySources{Files: native.ManagedPreferenceFiles("com.apple.Safari")})
+	return kit.RunPolicyExport(input, stdout, stderr, kit.PolicySources{Files: kit.ManagedPreferenceFiles("com.apple.Safari")})
 }

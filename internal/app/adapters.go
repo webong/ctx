@@ -11,17 +11,17 @@ import (
 	"sync/atomic"
 	"time"
 
-	adapterpkg "github.com/webong/ctx/internal/adapter"
 	"github.com/webong/ctx/internal/config"
 	"github.com/webong/ctx/internal/launch"
+	modpkg "github.com/webong/ctx/internal/mod"
 )
 
-func adapterStore() *adapterpkg.Store {
+func adapterStore() *modpkg.Store {
 	home := os.Getenv("CTX_ADAPTER_HOME")
 	if home == "" {
 		home = filepath.Join(configHomePath(), "adapters")
 	}
-	return adapterpkg.NewStore(home)
+	return modpkg.NewStore(home)
 }
 
 func adapterCommand(resolver *config.Resolver, args []string, stdout, stderr io.Writer) int {
@@ -177,11 +177,11 @@ func adapterCommand(resolver *config.Resolver, args []string, stdout, stderr io.
 			fmt.Fprintln(stderr, "ctx: adapter test needs an adapter directory")
 			return 2
 		}
-		candidate, err := adapterpkg.LoadDirectory(args[1])
+		candidate, err := modpkg.LoadDirectory(args[1])
 		if err != nil {
 			return reportError(stderr, err)
 		}
-		invocation, err := candidate.Command(adapterpkg.Invocation{Operation: "doctor", Project: currentDirectory()})
+		invocation, err := candidate.Command(modpkg.Invocation{Operation: "doctor", Project: currentDirectory()})
 		if err != nil {
 			return reportError(stderr, err)
 		}
@@ -232,7 +232,7 @@ func runAdapterTool(resolver *config.Resolver, tool string, args []string, stdou
 	if err != nil {
 		return reportError(stderr, err)
 	}
-	var matched *adapterpkg.Adapter
+	var matched *modpkg.Adapter
 	for _, candidate := range installed {
 		commandMatch := candidate.HasCommand(tool) || candidate.HasComputerCommand(tool)
 		if !candidate.SupportsSurface("shell") || !candidate.HasCapability("run") || (candidate.Manifest.Name != tool && !commandMatch) {
@@ -470,7 +470,7 @@ func doctor(resolver *config.Resolver, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func adapterSelection(resolver *config.Resolver, candidate *adapterpkg.Adapter) (string, error) {
+func adapterSelection(resolver *config.Resolver, candidate *modpkg.Adapter) (string, error) {
 	if !candidate.IsSelectable() {
 		return "", nil
 	}
@@ -488,15 +488,15 @@ func adapterSelection(resolver *config.Resolver, candidate *adapterpkg.Adapter) 
 	return profile, nil
 }
 
-func invokeAdapter(resolver *config.Resolver, candidate *adapterpkg.Adapter, operation, selection string, args []string, requestedCommand string, stdout, stderr io.Writer) int {
+func invokeAdapter(resolver *config.Resolver, candidate *modpkg.Adapter, operation, selection string, args []string, requestedCommand string, stdout, stderr io.Writer) int {
 	return invokeAdapterIO(resolver, candidate, operation, selection, args, requestedCommand, os.Stdin, stdout, stderr)
 }
 
-func invokeAdapterIO(resolver *config.Resolver, candidate *adapterpkg.Adapter, operation, selection string, args []string, requestedCommand string, stdin io.Reader, stdout, stderr io.Writer) int {
+func invokeAdapterIO(resolver *config.Resolver, candidate *modpkg.Adapter, operation, selection string, args []string, requestedCommand string, stdin io.Reader, stdout, stderr io.Writer) int {
 	return invokeAdapterIOWithEnv(resolver, candidate, operation, selection, args, requestedCommand, stdin, stdout, stderr, nil)
 }
 
-func invokeAdapterIOWithEnv(resolver *config.Resolver, candidate *adapterpkg.Adapter, operation, selection string, args []string, requestedCommand string, stdin io.Reader, stdout, stderr io.Writer, extraEnv map[string]string) int {
+func invokeAdapterIOWithEnv(resolver *config.Resolver, candidate *modpkg.Adapter, operation, selection string, args []string, requestedCommand string, stdin io.Reader, stdout, stderr io.Writer, extraEnv map[string]string) int {
 	store := adapterStore()
 	if err := store.AssertTrusted(candidate); err != nil {
 		return reportError(stderr, err)
@@ -529,7 +529,7 @@ func invokeAdapterIOWithEnv(resolver *config.Resolver, candidate *adapterpkg.Ada
 			return reportErrorCode(stderr, err, 127)
 		}
 	}
-	command, err := candidate.Command(adapterpkg.Invocation{
+	command, err := candidate.Command(modpkg.Invocation{
 		Operation: operation, Selection: selection, Arguments: args, Values: values,
 		Profile: profile, Project: currentDirectory(), Command: requestedCommand, RealCommand: realCommand,
 	})

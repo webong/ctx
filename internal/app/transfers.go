@@ -9,12 +9,12 @@ import (
 	"time"
 
 	systemgraph "github.com/webong/ctx/graph/system"
-	adapterpkg "github.com/webong/ctx/internal/adapter"
 	"github.com/webong/ctx/internal/config"
+	modpkg "github.com/webong/ctx/internal/mod"
 )
 
 type endpoint struct {
-	Provider *adapterpkg.Adapter
+	Provider *modpkg.Adapter
 	Name     string
 	Instance *virtualizerInstance
 }
@@ -87,7 +87,7 @@ parsed:
 	return invokeAdapter(resolver, provider, "build", selection, operationArgs, "", stdout, stderr)
 }
 
-func virtualizerProviderForBuild(resolver *config.Resolver, name string) (*adapterpkg.Adapter, error) {
+func virtualizerProviderForBuild(resolver *config.Resolver, name string) (*modpkg.Adapter, error) {
 	if name != "" {
 		return virtualizerProvider(name)
 	}
@@ -434,14 +434,14 @@ func parseEndpointWithDefault(resolver *config.Resolver, value string) (endpoint
 	return endpoint{Provider: provider, Name: value}, nil
 }
 
-func virtualizerProvider(name string) (*adapterpkg.Adapter, error) {
+func virtualizerProvider(name string) (*modpkg.Adapter, error) {
 	if name == "" {
 		store := adapterStore()
 		installed, err := store.List()
 		if err != nil {
 			return nil, err
 		}
-		var defaultProvider *adapterpkg.Adapter
+		var defaultProvider *modpkg.Adapter
 		for _, candidate := range installed {
 			if !candidate.IsRuntime("virtualizer") || !candidate.Manifest.DefaultProvider {
 				continue

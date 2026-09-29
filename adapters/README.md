@@ -17,6 +17,8 @@ installer copies those launcher files into the binary directory under the native
 command names so ordinary commands can be context-aware. The provider
 implementations themselves remain installed and trusted under
 `$CTX_HOME/adapters`.
+The `internal/mod` Go package manages these ctx modifications: manifests,
+installation, trust, and invocation. Provider behavior stays in `adapters/`.
 
 `firefox`, `chrome`, `chromium`, and `safari` are browser providers. The built-in
 `browser` context aggregates them while each provider owns application-specific
@@ -25,8 +27,9 @@ profile discovery, validation, launching, and declared browser share operations.
 versioned JSON protocol in [the adapter API](../docs/adapter-api.md).
 Release and source installers build a separate share executable from each
 browser adapter's `native` directory. Shared request handling, policy reading,
-and SQLite access live in `adapters/browsercommon`; Chrome and Chromium share
-their storage engine through `adapters/chromiumengine`. The executable is part
+and SQLite access live in `internal/app/browser/adapterkit`; Chrome and other
+Chromium-based adapters can use the engine owned by `adapters/chromium/engine`.
+The executable is part
 of that adapter's trusted checksum; CTX core only routes
 the declared operation and validates the shared envelope.
 The installers update the catalog and refresh active browser adapters with the

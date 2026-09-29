@@ -1,4 +1,4 @@
-package chromiumengine
+package chromium
 
 import (
 	"bytes"

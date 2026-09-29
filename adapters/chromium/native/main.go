@@ -7,9 +7,9 @@ import (
 	"os"
 	"runtime"
 
-	native "github.com/webong/ctx/adapters/browsercommon"
-	"github.com/webong/ctx/adapters/chromiumengine"
-	"github.com/webong/ctx/browser/share"
+	chromiumengine "github.com/webong/ctx/adapters/chromium/engine"
+	kit "github.com/webong/ctx/internal/app/browser/adapterkit"
+	"github.com/webong/ctx/internal/app/browser/share"
 )
 
 func chromiumConfig() chromiumengine.Config {
@@ -31,7 +31,7 @@ func run(args []string, input io.Reader, stdout, stderr io.Writer) int {
 	chromium := chromiumConfig()
 	switch resource {
 	case "cookie":
-		return native.RunCookie(profile, operation, input, stdout, stderr, native.CookieBackend{
+		return kit.RunCookie(profile, operation, input, stdout, stderr, kit.CookieBackend{
 			List: func(profile string, site *url.URL, name string) ([]share.Cookie, string, error) {
 				return chromiumengine.List(chromium, profile, site, name)
 			},
@@ -44,25 +44,25 @@ func run(args []string, input io.Reader, stdout, stderr io.Writer) int {
 		})
 	case "policy":
 		if operation == "export" {
-			return native.RunPolicyExport(input, stdout, stderr, chromiumPolicies())
+			return kit.RunPolicyExport(input, stdout, stderr, chromiumPolicies())
 		}
 	}
 	fmt.Fprintln(stderr, "ctx: unsupported Chromium share resource or operation")
 	return 2
 }
 
-func chromiumPolicies() native.PolicySources {
+func chromiumPolicies() kit.PolicySources {
 	switch runtime.GOOS {
 	case "linux":
-		return native.PolicySources{Roots: []native.PolicyRoot{
+		return kit.PolicySources{Roots: []kit.PolicyRoot{
 			{Path: "/etc/chromium/policies/managed", Level: "managed"}, {Path: "/etc/chromium/policies/recommended", Level: "recommended"},
 			{Path: "/etc/chromium-browser/policies/managed", Level: "managed"}, {Path: "/etc/chromium-browser/policies/recommended", Level: "recommended"},
 		}}
 	case "darwin":
-		return native.PolicySources{Files: native.ManagedPreferenceFiles("org.chromium.Chromium")}
+		return kit.PolicySources{Files: kit.ManagedPreferenceFiles("org.chromium.Chromium")}
 	case "windows":
-		return native.PolicySources{RegistryKey: `Software\Policies\Chromium`}
+		return kit.PolicySources{RegistryKey: `Software\Policies\Chromium`}
 	default:
-		return native.PolicySources{}
+		return kit.PolicySources{}
 	}
 }

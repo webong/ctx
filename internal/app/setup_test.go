@@ -5,14 +5,14 @@ import (
 	"reflect"
 	"testing"
 
-	adapterpkg "github.com/webong/ctx/internal/adapter"
+	modpkg "github.com/webong/ctx/internal/mod"
 )
 
 func TestParseAdapterSelectionNamesAndNumbers(t *testing.T) {
-	available := []*adapterpkg.Adapter{
-		{Manifest: adapterpkg.Manifest{Name: "docker"}},
-		{Manifest: adapterpkg.Manifest{Name: "kube"}},
-		{Manifest: adapterpkg.Manifest{Name: "firefox"}},
+	available := []*modpkg.Adapter{
+		{Manifest: modpkg.Manifest{Name: "docker"}},
+		{Manifest: modpkg.Manifest{Name: "kube"}},
+		{Manifest: modpkg.Manifest{Name: "firefox"}},
 	}
 	got, err := parseAdapterSelection("2,docker,2", available)
 	if err != nil {
@@ -36,7 +36,7 @@ func TestSetupMinimalDoesNotRequireCatalog(t *testing.T) {
 }
 
 func TestParseAdapterSelectionRejectsUnknown(t *testing.T) {
-	available := []*adapterpkg.Adapter{{Manifest: adapterpkg.Manifest{Name: "docker"}}}
+	available := []*modpkg.Adapter{{Manifest: modpkg.Manifest{Name: "docker"}}}
 	if _, err := parseAdapterSelection("unknown", available); err == nil {
 		t.Fatal("unknown adapter was accepted")
 	}

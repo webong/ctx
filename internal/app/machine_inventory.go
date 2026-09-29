@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/webong/ctx/graph/system"
-	adapterpkg "github.com/webong/ctx/internal/adapter"
 	"github.com/webong/ctx/internal/config"
+	modpkg "github.com/webong/ctx/internal/mod"
 )
 
 // scanMachineInventory asks installed adapters for their declared capabilities
@@ -30,7 +30,7 @@ func scanMachineInventory(resolver *config.Resolver, system *systemgraph.Graph) 
 	for index, candidate := range installed {
 		workers.Add(1)
 		limit <- struct{}{}
-		go func(index int, candidate *adapterpkg.Adapter) {
+		go func(index int, candidate *modpkg.Adapter) {
 			defer workers.Done()
 			defer func() { <-limit }()
 			observations[index], errors[index] = observeAdapterCandidate(resolver, store, candidate)
@@ -66,7 +66,7 @@ func scanMachineInventory(resolver *config.Resolver, system *systemgraph.Graph) 
 	return observations, system.ObserveInventory(context.Background(), observations, aliases)
 }
 
-func observeAdapterCandidate(resolver *config.Resolver, store *adapterpkg.Store, candidate *adapterpkg.Adapter) (systemgraph.AdapterObservation, error) {
+func observeAdapterCandidate(resolver *config.Resolver, store *modpkg.Store, candidate *modpkg.Adapter) (systemgraph.AdapterObservation, error) {
 	trusted, err := store.IsTrusted(candidate)
 	if err != nil {
 		return systemgraph.AdapterObservation{}, err

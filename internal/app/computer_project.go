@@ -14,8 +14,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/webong/ctx/internal/adapter"
 	"github.com/webong/ctx/internal/config"
+	modpkg "github.com/webong/ctx/internal/mod"
 )
 
 func computerCommand(args []string, stdout, stderr io.Writer) int {
@@ -209,7 +209,7 @@ func resolveComputerHookHandler(projectRoot, handler string) (string, error) {
 	return absolute, nil
 }
 
-func parseComputerHookEvents(candidate *adapter.Adapter, value string) ([]string, error) {
+func parseComputerHookEvents(candidate *modpkg.Adapter, value string) ([]string, error) {
 	supported := make(map[string]bool, len(candidate.Manifest.ComputerHookEvents))
 	for _, event := range candidate.Manifest.ComputerHookEvents {
 		supported[event] = true
@@ -233,7 +233,7 @@ func parseComputerHookEvents(candidate *adapter.Adapter, value string) ([]string
 	return events, nil
 }
 
-func renderComputerHookPatch(candidate *adapter.Adapter, events []string) (map[string]any, error) {
+func renderComputerHookPatch(candidate *modpkg.Adapter, events []string) (map[string]any, error) {
 	path := filepath.Join(candidate.Directory, filepath.FromSlash(candidate.Manifest.ComputerHookTemplate))
 	contents, err := os.ReadFile(path)
 	if err != nil {

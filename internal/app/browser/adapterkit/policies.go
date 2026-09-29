@@ -1,4 +1,4 @@
-package browsercommon
+package adapterkit
 
 import (
 	"bytes"
@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/webong/ctx/browser/share"
+	"github.com/webong/ctx/internal/app/browser/share"
 )
 
 type PolicyFile struct{ Path, Level, Format string }

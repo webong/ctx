@@ -7,9 +7,9 @@ import (
 	"os"
 	"runtime"
 
-	native "github.com/webong/ctx/adapters/browsercommon"
-	"github.com/webong/ctx/adapters/chromiumengine"
-	"github.com/webong/ctx/browser/share"
+	chromiumengine "github.com/webong/ctx/adapters/chromium/engine"
+	kit "github.com/webong/ctx/internal/app/browser/adapterkit"
+	"github.com/webong/ctx/internal/app/browser/share"
 )
 
 func chromeConfig() chromiumengine.Config {
@@ -31,7 +31,7 @@ func run(args []string, input io.Reader, stdout, stderr io.Writer) int {
 	chrome := chromeConfig()
 	switch resource {
 	case "cookie":
-		return native.RunCookie(profile, operation, input, stdout, stderr, native.CookieBackend{
+		return kit.RunCookie(profile, operation, input, stdout, stderr, kit.CookieBackend{
 			List: func(profile string, site *url.URL, name string) ([]share.Cookie, string, error) {
 				return chromiumengine.List(chrome, profile, site, name)
 			},
@@ -44,22 +44,22 @@ func run(args []string, input io.Reader, stdout, stderr io.Writer) int {
 		})
 	case "policy":
 		if operation == "export" {
-			return native.RunPolicyExport(input, stdout, stderr, chromePolicies())
+			return kit.RunPolicyExport(input, stdout, stderr, chromePolicies())
 		}
 	}
 	fmt.Fprintln(stderr, "ctx: unsupported Chrome share resource or operation")
 	return 2
 }
 
-func chromePolicies() native.PolicySources {
+func chromePolicies() kit.PolicySources {
 	switch runtime.GOOS {
 	case "linux":
-		return native.PolicySources{Roots: []native.PolicyRoot{{Path: "/etc/opt/chrome/policies/managed", Level: "managed"}, {Path: "/etc/opt/chrome/policies/recommended", Level: "recommended"}}}
+		return kit.PolicySources{Roots: []kit.PolicyRoot{{Path: "/etc/opt/chrome/policies/managed", Level: "managed"}, {Path: "/etc/opt/chrome/policies/recommended", Level: "recommended"}}}
 	case "darwin":
-		return native.PolicySources{Files: native.ManagedPreferenceFiles("com.google.Chrome")}
+		return kit.PolicySources{Files: kit.ManagedPreferenceFiles("com.google.Chrome")}
 	case "windows":
-		return native.PolicySources{RegistryKey: `Software\Policies\Google\Chrome`}
+		return kit.PolicySources{RegistryKey: `Software\Policies\Google\Chrome`}
 	default:
-		return native.PolicySources{}
+		return kit.PolicySources{}
 	}
 }

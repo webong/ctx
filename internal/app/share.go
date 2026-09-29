@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"io"
 
-	adapterpkg "github.com/webong/ctx/internal/adapter"
 	"github.com/webong/ctx/internal/config"
+	modpkg "github.com/webong/ctx/internal/mod"
 )
 
 func shareSpaceCommand(resolver *config.Resolver, space string, args []string, stdout, stderr io.Writer) int {
@@ -39,8 +39,8 @@ func shareSpaceCommand(resolver *config.Resolver, space string, args []string, s
 		if err != nil {
 			return reportError(stderr, err)
 		}
-		var matched *adapterpkg.Adapter
-		var untrusted *adapterpkg.Adapter
+		var matched *modpkg.Adapter
+		var untrusted *modpkg.Adapter
 		for _, candidate := range installed {
 			if !candidate.HasCapability("share") || !containsShareSpace(candidate.Manifest.ShareSpaces, space) {
 				continue

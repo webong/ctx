@@ -11,13 +11,13 @@ import (
 	"os"
 	"strings"
 
-	browsershare "github.com/webong/ctx/browser/share"
-	adapterpkg "github.com/webong/ctx/internal/adapter"
+	browsershare "github.com/webong/ctx/internal/app/browser/share"
 	"github.com/webong/ctx/internal/config"
+	modpkg "github.com/webong/ctx/internal/mod"
 )
 
 type browserEndpoint struct {
-	Adapter *adapterpkg.Adapter
+	Adapter *modpkg.Adapter
 	Profile string
 }
 

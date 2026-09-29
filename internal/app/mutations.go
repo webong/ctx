@@ -11,8 +11,8 @@ import (
 	"sort"
 	"strings"
 
-	adapterpkg "github.com/webong/ctx/internal/adapter"
 	"github.com/webong/ctx/internal/config"
+	modpkg "github.com/webong/ctx/internal/mod"
 )
 
 var profileNamePattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
@@ -84,7 +84,7 @@ func setContext(resolver *config.Resolver, args []string, stdout, stderr io.Writ
 	return 0
 }
 
-func configureAdapterSelection(resolver *config.Resolver, candidate *adapterpkg.Adapter, selection string, options []string, stderr io.Writer) (map[string]string, int) {
+func configureAdapterSelection(resolver *config.Resolver, candidate *modpkg.Adapter, selection string, options []string, stderr io.Writer) (map[string]string, int) {
 	if !candidate.HasCapability("configure") {
 		if len(options) != 0 {
 			fmt.Fprintf(stderr, "ctx: adapter %s does not accept selection options\n", candidate.Manifest.Name)

@@ -12,15 +12,15 @@ import (
 	"strconv"
 	"strings"
 
-	adapterpkg "github.com/webong/ctx/internal/adapter"
+	modpkg "github.com/webong/ctx/internal/mod"
 )
 
-func catalogStore() *adapterpkg.Store {
+func catalogStore() *modpkg.Store {
 	home := os.Getenv("CTX_CATALOG_HOME")
 	if home == "" {
 		home = filepath.Join(configHomePath(), "catalog", "adapters")
 	}
-	return adapterpkg.NewStore(home)
+	return modpkg.NewStore(home)
 }
 
 func setupCommand(args []string, input io.Reader, stdout, stderr io.Writer) int {
@@ -91,7 +91,7 @@ func setupUsage(stderr io.Writer) int {
 	return 2
 }
 
-func promptAdapterSelection(available []*adapterpkg.Adapter, input io.Reader, output io.Writer) (string, error) {
+func promptAdapterSelection(available []*modpkg.Adapter, input io.Reader, output io.Writer) (string, error) {
 	installed := installedAdapterNames()
 	fmt.Fprintln(output, "Available adapters:")
 	for index, candidate := range available {
@@ -112,7 +112,7 @@ func promptAdapterSelection(available []*adapterpkg.Adapter, input io.Reader, ou
 	return strings.TrimSpace(line), nil
 }
 
-func parseAdapterSelection(value string, available []*adapterpkg.Adapter) ([]string, error) {
+func parseAdapterSelection(value string, available []*modpkg.Adapter) ([]string, error) {
 	byName := make(map[string]bool, len(available))
 	for _, candidate := range available {
 		byName[candidate.Manifest.Name] = true
@@ -141,7 +141,7 @@ func parseAdapterSelection(value string, available []*adapterpkg.Adapter) ([]str
 	return names, nil
 }
 
-func catalogAdapterNames(available []*adapterpkg.Adapter) []string {
+func catalogAdapterNames(available []*modpkg.Adapter) []string {
 	names := make([]string, 0, len(available))
 	for _, candidate := range available {
 		names = append(names, candidate.Manifest.Name)
@@ -161,7 +161,7 @@ func installedAdapterNames() map[string]bool {
 	return result
 }
 
-func addCatalogAdapter(name string) (*adapterpkg.Adapter, error) {
+func addCatalogAdapter(name string) (*modpkg.Adapter, error) {
 	source, err := catalogStore().Load(name)
 	if err != nil {
 		return nil, fmt.Errorf("adapter %s is not available in the catalog: %w", name, err)
@@ -170,7 +170,7 @@ func addCatalogAdapter(name string) (*adapterpkg.Adapter, error) {
 		return nil, err
 	}
 	store := adapterStore()
-	var installed *adapterpkg.Adapter
+	var installed *modpkg.Adapter
 	if _, loadErr := store.Load(name); loadErr == nil {
 		installed, err = store.Replace(source.Directory)
 	} else {
@@ -216,7 +216,7 @@ func binaryDirectory() string {
 	return filepath.Dir(executable)
 }
 
-func adapterShimSources(candidate *adapterpkg.Adapter) map[string]string {
+func adapterShimSources(candidate *modpkg.Adapter) map[string]string {
 	result := map[string]string{}
 	commands := append([]string(nil), candidate.Manifest.Commands...)
 	commands = append(commands, candidate.Manifest.ComputerCommands...)
@@ -233,8 +233,8 @@ func adapterShimSources(candidate *adapterpkg.Adapter) map[string]string {
 	return result
 }
 
-func checkShimConflicts(candidate *adapterpkg.Adapter) error {
-	var previous *adapterpkg.Adapter
+func checkShimConflicts(candidate *modpkg.Adapter) error {
+	var previous *modpkg.Adapter
 	if installed, err := adapterStore().Load(candidate.Manifest.Name); err == nil {
 		previous = installed
 	}
@@ -261,7 +261,7 @@ func checkShimConflicts(candidate *adapterpkg.Adapter) error {
 	return nil
 }
 
-func installAdapterShims(candidate *adapterpkg.Adapter) error {
+func installAdapterShims(candidate *modpkg.Adapter) error {
 	if err := os.MkdirAll(binaryDirectory(), 0o755); err != nil {
 		return err
 	}
@@ -281,7 +281,7 @@ func installAdapterShims(candidate *adapterpkg.Adapter) error {
 	return nil
 }
 
-func removeAdapterShims(candidate *adapterpkg.Adapter) error {
+func removeAdapterShims(candidate *modpkg.Adapter) error {
 	for filename, source := range adapterShimSources(candidate) {
 		target := filepath.Join(binaryDirectory(), filename)
 		same, err := sameFileContents(source, target)

@@ -90,6 +90,9 @@ foreach ($adapter in $bundledAdapters) {
         }
         finally { Pop-Location }
         Remove-Item -Recurse -Force (Join-Path $target 'native')
+        if ($adapter -eq 'chromium') {
+            Remove-Item -Recurse -Force (Join-Path $target 'engine')
+        }
     }
 }
 

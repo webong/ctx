@@ -295,12 +295,21 @@ adapters package their own `ctx-<adapter>-share` executable, built from that
 adapter's `native` directory; it is included in the adapter checksum and runs
 as a separate process. External adapters implement the same protocol in their own
 executable. CTX core has no browser-specific storage code or provider dispatch.
-Go adapters can import `github.com/webong/ctx/browser/share` for the versioned
-request, cookie, policy, and generic resource envelope types. Cookie fields
+Bundled adapters use `internal/app/browser/share` for versioned request, cookie,
+policy, and generic resource envelope types. External adapters implement the
+documented JSON contract directly. Cookie fields
 shared across browsers are portable; optional browser-specific fields go in
 `attributes` with namespaced keys such as `firefox.origin_attributes`.
 Importers must reject attributes they cannot preserve. Version 2 replaces the
 earlier version 1 browser share request and bundle format.
+
+`internal/app/browser/adapterkit` contains repository-only helpers for serving the
+share protocol, reading policy sources, and accessing SQLite safely. The bare
+Chromium adapter owns the reusable storage engine at
+`github.com/webong/ctx/adapters/chromium/engine`; Chrome and other
+Chromium-based Go adapters can configure and import it through its exported
+`Config`, `Cookie`, `List`, `ReadValue`, and `Import` API. The versioned JSON
+contract remains the interface for external adapters.
 
 For example, `cookie.list` receives `{"version":2,"site":"https://example.com"}`
 and can respond with:

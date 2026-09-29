@@ -1,4 +1,4 @@
-package browsercommon
+package adapterkit
 
 import (
 	"encoding/json"
@@ -6,7 +6,7 @@ import (
 	"io"
 	"net/url"
 
-	"github.com/webong/ctx/browser/share"
+	"github.com/webong/ctx/internal/app/browser/share"
 )
 
 // CookieBackend is supplied by one browser adapter. The command never chooses

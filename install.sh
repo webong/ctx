@@ -37,6 +37,7 @@ if [ -n "$ROOT" ]; then
     (cd "$ROOT" && go build -o "$bundle/adapters/$adapter/ctx-$adapter-share" "./adapters/$adapter/native")
     rm -rf "$bundle/adapters/$adapter/native"
   done
+  rm -rf "$bundle/adapters/chromium/engine"
 else
   command -v curl >/dev/null 2>&1 || { printf 'ctx: curl is required for remote installation\n' >&2; exit 1; }
   os=$(uname -s)

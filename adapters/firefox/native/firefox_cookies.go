@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	browsershare "github.com/webong/ctx/browser/share"
+	browsershare "github.com/webong/ctx/internal/app/browser/share"
 	"net/url"
 	"os"
 	"os/exec"

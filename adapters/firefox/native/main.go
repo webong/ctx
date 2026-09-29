@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 
-	native "github.com/webong/ctx/adapters/browsercommon"
+	kit "github.com/webong/ctx/internal/app/browser/adapterkit"
 )
 
 func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) }
@@ -20,7 +20,7 @@ func run(args []string, input io.Reader, stdout, stderr io.Writer) int {
 	profile, resource, operation := args[0], args[1], args[2]
 	switch resource {
 	case "cookie":
-		return native.RunCookie(profile, operation, input, stdout, stderr, native.CookieBackend{
+		return kit.RunCookie(profile, operation, input, stdout, stderr, kit.CookieBackend{
 			List: readFirefoxSiteCookies, ReadValue: readFirefoxCookieValue, Import: importFirefoxCookie,
 		})
 	case "certificate":
@@ -29,29 +29,29 @@ func run(args []string, input io.Reader, stdout, stderr io.Writer) int {
 		if operation != "export" {
 			break
 		}
-		return native.RunPolicyExport(input, stdout, stderr, firefoxPolicySources())
+		return kit.RunPolicyExport(input, stdout, stderr, firefoxPolicySources())
 	}
 	fmt.Fprintln(stderr, "ctx: unsupported Firefox share resource or operation")
 	return 2
 }
 
-func firefoxPolicySources() native.PolicySources {
+func firefoxPolicySources() kit.PolicySources {
 	switch runtime.GOOS {
 	case "linux":
-		return native.PolicySources{Files: []native.PolicyFile{
+		return kit.PolicySources{Files: []kit.PolicyFile{
 			{Path: "/etc/firefox/policies/policies.json", Level: "managed", Format: "json"},
 			{Path: "/usr/lib/firefox/distribution/policies.json", Level: "managed", Format: "json"},
 			{Path: "/usr/lib64/firefox/distribution/policies.json", Level: "managed", Format: "json"},
 		}}
 	case "darwin":
-		sources := native.PolicySources{Files: native.ManagedPreferenceFiles("org.mozilla.firefox")}
+		sources := kit.PolicySources{Files: kit.ManagedPreferenceFiles("org.mozilla.firefox")}
 		for _, path := range []string{"/Applications/Firefox.app/Contents/Resources/distribution/policies.json", filepath.Join(os.Getenv("HOME"), "Applications/Firefox.app/Contents/Resources/distribution/policies.json")} {
-			sources.Files = append(sources.Files, native.PolicyFile{Path: path, Level: "managed", Format: "json"})
+			sources.Files = append(sources.Files, kit.PolicyFile{Path: path, Level: "managed", Format: "json"})
 		}
 		return sources
 	case "windows":
-		return native.PolicySources{RegistryKey: `Software\Policies\Mozilla\Firefox`}
+		return kit.PolicySources{RegistryKey: `Software\Policies\Mozilla\Firefox`}
 	default:
-		return native.PolicySources{}
+		return kit.PolicySources{}
 	}
 }

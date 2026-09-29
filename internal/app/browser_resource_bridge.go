@@ -9,7 +9,7 @@ import (
 	"os"
 	"regexp"
 
-	browsershare "github.com/webong/ctx/browser/share"
+	browsershare "github.com/webong/ctx/internal/app/browser/share"
 	"github.com/webong/ctx/internal/config"
 )
 
