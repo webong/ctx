@@ -33,8 +33,8 @@ $firefox = Find-Firefox
 switch ($Operation) {
     'share' {
         if ($Arguments.Count -gt 0 -and $Arguments[0] -eq '--') { $Arguments = @($Arguments | Select-Object -Skip 1) }
-        $ctxCommand = if ($env:CTX_EXECUTABLE) { $env:CTX_EXECUTABLE } else { 'ctx' }
-        & $ctxCommand __browser-native firefox $Selection @Arguments
+        $helper = Join-Path $PSScriptRoot 'ctx-firefox-share.exe'
+        & $helper $Selection @Arguments
         exit $LASTEXITCODE
     }
     'list' { if ($firefox) { Get-Profiles | ForEach-Object { "firefox:$_" } }; exit 0 }

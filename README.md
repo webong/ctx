@@ -209,11 +209,47 @@ follows the runtime-neutral decision boundary and local operator controls descri
 
 ## Sharing container resources and build caches
 
-Share a registry-backed build cache while keeping each engine's cache format
-separate:
+`ctx graph scan` discovers installed adapters and their declared capabilities.
+Trusted browser and virtualizer adapters can also supply named contexts. The
+inventory is available through `ctx graph vertices adapter`, `ctx graph
+vertices capability`, and `ctx graph vertices context`; it does not presume
+which providers or host products are installed.
+
+You can give an engine connection a convenient alias. `--provider` names a
+trusted ctx adapter, and `--selection` is that adapter's native context,
+connection, or namespace. `--virtualizer` and `--machine` add descriptive
+metadata when known; neither is required by the core.
 
 ```sh
-ctx build docker \
+ctx virtualizer add orb --virtualizer orbstack --provider docker --selection orbstack
+ctx virtualizer add desktop --virtualizer docker-desktop --provider docker --selection desktop-linux
+ctx virtualizer add dev-vm --virtualizer utm --machine dev-vm --provider docker --selection utm-dev
+ctx virtualizer add local-apple --virtualizer apple-container --provider apple --selection local
+ctx virtualizer ls
+ctx virtualizer show dev-vm
+```
+
+For the maintained nerdctl adapter, pin the daemon address separately from its
+namespace:
+
+```sh
+ctx virtualizer add local-containerd --virtualizer containerd --provider nerdctl \
+  --selection default --address /run/containerd/containerd.sock
+```
+
+The `utm-dev` selection above must already be a Docker context pointing at the
+engine inside that UTM VM. For Podman in a VM, register its Podman connection
+instead. These registrations describe container engines inside VMs; they do
+not copy UTM VM disks or snapshots. Registered endpoints use `@name` in share
+commands. `ctx` shows the resolved source and target before transferring.
+Native `provider:selection` endpoints continue to work without registration.
+The graph records aliases as declarations and contexts as adapter observations;
+share commands still validate the selected endpoint before transferring.
+
+Share a registry-backed build cache using a registered instance:
+
+```sh
+ctx build @orb \
   --cache-ref ghcr.io/acme/api:docker-cache \
   -- --tag ghcr.io/acme/api:dev .
 ```
@@ -222,8 +258,8 @@ Copy images between supported engines through a temporary archive:
 
 ```sh
 ctx share:virtualizer image copy \
-  docker:orbstack \
-  podman:podman-machine-default \
+  @orb \
+  @desktop \
   acme/api:dev
 ```
 
@@ -231,8 +267,8 @@ Copy a named volume between engines:
 
 ```sh
 ctx share:virtualizer volume copy \
-  docker:orbstack \
-  podman:podman-machine-default \
+  @orb \
+  @dev-vm \
   postgres-data \
   postgres-data
 ```
@@ -240,10 +276,16 @@ ctx share:virtualizer volume copy \
 Volume copy is a point-in-time migration, not live synchronization. Stop or
 quiesce databases first. ctx refuses to import into an existing target volume.
 
-Apple Container image imports require a version newer than 1.3.0 because of
+Apple Container uses the archive image copy path. `image sync` automatically
+uses an archive when an endpoint lacks registry push/pull; `image copy` always
+uses an archive. Apple Container
+image imports require a version newer than 1.3.0 because of
 [GHSA-r3h2-rgqf-9hv9](https://github.com/apple/containerization/security/advisories/GHSA-r3h2-rgqf-9hv9).
 
 `ctx share:browser` bridges browser resources through installed adapters.
+Its versioned wire types and validation helpers are available to other Go
+adapters in `github.com/webong/ctx/browser/share`; CTX core does not contain
+browser storage or platform-specific code.
 Firefox, Chrome, and Chromium can list and export a selected site cookie and
 import a supported cookie into a closed profile. Source and target may be
 different browser providers. It runs as a shell command and does not require
@@ -261,6 +303,8 @@ ctx share:browser cookie copy --from firefox:personal --site https://example.com
 ctx share:browser cookie import --from-file ./session-cookie.json --to-profile chrome:Profile\ 1
 ctx share:browser policy export --from chrome:Default --to-file ./chrome-policies.json
 ctx share:browser capabilities --from safari:default
+ctx share:browser certificate list --from firefox:personal
+ctx share:browser certificate copy --from firefox:personal --to-profile firefox:work -- --nickname 'Client Identity' --password-file ./identity.pass
 ```
 
 `--from` defaults to the selected browser. Listing prints cookie metadata, not
@@ -268,16 +312,16 @@ values, and does not unlock the OS cookie key. The site URL selects the scheme
 and host; use `--path` to select an exact cookie path. A site can have cookies
 with the same name in different domains, paths, or partitions. Use `--id` from
 `cookie list` to select an exact row, or narrow Firefox cookies with
-`--origin-attributes`. Listing is tab-separated and includes name, domain,
+`--attribute firefox.origin_attributes=<value>`. Listing is tab-separated and includes name, domain,
 path, expiry, SameSite policy, row ID, and partition scope. Files are created
 with mode 0600 and are plain JSON containing `version`, `source`, `site`, and a
 `cookie` object with its value and scope fields. `same_site_policy` is the
-portable value; `same_site` retains the source browser's numeric value.
+portable value; browser-specific fields are namespaced under `attributes`.
 `--stdout` requires a pipe; use `--to-file` for a protected file.
 
 Chrome and Chromium export reads the profile's committed SQLite cookies. On
 macOS, encrypted cookies require access to the browser's Safe Storage item in
-Keychain; ctx requests it only after a cookie is selected and the output is
+Keychain; the source adapter requests it only after a cookie is selected and the output is
 valid. On Linux, v10 cookies can be decoded locally; v11 cookies use Secret
 Service through `secret-tool` or KWallet through `kwallet-query` (set
 `CTX_KWALLET_NAME` for a non-default wallet). On Windows, legacy DPAPI and
@@ -287,7 +331,7 @@ versions and unavailable OS keys fail without writing a partial bundle.
 
 Chrome and Chromium profile import encrypts the selected cookie for the target
 profile on macOS or Linux. The browser must be closed; `lsof` is required, and
-ctx rejects an existing Chromium `SingletonLock`. On Linux, ctx uses the
+the adapter rejects an existing Chromium `SingletonLock`. On Linux, it uses the
 target's existing v10 or v11 format, or v11 when a wallet key is available.
 Windows profile import is unavailable for browser-bound encryption. Cross-browser
 copy supports unpartitioned cookies when the target can represent their scope;
@@ -300,7 +344,7 @@ and an unpartitioned cookie. It refuses to overwrite an existing target cookie
 unless `--replace` is given. The read-only
 list and file/pipe forms need `sqlite3`; they can read committed cookies while
 the browser is open, though recent in-memory changes may not yet appear. When a
-read-only SQLite connection cannot open a write-ahead log, ctx makes a private
+read-only SQLite connection cannot open a write-ahead log, the adapter makes a private
 temporary database snapshot and removes it on normal completion. A forced
 process termination can leave that snapshot in the system temporary directory.
 `policy export` collects available machine policy files or registry entries
@@ -308,6 +352,18 @@ from the selected browser adapter into a mode-0600 bundle. Policies are usually
 machine or user managed rather than profile data; export does not apply them to
 another browser. The adapter protocol permits additional resource operations.
 Browser encryption keys and non-exportable private keys are not transferable.
+Firefox can share an exportable client certificate and its private key through
+a password-protected PKCS#12 bundle when `certutil` and `pk12util` are installed.
+Use `-- --nickname <name> --password-file <mode-0600-file>` for export or copy;
+import needs `-- --password-file <mode-0600-file>`. The source and target Firefox
+profiles must be closed. A hardware-backed or otherwise non-exportable key
+fails in the NSS tool without a partial bundle.
+
+Third-party browser adapters can register `resource.list`, `resource.export`,
+and `resource.import` under `browser_share`. `ctx share:browser <resource>` then
+routes list, file/pipe export, profile copy, and file/pipe import through a
+versioned JSON bundle without a core change. The destination adapter decides
+whether it can represent the source resource.
 
 `ctx share:computer` is reserved for sharing a computer context. Adapters can
 register other spaces through a `share` capability and optional `share_spaces`
@@ -364,6 +420,7 @@ See [Adapters](adapters/README.md) for the bundled packages and
 | `ctx open <url>` | Open a URL with the selected browser profile |
 | `ctx hook computer <adapter> <event>` | Pass a computer hook event through a trusted adapter |
 | `ctx plugin computer <adapter> ...` | Run a computer integration's plugin operation |
+| `ctx virtualizer <add|ls|show|remove> ...` | Register named virtualizer instances for sharing and builds |
 | `ctx share:virtualizer image <sync|copy> ...` | Transfer images through installed virtualizer providers |
 | `ctx share:virtualizer volume <export|import|copy> ...` | Transfer named volumes through installed virtualizer providers |
 | `ctx share:browser cookie <list|copy|import> ...` | List, export, or import one site cookie through browser adapters |
@@ -373,6 +430,8 @@ See [Adapters](adapters/README.md) for the bundled packages and
 | `ctx doctor` | Validate configured selections and adapters |
 | `ctx hook <bash|zsh|powershell>` | Generate an optional shell prompt observer |
 | `ctx graph status` | Show the local system graph revision and size |
+| `ctx graph scan` | Refresh the machine's adapter, capability, and context inventory |
+| `ctx graph resolve [runtime|all] [capability...]` | Discover usable contexts from the refreshed graph |
 | `ctx graph vertices [kind]` | Inspect observed graph vertices |
 | `ctx graph edges [relationship]` | Inspect observed graph relationships |
 | `ctx graph snapshot` | Export the CTX system graph as JSON |
@@ -389,10 +448,26 @@ Successful `ctx open` calls record the browser provider, profile, and URL
 origin; paths, query strings, and fragments are omitted. Environment values,
 shell history, and browser credentials are not collected.
 
-The `ctx graph` commands are short-lived readers of this durable graph. The
-public `github.com/webong/ctx/graph` package supports other services registering
-their own namespaces and validators. The CTX namespace records CTX observations;
-it does not grant permissions or trust to other services.
+`ctx graph scan` asks trusted installed adapters for their available contexts
+and ordinary resource metadata. Adapters declaring `observe` return versioned
+JSON; older browser and virtualizer adapters use their line-oriented `list`
+output. The scan reconciles removed contexts and records when it ran.
+`ctx graph resolve virtualizer image_save` returns contexts that currently offer that
+capability. `ctx ls`, `ctx status`, browser share, virtualizer share, and build
+read the graph projection; adapter trust and live validation still govern each
+operation.
+`ctx status` marks a selected browser or adapter context `[observed]` when the
+current graph scan found it.
+
+An unqualified virtualizer context resolves to the sole observed provider when
+there is one; ambiguous names require `provider:context` or a registered
+`@instance`. Build can choose the sole observed provider that offers `build`.
+
+The public `github.com/webong/ctx/graph` package supports other services
+registering their own namespaces and validators. The public
+`github.com/webong/ctx/graph/system` package supplies CTX's system inventory
+projection. Observations inform discovery; adapters still validate and route
+each operation.
 
 Services can also import `github.com/webong/ctx/supervisor` for approved local
 processes. It verifies declared executable checksums, isolates process trees,

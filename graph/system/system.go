@@ -1,6 +1,6 @@
-// Package systemgraph adapts CTX's observed local shell and browser context to
-// the public generic graph API. It owns the ctx.system vocabulary; graph itself
-// remains product-neutral.
+// Package systemgraph projects CTX machine inventory, shell, and browser
+// observations onto the public generic graph API. It owns the ctx.system
+// vocabulary; the base graph package remains product-neutral.
 package systemgraph
 
 import (
@@ -27,15 +27,25 @@ func Open(configHome string) (*Graph, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := store.Register(graph.Schema{Namespace: Namespace, Version: "1", Validate: validateSchema}); err != nil {
+	projected, err := New(store)
+	if err != nil {
 		_ = store.Close()
+		return nil, err
+	}
+	return projected, nil
+}
+
+// New registers the CTX system vocabulary on any graph.Store. Other services
+// may keep their own namespaces in the same store.
+func New(store graph.Store) (*Graph, error) {
+	if err := store.Register(graph.Schema{Namespace: Namespace, Version: "1", Validate: validateSchema}); err != nil {
 		return nil, err
 	}
 	return &Graph{Store: store}, nil
 }
 
 func validateSchema(view graph.View, tx graph.Transaction) error {
-	allowedKinds := map[string]bool{Namespace + "/machine": true, Namespace + "/shell-session": true, Namespace + "/directory": true, Namespace + "/project": true, Namespace + "/profile": true, Namespace + "/selection": true, Namespace + "/browser-context": true}
+	allowedKinds := map[string]bool{Namespace + "/machine": true, Namespace + "/shell-session": true, Namespace + "/directory": true, Namespace + "/project": true, Namespace + "/profile": true, Namespace + "/selection": true, Namespace + "/browser-context": true, Namespace + "/inventory": true, Namespace + "/adapter": true, Namespace + "/capability": true, Namespace + "/context": true, Namespace + "/resource": true, Namespace + "/alias": true}
 	for _, vertex := range tx.Vertices {
 		if !allowedKinds[vertex.Kind] {
 			return fmt.Errorf("unsupported ctx.system kind %q", vertex.Kind)
@@ -48,6 +58,12 @@ func validateSchema(view graph.View, tx graph.Transaction) error {
 		Namespace + "/uses-profile": {Namespace + "/shell-session", Namespace + "/profile"},
 		Namespace + "/selects":      {Namespace + "/shell-session", Namespace + "/selection"},
 		Namespace + "/opened":       {Namespace + "/shell-session", Namespace + "/browser-context"},
+		Namespace + "/has-adapter":  {Namespace + "/machine", Namespace + "/adapter"},
+		Namespace + "/supports":     {Namespace + "/adapter", Namespace + "/capability"},
+		Namespace + "/offers":       {Namespace + "/adapter", Namespace + "/context"},
+		Namespace + "/contains":     {Namespace + "/context", Namespace + "/resource"},
+		Namespace + "/relates":      {Namespace + "/resource", Namespace + "/resource"},
+		Namespace + "/resolves-to":  {Namespace + "/alias", Namespace + "/context"},
 	}
 	for _, edge := range tx.Edges {
 		expected, ok := allowedRelations[edge.Type]
@@ -107,7 +123,13 @@ func (g *Graph) ObserveShell(ctx context.Context, cwd, profile string, selection
 			continue
 		}
 		selectionID := "selection/" + digest(key+"\x00"+value)
-		vertices = append(vertices, graph.Vertex{ID: selectionID, Kind: Namespace + "/selection", Attributes: map[string]any{"key": key, "value": value}, Provenance: graph.Provenance{Source: "ctx", Operation: "selection-observed", At: now}})
+		attributes := map[string]any{"key": key, "value_digest": digest(value)}
+		if graphContextName.MatchString(value) {
+			attributes["value"] = value
+		} else {
+			attributes["value_redacted"] = true
+		}
+		vertices = append(vertices, graph.Vertex{ID: selectionID, Kind: Namespace + "/selection", Attributes: attributes, Provenance: graph.Provenance{Source: "ctx", Operation: "selection-observed", At: now}})
 		selectionEdges = append(selectionEdges, graph.Edge{ID: "shell-selection/" + itoa(parent) + "/" + digest(key), From: sessionID, To: selectionID, Type: Namespace + "/selects"})
 	}
 	edges = append(edges, selectionEdges...)

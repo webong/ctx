@@ -19,6 +19,13 @@ function Has-RunOverride {
 
 switch ($Operation) {
     'list' { Invoke-Docker @('context', 'ls', '--format', '{{.Name}}') }
+    'observe' {
+        $names = @(& $docker context ls --format '{{.Name}}')
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        $contexts = @($names | Where-Object { $_ } | ForEach-Object { @{ selection = [string]$_ } })
+        @{ version = 1; contexts = $contexts } | ConvertTo-Json -Depth 4 -Compress
+        exit 0
+    }
     'validate' { & $docker context inspect $Selection *> $null; if ($LASTEXITCODE -ne 0) { [Console]::Error.WriteLine("docker: unknown context $Selection"); exit 1 } }
     'doctor' { if ($Selection) { & $docker context inspect $Selection *> $null } else { & $docker version *> $null }; exit $LASTEXITCODE }
     'run' { if (-not $Selection -or (Has-RunOverride)) { Invoke-Docker $Arguments } else { Invoke-Docker (@('--context', $Selection) + $Arguments) } }

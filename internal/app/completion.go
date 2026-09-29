@@ -19,7 +19,7 @@ Register-ArgumentCompleter -Native -CommandName ctx -ScriptBlock {
     param($wordToComplete, $commandAst, $cursorPosition)
 
     $words = @($commandAst.CommandElements | ForEach-Object { $_.Extent.Text })
-    $commands = @('status', 'resolve', 'explain', 'env', 'set', 'clear', 'profile', 'adapter', 'setup', 'ls', 'open', 'doctor', 'build', 'share:virtualizer', 'share:browser', 'share:computer', 'hook', 'plugin', 'run', 'shell', 'real', 'completion', 'version')
+    $commands = @('status', 'resolve', 'explain', 'env', 'set', 'clear', 'profile', 'adapter', 'computer', 'virtualizer', 'setup', 'ls', 'open', 'doctor', 'build', 'share:virtualizer', 'share:browser', 'share:computer', 'graph', 'hook', 'plugin', 'run', 'shell', 'real', 'completion', 'version')
 
     function Emit-CtxCompletion([string[]]$values) {
         $values | Where-Object { $_ -and $_ -like "$wordToComplete*" } | Sort-Object -Unique | ForEach-Object {
@@ -33,6 +33,11 @@ Register-ArgumentCompleter -Native -CommandName ctx -ScriptBlock {
     }
     function Get-CtxVirtualizerProviders {
         @(& ctx adapter ls virtualizer 2>$null | ForEach-Object { ($_ -split '\s+')[0] })
+    }
+    function Get-CtxVirtualizerEndpoints {
+        $values = @(& ctx ls virtualizer 2>$null)
+        $values += @(& ctx virtualizer ls 2>$null | ForEach-Object { ($_ -split '\s+')[0] })
+        return $values
     }
     function Get-CtxComputerAdapters {
         @(& ctx adapter ls computer 2>$null | ForEach-Object { ($_ -split '\s+')[0] })
@@ -54,6 +59,10 @@ Register-ArgumentCompleter -Native -CommandName ctx -ScriptBlock {
         }
         'clear' { if ($words.Count -le 2) { Emit-CtxCompletion ((Get-CtxSelectors) + 'profile'); return } }
         'completion' { if ($words.Count -le 2) { Emit-CtxCompletion @('powershell'); return } }
+        'graph' {
+            if ($words.Count -le 2) { Emit-CtxCompletion @('scan', 'resolve', 'status', 'vertices', 'edges', 'snapshot', 'changes'); return }
+            if ($words[2] -eq 'resolve' -and $words.Count -le 3) { Emit-CtxCompletion @('all', 'browser', 'computer', 'virtualizer'); return }
+        }
         'hook' {
             if ($words.Count -le 2) { Emit-CtxCompletion @('bash', 'zsh', 'powershell', 'computer'); return }
             if ($words[2] -eq 'computer' -and $words.Count -le 3) { Emit-CtxCompletion (Get-CtxComputerAdapters); return }
@@ -62,18 +71,30 @@ Register-ArgumentCompleter -Native -CommandName ctx -ScriptBlock {
             if ($words.Count -le 2) { Emit-CtxCompletion @('computer'); return }
             if ($words[2] -eq 'computer' -and $words.Count -le 3) { Emit-CtxCompletion (Get-CtxComputerAdapters); return }
         }
+        'computer' {
+            if ($words.Count -le 2) { Emit-CtxCompletion @('hooks'); return }
+            if ($words[2] -eq 'hooks' -and $words.Count -le 3) { Emit-CtxCompletion @('print', 'install', 'remove'); return }
+            if ($words[2] -eq 'hooks' -and $words.Count -le 4) { Emit-CtxCompletion (Get-CtxComputerAdapters); return }
+            if ($words[2] -eq 'hooks') { Emit-CtxCompletion @('--events', '--handler'); return }
+        }
         'share:virtualizer' {
             if ($words.Count -le 2) { Emit-CtxCompletion @('image', 'volume'); return }
             if ($words[2] -eq 'image' -and $words.Count -le 3) { Emit-CtxCompletion @('sync', 'copy'); return }
             if ($words[2] -eq 'volume' -and $words.Count -le 3) { Emit-CtxCompletion @('export', 'import', 'copy'); return }
+            if ($words.Count -in @(4, 5)) { Emit-CtxCompletion (Get-CtxVirtualizerEndpoints); return }
         }
         'share:browser' {
             if ($words.Count -le 2) { Emit-CtxCompletion @('cookie'); return }
             if ($words[2] -eq 'cookie' -and $words.Count -le 3) { Emit-CtxCompletion @('list', 'copy'); return }
             if ($words[3] -eq 'list') { Emit-CtxCompletion @('--from', '--site'); return }
-            if ($words[3] -eq 'copy') { Emit-CtxCompletion @('--from', '--site', '--name', '--domain', '--path', '--id', '--origin-attributes', '--to-profile', '--to-file', '--stdout', '--replace'); return }
+            if ($words[3] -eq 'copy') { Emit-CtxCompletion @('--from', '--site', '--name', '--domain', '--path', '--id', '--attribute', '--to-profile', '--to-file', '--stdout', '--replace'); return }
         }
-        'build' { if ($words.Count -le 2) { Emit-CtxCompletion ((Get-CtxVirtualizerProviders) + '--cache-ref'); return } }
+        'build' { if ($words.Count -le 2) { Emit-CtxCompletion ((Get-CtxVirtualizerProviders) + @(& ctx virtualizer ls 2>$null | ForEach-Object { ($_ -split '\s+')[0] }) + '--cache-ref'); return } }
+        'virtualizer' {
+            if ($words.Count -le 2) { Emit-CtxCompletion @('add', 'ls', 'show', 'remove'); return }
+            if ($words[2] -in @('show', 'remove') -and $words.Count -le 3) { Emit-CtxCompletion @(& ctx virtualizer ls 2>$null | ForEach-Object { ($_ -split '\s+')[0] }); return }
+            if ($words[2] -eq 'add' -and $words.Count -ge 4) { Emit-CtxCompletion @('--virtualizer', '--machine', '--provider', '--selection', '--address'); return }
+        }
         'profile' {
             $operations = @('ls', 'show', 'use', 'set', 'unset', 'env', 'env-unset', 'clear')
             if ($words.Count -le 2) { Emit-CtxCompletion $operations; return }

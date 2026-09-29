@@ -80,15 +80,26 @@ use a backend with indexed persistence behind the same interface.
 
 ## CTX system context
 
-CTX's integration layer owns the `ctx.system` namespace. Short-lived CTX
+The public `github.com/webong/ctx/graph/system` package owns the `ctx.system`
+namespace. Short-lived CTX
 commands record the invoking shell session, current directory, detected project,
 active profile, and selected adapter context IDs. Optional Bash, Zsh, and
 PowerShell prompt hooks refresh shell location after directory changes.
 Successful browser opens add the provider, profile, and URL origin. URL paths,
 query strings, fragments, arbitrary environment values, and shell history are
-not collected. `ctx graph` is a short-lived inspection and export interface over
-the persistent store. Other services register separate namespaces and cannot
-change CTX's schema rules.
+not collected. `ctx graph scan` records installed adapters, their declared
+capabilities and surfaces, and versioned observations from trusted adapters.
+The fallback `list` collector handles existing browser and virtualizer adapters.
+The CLI owns native adapter probing; the public package accepts generic
+contexts, resources, and relationships and projects them under the machine and
+adapter. Named aliases are recorded as declarations. Each scan reconciles
+removed inventory records and refreshes an observation timestamp. Core commands
+query this projection to find contexts and capabilities before invoking an
+adapter.
+The graph does not authorize use of an adapter or prove a remote context is
+reachable; operations still validate the live endpoint. `ctx graph` is a
+short-lived inspection and export interface over the persistent store. Other
+services register separate namespaces and cannot change CTX's schema rules.
 
 ## Security
 

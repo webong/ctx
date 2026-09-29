@@ -33,6 +33,10 @@ if [ -n "$ROOT" ]; then
   mkdir -p "$bundle/bin" "$bundle/adapters"
   (cd "$ROOT" && go build -o "$bundle/bin/ctx" ./cmd/ctx)
   for adapter in $BUNDLED_ADAPTERS; do cp -R "$ROOT/adapters/$adapter" "$bundle/adapters/$adapter"; done
+  for adapter in firefox chrome chromium safari; do
+    (cd "$ROOT" && go build -o "$bundle/adapters/$adapter/ctx-$adapter-share" "./adapters/$adapter/native")
+    rm -rf "$bundle/adapters/$adapter/native"
+  done
 else
   command -v curl >/dev/null 2>&1 || { printf 'ctx: curl is required for remote installation\n' >&2; exit 1; }
   os=$(uname -s)

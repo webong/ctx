@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/webong/ctx/internal/systemgraph"
+	"github.com/webong/ctx/graph/system"
 )
 
 func TestVersion(t *testing.T) {

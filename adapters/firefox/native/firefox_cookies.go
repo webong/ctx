@@ -1,4 +1,4 @@
-package app
+package main
 
 import (
 	"bufio"
@@ -7,12 +7,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
+	browsershare "github.com/webong/ctx/browser/share"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
@@ -30,10 +29,6 @@ type firefoxCookieRow struct {
 	IsHTTPOnly       int    `json:"isHttpOnly"`
 	SameSite         int    `json:"sameSite"`
 	OriginAttributes string `json:"originAttributes"`
-}
-
-type sqliteColumn struct {
-	Name string `json:"name"`
 }
 
 func readFirefoxSiteCookies(profile string, site *url.URL, name string) ([]browserCookie, string, error) {
@@ -74,7 +69,10 @@ func readFirefoxSiteCookies(profile string, site *url.URL, name string) ([]brows
 		cookie := browserCookie{
 			ID: row.ID, Name: row.Name, Domain: row.Host, Path: row.Path,
 			Expiry: row.Expiry, Secure: row.IsSecure != 0, HTTPOnly: row.IsHTTPOnly != 0,
-			SameSite: row.SameSite, SameSitePolicy: firefoxSameSitePolicy(row.SameSite), OriginAttributes: row.OriginAttributes,
+			SameSitePolicy: firefoxSameSitePolicy(row.SameSite),
+		}
+		if row.OriginAttributes != "" {
+			cookie.Attributes = map[string]string{"firefox.origin_attributes": row.OriginAttributes}
 		}
 		if cookieDomainMatches(host, cookie.Domain) && (!cookie.Secure || site.Scheme == "https") && cookieActive(cookie) {
 			cookies = append(cookies, cookie)
@@ -91,7 +89,7 @@ func readFirefoxCookieValue(database string, cookie browserCookie) (string, erro
 	defer cleanup()
 	statement := "SELECT value FROM moz_cookies WHERE id=" + strconv.FormatInt(cookie.ID, 10) +
 		" AND name=" + sqlString(cookie.Name) + " AND host=" + sqlString(cookie.Domain) +
-		" AND path=" + sqlString(cookie.Path) + " AND originAttributes=" + sqlString(cookie.OriginAttributes)
+		" AND path=" + sqlString(cookie.Path) + " AND originAttributes=" + sqlString(cookie.Attributes["firefox.origin_attributes"])
 	output, err := runSQLite(readableDB, true, statement)
 	if err != nil {
 		return "", err
@@ -120,29 +118,24 @@ func firefoxSameSitePolicy(raw int) string {
 	}
 }
 
-func cookieHostSQL(host string) string {
-	var hosts []string
-	for part := host; part != ""; {
-		hosts = append(hosts, sqlString(part), sqlString("."+part))
-		dot := strings.IndexByte(part, '.')
-		if dot < 0 {
-			break
-		}
-		part = part[dot+1:]
-	}
-	return strings.Join(hosts, ",")
-}
-
 func cookieDomainMatches(siteHost, cookieDomain string) bool {
-	cookieDomain = strings.ToLower(cookieDomain)
-	if strings.HasPrefix(cookieDomain, ".") {
-		base := strings.TrimPrefix(cookieDomain, ".")
-		return siteHost == base || strings.HasSuffix(siteHost, "."+base)
-	}
-	return siteHost == cookieDomain
+	return browsershare.CookieDomainMatches(siteHost, cookieDomain)
 }
 
 func firefoxCookieDatabase(profile string) (string, error) {
+	directory, err := firefoxProfileDirectory(profile)
+	if err != nil {
+		return "", err
+	}
+	database := filepath.Join(directory, "cookies.sqlite")
+	info, err := os.Stat(database)
+	if err != nil || !info.Mode().IsRegular() {
+		return "", fmt.Errorf("Firefox cookie database is unavailable for profile %q", profile)
+	}
+	return database, nil
+}
+
+func firefoxProfileDirectory(profile string) (string, error) {
 	ini, err := firefoxProfilesINI()
 	if err != nil {
 		return "", err
@@ -188,12 +181,7 @@ func firefoxCookieDatabase(profile string) (string, error) {
 	if len(matches) != 1 {
 		return "", fmt.Errorf("Firefox profile name %q is ambiguous", profile)
 	}
-	database := filepath.Join(matches[0], "cookies.sqlite")
-	info, err := os.Stat(database)
-	if err != nil || !info.Mode().IsRegular() {
-		return "", fmt.Errorf("Firefox cookie database is unavailable for profile %q", profile)
-	}
-	return database, nil
+	return matches[0], nil
 }
 
 func firefoxProfilesINI() (string, error) {
@@ -227,246 +215,17 @@ func firefoxCookieColumns(database string) ([]string, error) {
 	return cookieDatabaseColumns(database, "moz_cookies")
 }
 
-func cookieDatabaseColumns(database, table string) ([]string, error) {
-	output, err := runSQLite(database, true, "PRAGMA table_info("+sqlIdentifier(table)+")")
-	if err != nil {
-		return nil, err
-	}
-	var columns []sqliteColumn
-	if err := json.Unmarshal(output, &columns); err != nil || len(columns) == 0 {
-		return nil, fmt.Errorf("cookie table %s is unavailable", table)
-	}
-	names := make([]string, 0, len(columns))
-	for _, column := range columns {
-		names = append(names, column.Name)
-	}
-	return names, nil
-}
-
-// A read-only SQLite connection cannot open a WAL database when its -shm file
-// is absent and the caller cannot create one beside the profile. A private
-// snapshot lets sqlite3 replay the WAL without changing the browser profile.
+// Firefox keeps these names for profile-specific callers and its WAL fixture.
 func readableFirefoxCookieDatabase(database string) (string, func(), []string, error) {
 	return readableCookieDatabase(database, "moz_cookies")
-}
-
-func readableCookieDatabase(database, table string) (string, func(), []string, error) {
-	columns, err := cookieDatabaseColumns(database, table)
-	if err == nil {
-		return database, func() {}, columns, nil
-	}
-	if !strings.Contains(err.Error(), "unable to open database file") && !strings.Contains(err.Error(), "attempt to write a readonly database") {
-		return "", nil, nil, err
-	}
-	snapshot, cleanup, snapshotErr := snapshotCookieDatabase(database)
-	if snapshotErr != nil {
-		return "", nil, nil, fmt.Errorf("cannot read cookie database: %w", snapshotErr)
-	}
-	columns, snapshotErr = cookieDatabaseColumns(snapshot, table)
-	if snapshotErr != nil {
-		cleanup()
-		return "", nil, nil, snapshotErr
-	}
-	return snapshot, cleanup, columns, nil
 }
 
 func snapshotFirefoxCookieDatabase(database string) (string, func(), error) {
 	return snapshotCookieDatabase(database)
 }
 
-func snapshotCookieDatabase(database string) (string, func(), error) {
-	for attempt := 0; attempt < 3; attempt++ {
-		directory, err := os.MkdirTemp("", "ctx-cookies-")
-		if err != nil {
-			return "", nil, err
-		}
-		cleanup := func() { _ = os.RemoveAll(directory) }
-		wal := database + "-wal"
-		beforeDB, err := os.Stat(database)
-		if err != nil {
-			cleanup()
-			return "", nil, err
-		}
-		beforeWAL, walErr := os.Stat(wal)
-		if walErr != nil && !errors.Is(walErr, os.ErrNotExist) {
-			cleanup()
-			return "", nil, walErr
-		}
-		snapshot := filepath.Join(directory, filepath.Base(database))
-		if err := copyPrivateFile(database, snapshot); err != nil {
-			cleanup()
-			return "", nil, err
-		}
-		if walErr == nil {
-			if err := copyPrivateFile(wal, snapshot+"-wal"); err != nil {
-				cleanup()
-				if errors.Is(err, os.ErrNotExist) {
-					continue
-				}
-				return "", nil, err
-			}
-		}
-		afterDB, dbErr := os.Stat(database)
-		afterWAL, afterWalErr := os.Stat(wal)
-		if dbErr == nil && sameFileVersion(beforeDB, afterDB) &&
-			((errors.Is(walErr, os.ErrNotExist) && errors.Is(afterWalErr, os.ErrNotExist)) ||
-				(walErr == nil && afterWalErr == nil && sameFileVersion(beforeWAL, afterWAL))) {
-			return snapshot, cleanup, nil
-		}
-		cleanup()
-	}
-	return "", nil, errors.New("Firefox cookie database changed while taking a private snapshot; retry after the browser is idle")
-}
-
-func sameFileVersion(before, after os.FileInfo) bool {
-	return os.SameFile(before, after) && before.Size() == after.Size() && before.ModTime() == after.ModTime()
-}
-
-func copyPrivateFile(source, target string) error {
-	input, err := os.Open(source)
-	if err != nil {
-		return err
-	}
-	defer input.Close()
-	output, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return err
-	}
-	_, copyErr := io.Copy(output, input)
-	closeErr := output.Close()
-	if copyErr != nil {
-		return copyErr
-	}
-	return closeErr
-}
-
-func hasSQLiteColumn(columns []string, wanted string) bool {
-	for _, column := range columns {
-		if column == wanted {
-			return true
-		}
-	}
-	return false
-}
-
-func runSQLite(database string, readonly bool, query string) ([]byte, error) {
-	if _, err := exec.LookPath("sqlite3"); err != nil {
-		return nil, errors.New("sqlite3 is required for Firefox cookie sharing")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	args := []string{"-batch", "-bail", "-json"}
-	if readonly {
-		args = append(args, "-readonly")
-	}
-	args = append(args, database, query)
-	command := exec.CommandContext(ctx, "sqlite3", args...)
-	output, err := command.Output()
-	if err != nil {
-		if ctx.Err() != nil {
-			return nil, errors.New("sqlite3 timed out while reading Firefox cookies")
-		}
-		if failure, ok := err.(*exec.ExitError); ok {
-			message := strings.TrimSpace(string(failure.Stderr))
-			if message != "" {
-				return nil, fmt.Errorf("sqlite3: %s", message)
-			}
-		}
-		return nil, fmt.Errorf("sqlite3 failed: %w", err)
-	}
-	return output, nil
-}
-
-func sqlString(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
-}
-
-func sqlIdentifier(value string) string {
-	return "\"" + strings.ReplaceAll(value, "\"", "\"\"") + "\""
-}
-
-func copyFirefoxCookie(sourceDB, targetProfile string, cookie browserCookie, replace bool) error {
-	targetDB, err := firefoxCookieDatabase(targetProfile)
-	if err != nil {
-		return err
-	}
-	sourceReal, err := filepath.EvalSymlinks(sourceDB)
-	if err != nil {
-		return err
-	}
-	targetReal, err := filepath.EvalSymlinks(targetDB)
-	if err != nil {
-		return err
-	}
-	if sourceReal == targetReal {
-		return errors.New("source and target are the same Firefox profile")
-	}
-	if cookie.OriginAttributes != "" {
-		return errors.New("profile copy of container or partitioned Firefox cookies is not supported; use --to-file or --stdout")
-	}
-	if err := ensureFirefoxProfileClosed(sourceDB); err != nil {
-		return err
-	}
-	if err := ensureFirefoxProfileClosed(targetDB); err != nil {
-		return err
-	}
-	readableSource, cleanup, sourceColumns, err := readableFirefoxCookieDatabase(sourceDB)
-	if err != nil {
-		return err
-	}
-	defer cleanup()
-	targetColumns, err := firefoxCookieColumns(targetDB)
-	if err != nil {
-		return err
-	}
-	if !reflect.DeepEqual(sourceColumns, targetColumns) {
-		return errors.New("Firefox source and target cookie schemas differ; profile copy is unavailable")
-	}
-	identity := "name=" + sqlString(cookie.Name) + " AND host=" + sqlString(cookie.Domain) + " AND path=" + sqlString(cookie.Path) + " AND originAttributes=" + sqlString(cookie.OriginAttributes)
-	if !replace {
-		output, err := runSQLite(targetDB, true, "SELECT count(*) AS existing FROM moz_cookies WHERE "+identity)
-		if err != nil {
-			return err
-		}
-		var counts []struct {
-			Existing int `json:"existing"`
-		}
-		if err := json.Unmarshal(output, &counts); err != nil || len(counts) != 1 {
-			return errors.New("cannot check destination Firefox cookie")
-		}
-		if counts[0].Existing != 0 {
-			return errors.New("destination already has this cookie; use --replace to overwrite it")
-		}
-	}
-	var columns []string
-	for _, column := range sourceColumns {
-		if column != "id" {
-			columns = append(columns, sqlIdentifier(column))
-		}
-	}
-	if len(columns) == 0 {
-		return errors.New("Firefox cookie database has no transferable columns")
-	}
-	insert := "INSERT INTO"
-	if replace {
-		insert = "INSERT OR REPLACE INTO"
-	}
-	statement := "ATTACH DATABASE " + sqlString(readableSource) + " AS source; BEGIN IMMEDIATE; " + insert + " main.moz_cookies (" + strings.Join(columns, ",") + ") SELECT " + strings.Join(columns, ",") + " FROM source.moz_cookies WHERE id=" + strconv.FormatInt(cookie.ID, 10) + " AND " + identity + "; SELECT changes() AS copied; COMMIT;"
-	output, err := runSQLite(targetDB, false, statement)
-	if err != nil {
-		return err
-	}
-	var changed []struct {
-		Copied int `json:"copied"`
-	}
-	if err := json.Unmarshal(output, &changed); err != nil || len(changed) != 1 || changed[0].Copied != 1 {
-		return errors.New("Firefox cookie was not copied; source may have changed")
-	}
-	return nil
-}
-
 func importFirefoxCookie(profile string, cookie browserCookie, replace bool) error {
-	if cookie.OriginAttributes != "" || cookie.PartitionKey != "" {
+	if len(cookie.Attributes) != 0 || cookie.PartitionKey != "" {
 		return errors.New("Firefox profile import cannot map a container or partitioned cookie")
 	}
 	database, err := firefoxCookieDatabase(profile)
@@ -543,13 +302,6 @@ func firefoxImportedSameSite(cookie browserCookie) (int, error) {
 	default:
 		return 0, errors.New("unsupported cookie SameSite policy")
 	}
-}
-
-func sqlBool(value bool) string {
-	if value {
-		return "1"
-	}
-	return "0"
 }
 
 func ensureFirefoxProfileClosed(database string) error {

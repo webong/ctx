@@ -71,6 +71,15 @@ func shareSpaceCommand(resolver *config.Resolver, space string, args []string, s
 		if err != nil {
 			return reportError(stderr, err)
 		}
+		inventory, err := freshMachineInventory(resolver)
+		if err != nil {
+			return reportError(stderr, err)
+		}
+		if _, err := inventory.Find(matched.Manifest.Name, selection); err == nil {
+			if _, err := inventory.Find(matched.Manifest.Name, selection, "share"); err != nil {
+				return reportError(stderr, err)
+			}
+		}
 		return invokeAdapter(resolver, matched, "share", selection, append([]string{space}, args...), "", stdout, stderr)
 	}
 }

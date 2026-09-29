@@ -81,6 +81,16 @@ foreach ($adapter in $bundledAdapters) {
     }
     $adapterSource = if ($bundleRoot) { Join-Path $bundleRoot "adapters\$adapter" } else { Join-Path $repositoryRoot "adapters\$adapter" }
     Copy-Item -Recurse -Path $adapterSource -Destination $target
+    if ($localSource -and $adapter -in @('firefox', 'chrome', 'chromium', 'safari')) {
+        $shareBinary = [System.IO.Path]::GetFullPath((Join-Path $target "ctx-$adapter-share.exe"))
+        Push-Location $repositoryRoot
+        try {
+            & go build -o $shareBinary "./adapters/$adapter/native"
+            if ($LASTEXITCODE -ne 0) { throw "Failed to build $adapter browser share adapter." }
+        }
+        finally { Pop-Location }
+        Remove-Item -Recurse -Force (Join-Path $target 'native')
+    }
 }
 
 $previousCtxHome = $env:CTX_HOME

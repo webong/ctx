@@ -16,7 +16,7 @@ executable = "ctx-example"
 # Optional native Windows implementation. When absent, executable is used.
 executable_windows = "ctx-example.ps1"
 description = "Example context adapter"
-capabilities = "list,validate,run,doctor,open,share"
+capabilities = "list,observe,validate,run,doctor,open,share"
 selector_key = "example_context"
 extra_keys = "example_namespace"
 commands = "example,examplectl"
@@ -31,6 +31,43 @@ default_provider = "false"
 Names use lowercase letters, numbers, and underscores, and cannot collide with a
 runtime, surface, or ctx command. `validate` and `doctor` are required. An
 adapter must provide `run` or `open`; `list` is optional.
+
+### Machine graph observation
+
+An adapter can declare the optional `observe` capability. CTX calls its
+executable as `observe` with no selection or arguments and expects one UTF-8
+JSON object on stdout:
+
+~~~json
+{
+  "version": 1,
+  "contexts": [
+    {"selection": "work", "capabilities": ["validate", "run", "share"], "attributes": {"label": "Work"}}
+  ],
+  "resources": [
+    {"id": "project-1", "kind": "project", "context": "work", "attributes": {"label": "Example"}}
+  ],
+  "relations": []
+}
+~~~
+
+`selection` is the value passed to the adapter's native operations. Context
+capabilities, when supplied, must be a subset of the manifest and narrow what
+the context offers. Resource IDs are local to the adapter and stored as graph
+digests. Relations use resource IDs as `from` and `to` and a plain `kind`.
+Contexts and resources may have ordinary JSON metadata; never include cookies,
+keys, tokens, or other credentials. Unknown fields, duplicate IDs, invalid
+relations, or a response over 1 MiB invalidate the observation. CTX limits
+discovery to 10 seconds. A failing collector removes its prior contexts on the
+next successful graph scan. `observe` works for any runtime; no provider name
+is built into the graph collector. Adapters without `observe` retain the
+line-oriented `list` behavior documented below.
+
+The public `github.com/webong/ctx/graph/system` package exposes
+`ObserveInventory`, `ResolveInventory`, and `Inventory.Find` for other Go
+consumers. `ctx graph resolve [runtime|all] [capability...]` shows the same
+candidate view as JSON. These are observations; the caller must validate the
+selected context with its trusted adapter before acting.
 
 `runtime` identifies where the selected context executes:
 
@@ -55,7 +92,7 @@ A browser adapter participating in `ctx share:browser` declares, for example:
 runtime = "browser"
 capabilities = "list,validate,open,doctor,share"
 share_spaces = "browser"
-browser_share = "cookie.list,cookie.export,cookie.import,policy.export"
+browser_share = "cookie.list,cookie.export,cookie.import,policy.export,certificate.list,certificate.export,certificate.import"
 ~~~
 
 A virtualizer adapter's unqualified `list` output contains native context,
@@ -64,6 +101,20 @@ connection, or namespace names. `ctx ls virtualizer` prefixes each result as
 capabilities in addition to normal `run` routing. `ctx share:virtualizer image
 copy` and `ctx share:virtualizer volume copy` resolve qualified endpoints
 dynamically, so additional providers need no core changes.
+
+Users may register named virtualizer instances with `ctx virtualizer add`. Each
+instance records an adapter provider and native selection, plus optional
+declared virtualizer product and machine labels. Share and build commands accept `@instance`
+endpoints. The instance registry is stored in `$CTX_HOME/virtualizers.json` (or
+the default ctx configuration home), with owner-only permissions. Registration
+validates the native selection through the trusted adapter. ctx displays the
+resolved instance before a transfer. The product and machine are user-declared
+labels; the adapter remains responsible for routing to the selected engine.
+For nerdctl, registration can include `--address`, which ctx passes as
+`CTX_VIRTUALIZER_ADDRESS` to adapter invocations. The maintained nerdctl
+adapter passes this value as its native `--address` flag for validation,
+transfer, and build operations. Other virtualizer adapters need no new
+capability: their native selection already identifies the engine connection.
 
 `selector_key` defaults to the adapter name, or to `browser` for browser
 adapters. Direct computer integrations that only declare `computer_commands`
@@ -218,12 +269,18 @@ stream to stdout, while volume import reads a tar stream from stdin.
 Virtualizer resource transfers are exposed through `ctx share:virtualizer`.
 The installed virtualizer adapters register the actual image and volume
 capabilities, and ctx rejects a transfer when either endpoint lacks a needed
-capability. `ctx share:browser` bridges browser resources between trusted
+capability. `image sync` uses registry push/pull by default and falls back to
+an archive when an endpoint lacks push/pull. `image copy` and `image sync
+--tar` use an archive. Apple Container supports the
+archive path. Volume export and copy are point-in-time operations; ctx refuses
+to import into an existing target volume. `ctx build --cache-ref` uses a
+registry-backed build cache where the chosen adapter supports `build`.
+`ctx share:browser` bridges browser resources between trusted
 adapters. Browser adapters declare `share` and `share_spaces = "browser"`, then
 list operations in `browser_share`, for example
 `cookie.list,cookie.export,cookie.import,policy.export`. ctx invokes an
 operation as `share PROFILE -- RESOURCE OPERATION`. The adapter receives one
-JSON request on stdin with `version = 1`. `cookie.list` receives `site` and
+JSON request on stdin with `version = 2`. `cookie.list` receives `site` and
 returns a JSON array of cookie metadata without values. `cookie.export`
 receives `site` and a listed `cookie`, then returns that cookie with its value.
 `cookie.import` receives `bundle` and `replace`, and returns no body.
@@ -233,9 +290,47 @@ Cookie `id` is a source row ID where available; adapters without row IDs can
 return an opaque `ref`. Adapters must preserve cookie scope and reject fields
 they cannot map. ctx selects one listed cookie before exporting its value,
 then delivers a versioned bundle to a file, pipe, or importing adapter. A
-source and target can be different browser providers. Maintained browser
-adapters invoke ctx's linked native storage helper; external adapters can
-implement the protocol entirely in their own executable.
+source and target can be different browser providers. The maintained browser
+adapters package their own `ctx-<adapter>-share` executable, built from that
+adapter's `native` directory; it is included in the adapter checksum and runs
+as a separate process. External adapters implement the same protocol in their own
+executable. CTX core has no browser-specific storage code or provider dispatch.
+Go adapters can import `github.com/webong/ctx/browser/share` for the versioned
+request, cookie, policy, and generic resource envelope types. Cookie fields
+shared across browsers are portable; optional browser-specific fields go in
+`attributes` with namespaced keys such as `firefox.origin_attributes`.
+Importers must reject attributes they cannot preserve. Version 2 replaces the
+earlier version 1 browser share request and bundle format.
+
+For example, `cookie.list` receives `{"version":2,"site":"https://example.com"}`
+and can respond with:
+
+~~~json
+[{"ref":"profile-cookie-42","name":"session","domain":"example.com","path":"/","expiry":1893456000,"secure":true,"http_only":true,"same_site_policy":"lax"}]
+~~~
+
+The `ref` must select the same cookie during `cookie.export`; the export
+response adds `value`. `cookie.import` receives the exported cookie inside a
+`bundle` object with `version`, `source`, and `site`, plus `replace`. Adapters
+should not write secret values to stderr or include them in `cookie.list`.
+
+Other browser resources use the generic bridge without a ctx code change.
+An adapter declares `resource.list`, `resource.export`, and/or
+`resource.import` in `browser_share`. The user runs
+`ctx share:browser <resource> <list|export|copy|import>`. The adapter receives
+`{"version":2,"args":[...]}` for list and export; arguments after `--` are
+passed through in `args`. Export returns an envelope containing `version:2`,
+`resource`, and a JSON `payload`. ctx sets `source` to the selected provider and
+profile. Copy and import deliver that envelope as `bundle` with a `replace`
+boolean. The destination adapter validates the payload's resource-specific
+schema and determines whether it can represent the source data. Generic
+export supports `--to-file` and `--stdout`; generic import supports
+`--from-file` and `--stdin`. Files are created with mode 0600, and stdout
+requires a pipe. The maintained Firefox adapter implements
+`certificate.list`, `certificate.export`, and `certificate.import` with a
+password-protected PKCS#12 payload. The generic bridge passes adapter
+arguments to both ends of a copy, so a local password file can be used for
+export and import.
 `ctx share:computer` is also reserved. Any other installed adapter can declare
 the `share` capability and optional `share_spaces` to register
 `ctx share:<space>` commands. When `share_spaces` is omitted, the adapter name

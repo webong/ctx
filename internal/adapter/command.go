@@ -24,8 +24,8 @@ func (a *Adapter) Command(invocation Invocation) (*exec.Cmd, error) {
 	}
 	var args []string
 	switch invocation.Operation {
-	case "list":
-		args = []string{"list"}
+	case "list", "observe":
+		args = []string{invocation.Operation}
 	case "validate", "doctor":
 		args = []string{invocation.Operation, invocation.Selection}
 	default:

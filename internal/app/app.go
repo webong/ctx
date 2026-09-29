@@ -10,10 +10,10 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/webong/ctx/graph/system"
 	"github.com/webong/ctx/internal/config"
 	"github.com/webong/ctx/internal/launch"
 	"github.com/webong/ctx/internal/platform"
-	"github.com/webong/ctx/internal/systemgraph"
 )
 
 var Version = "0.8.0-dev"
@@ -70,9 +70,6 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	if args[0] == "graph" {
 		return graphCommand(args[1:], stdout, stderr)
 	}
-	if args[0] == "__browser-native" {
-		return browserNativeCommand(args[1:], os.Stdin, stdout, stderr)
-	}
 	resolver, err := newResolver()
 	if err != nil {
 		fmt.Fprintf(stderr, "ctx: %v\n", err)
@@ -105,6 +102,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return adapterCommand(resolver, args[1:], stdout, stderr)
 	case "computer":
 		return computerCommand(args[1:], stdout, stderr)
+	case "virtualizer":
+		return virtualizerCommand(resolver, args[1:], stdout, stderr)
 	case "plugin":
 		if len(args) < 2 || args[1] != "computer" {
 			fmt.Fprintln(stderr, "ctx: plugin requires computer <adapter> [arguments...]")
@@ -182,29 +181,35 @@ usage:
   ctx set <selector> <name> [options]
   ctx clear [selector|profile]
   ctx profile <ls|show|use|set|unset|env|env-unset|clear> [arguments...]
-  ctx computer hooks <print|install|remove> <adapter> [--events <name,...>] [--handler <executable>]
   ctx adapter <ls [runtime|surface]|available|add|refresh|inspect|install|trust|test|doctor|remove> [arguments...]
+  ctx computer hooks <print|install|remove> <adapter> [--events <name,...>] [--handler <executable>]
+  ctx virtualizer add <name> --provider <adapter> --selection <context>
+      [--virtualizer <product>] [--machine <vm>] [--address <adapter-address>]
+  ctx virtualizer <ls|show|remove> [name]
   ctx setup [adapters] [--all|--minimal|--adapters <name,...>]
   ctx ls <selector>
   ctx open [URL...]
   ctx doctor
-  ctx build [provider] --cache-ref <registry-ref> [--] <build arguments>
-  ctx share:virtualizer image <sync|copy> [arguments...]
+  ctx build [provider|@instance] --cache-ref <registry-ref> [--] <build arguments>
+  ctx share:virtualizer image <sync|copy> <source> <target> <image>...
   ctx share:virtualizer volume <export|import|copy> [arguments...]
+      endpoints: @instance or provider:selection
   ctx share:browser cookie list [--from <browser:profile>] --site <URL>
   ctx share:browser cookie copy [--from <browser:profile>] --site <URL> --name <cookie>
       [--domain <domain>] [--path <path>] [--id <row-id>] [--ref <reference>]
-      [--origin-attributes <value>]
+      [--attribute <namespace.key=value>]
       (--to-profile <browser:profile> | --to-file <path> | --stdout) [--replace]
   ctx share:browser cookie import (--from-file <path> | --stdin) --to-profile <browser:profile> [--replace]
   ctx share:browser policy export [--from <browser:profile>] (--to-file <path> | --stdout)
   ctx share:browser capabilities [--from <browser:profile>]
+  ctx share:browser <resource> <list|export|copy|import> [bridge options] [-- adapter arguments...]
   ctx share:computer (reserved; unavailable)
   ctx share:<space> [arguments...] (when an adapter registers the space)
   ctx run <provider-or-adapter-command> [arguments...]
   ctx run -- <command> [arguments...]
   ctx shell [--shell <executable>] [-- <command> [arguments...]]
-  ctx graph <status|vertices|edges|snapshot|changes> [arguments...]
+  ctx graph scan
+  ctx graph <scan|resolve|status|vertices|edges|snapshot|changes> [arguments...]
   ctx version`)
 }
 
@@ -243,6 +248,14 @@ func status(resolver *config.Resolver, selectors []string, stdout, stderr io.Wri
 		fmt.Fprintln(stderr, "ctx: status accepts at most one selector")
 		return 2
 	}
+	var inventory systemgraph.Inventory
+	if showAll || selectors[0] != "profile" {
+		if refreshed, err := freshMachineInventory(resolver); err == nil {
+			inventory = refreshed
+		} else {
+			fmt.Fprintf(stderr, "ctx: warning: could not refresh machine graph: %v\n", err)
+		}
+	}
 	for _, selector := range selectors {
 		candidate, _ := adapterStore().Load(selector)
 		overrideEnv := []string(nil)
@@ -250,7 +263,7 @@ func status(resolver *config.Resolver, selectors []string, stdout, stderr io.Wri
 			overrideEnv = candidate.Manifest.OverrideEnv
 		}
 		if value, source := environmentOverride(selector, overrideEnv); value != "" {
-			fmt.Fprintf(stdout, "%s: %s (%s)\n", selector, value, source)
+			fmt.Fprintf(stdout, "%s: %s (%s)%s\n", selector, value, source, observedStatus(selector, value, inventory))
 			continue
 		}
 		key := selector
@@ -265,10 +278,28 @@ func status(resolver *config.Resolver, selectors []string, stdout, stderr io.Wri
 		if resolved.Value == "" {
 			fmt.Fprintf(stdout, "%s: <not selected>\n", selector)
 		} else {
-			fmt.Fprintf(stdout, "%s: %s (%s)\n", selector, resolved.Value, resolved.Source)
+			fmt.Fprintf(stdout, "%s: %s (%s)%s\n", selector, resolved.Value, resolved.Source, observedStatus(selector, resolved.Value, inventory))
 		}
 	}
 	return 0
+}
+
+func observedStatus(selector, value string, inventory systemgraph.Inventory) string {
+	if selector == "browser" {
+		provider, profile, ok := strings.Cut(value, ":")
+		if !ok {
+			return ""
+		}
+		candidate, err := inventory.Find(provider, profile)
+		if err == nil && candidate.Runtime == "browser" {
+			return " [observed]"
+		}
+		return ""
+	}
+	if candidate, err := inventory.Find(selector, value); err == nil && candidate.Runtime != "browser" {
+		return " [observed]"
+	}
+	return ""
 }
 
 func environmentOverride(selector string, providerVariables []string) (string, string) {

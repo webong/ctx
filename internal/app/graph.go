@@ -7,10 +7,11 @@ import (
 	"io"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/webong/ctx/graph"
+	"github.com/webong/ctx/graph/system"
 	"github.com/webong/ctx/internal/config"
-	"github.com/webong/ctx/internal/systemgraph"
 )
 
 func graphCommand(args []string, stdout, stderr io.Writer) int {
@@ -23,7 +24,8 @@ func graphCommand(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	defer system.Close()
-	if resolver, resolveErr := newResolver(); resolveErr == nil {
+	resolver, resolveErr := newResolver()
+	if resolveErr == nil {
 		profile, _, _ := resolver.ActiveProfile()
 		if observeErr := system.ObserveShell(context.Background(), currentDirectory(), profile, observedSelections(resolver)); observeErr != nil {
 			fmt.Fprintf(stderr, "ctx: warning: could not observe shell for graph query: %v\n", observeErr)
@@ -33,6 +35,58 @@ func graphCommand(args []string, stdout, stderr io.Writer) int {
 	encoder := json.NewEncoder(stdout)
 	encoder.SetIndent("", "  ")
 	switch args[0] {
+	case "scan":
+		if len(args) != 1 {
+			fmt.Fprintln(stderr, "ctx: graph scan takes no arguments")
+			return 2
+		}
+		if resolveErr != nil {
+			return reportError(stderr, resolveErr)
+		}
+		adapters, err := scanMachineInventory(resolver, system)
+		if err != nil {
+			return reportError(stderr, err)
+		}
+		count := 0
+		for _, adapter := range adapters {
+			count += len(adapter.Contexts)
+			if adapter.DiscoveryStatus != "ok" && adapter.DiscoveryStatus != "not-supported" && adapter.DiscoveryStatus != "untrusted" {
+				fmt.Fprintf(stderr, "ctx: discovery unavailable for %s (%s)\n", adapter.Name, adapter.DiscoveryStatus)
+			}
+		}
+		fmt.Fprintf(stdout, "observed %d adapters and %d contexts\n", len(adapters), count)
+		return 0
+	case "resolve":
+		if resolveErr != nil {
+			return reportError(stderr, resolveErr)
+		}
+		runtimeName := ""
+		capabilities := []string(nil)
+		if len(args) > 1 {
+			runtimeName = args[1]
+			if runtimeName == "all" {
+				runtimeName = ""
+			}
+			capabilities = args[2:]
+		}
+		if _, err := scanMachineInventory(resolver, system); err != nil {
+			return reportError(stderr, err)
+		}
+		inventory, err := system.ResolveInventory(ctx, runtimeName)
+		if err != nil {
+			return reportError(stderr, err)
+		}
+		selected := inventory.Contexts[:0]
+		for _, candidate := range inventory.Contexts {
+			if candidateOffers(candidate, capabilities...) {
+				selected = append(selected, candidate)
+			}
+		}
+		inventory.Contexts = selected
+		if err := encoder.Encode(inventory); err != nil {
+			return reportError(stderr, err)
+		}
+		return 0
 	case "status":
 		if len(args) != 1 {
 			fmt.Fprintln(stderr, "ctx: graph status takes no arguments")
@@ -44,6 +98,13 @@ func graphCommand(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 		fmt.Fprintf(stdout, "store: %s/graph.json\nnamespace: %s\nrevision: %d\ncursor: %d\nvertices: %d\nedges: %d\n", configHomePath(), snapshot.Namespace, snapshot.Revision, snapshot.Cursor, len(snapshot.Vertices), len(snapshot.Edges))
+		inventory, err := system.ResolveInventory(ctx, "")
+		if err != nil {
+			return reportError(stderr, err)
+		}
+		if !inventory.ObservedAt.IsZero() {
+			fmt.Fprintf(stdout, "last_scan: %s\nobserved_contexts: %d\n", inventory.ObservedAt.Format(time.RFC3339), len(inventory.Contexts))
+		}
 		return 0
 	case "vertices":
 		kind := ""
@@ -129,9 +190,25 @@ func graphCommand(args []string, stdout, stderr io.Writer) int {
 		return 0
 	default:
 		fmt.Fprintf(stderr, "ctx: unknown graph command %s\n", args[0])
-		fmt.Fprintln(stderr, "ctx: use graph status, vertices, edges, snapshot, or changes [cursor]")
+		fmt.Fprintln(stderr, "ctx: use graph scan, resolve [runtime|all] [capability...], status, vertices, edges, snapshot, or changes [cursor]")
 		return 2
 	}
+}
+
+func candidateOffers(candidate systemgraph.ContextCandidate, required ...string) bool {
+	for _, capability := range required {
+		found := false
+		for _, offered := range candidate.Capabilities {
+			if capability == offered {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }
 
 func recordSystemContext(resolver *config.Resolver, stderr io.Writer) {

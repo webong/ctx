@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	adapterpkg "github.com/webong/ctx/internal/adapter"
 	"github.com/webong/ctx/internal/config"
@@ -269,22 +271,76 @@ func listContexts(resolver *config.Resolver, args []string, stdout, stderr io.Wr
 	case "virtualizer", "container":
 		return listVirtualizers(resolver, stdout, stderr)
 	case "computer":
+		inventory, err := resolvedMachineInventory(resolver)
+		if err != nil {
+			return reportError(stderr, err)
+		}
+		found := false
+		for _, candidate := range inventory.Contexts {
+			if candidate.Runtime == "computer" && candidate.Selection != "" {
+				fmt.Fprintf(stdout, "%s:%s\n", candidate.Adapter, candidate.Selection)
+				found = true
+			}
+		}
+		if found {
+			return 0
+		}
 		return listProviderFamily(resolver, "computer", true, stdout, stderr)
 	}
 	candidate, err := adapterStore().Load(selector)
-	if err != nil || !candidate.IsSelectable() || !candidate.HasCapability("list") {
+	if err != nil || !candidate.IsSelectable() || (!candidate.HasCapability("list") && !candidate.HasCapability("observe")) {
 		fmt.Fprintf(stderr, "ctx: unknown selector %s\n", selector)
 		return 2
+	}
+	if candidate.HasCapability("observe") {
+		inventory, err := resolvedMachineInventory(resolver)
+		if err != nil {
+			return reportError(stderr, err)
+		}
+		found := false
+		for _, context := range inventory.Contexts {
+			if context.Adapter == candidate.Manifest.Name && context.Selection != "" {
+				fmt.Fprintln(stdout, context.Selection)
+				found = true
+			}
+		}
+		if found || !candidate.HasCapability("list") {
+			return 0
+		}
 	}
 	return invokeAdapter(resolver, candidate, "list", "", nil, "", stdout, stderr)
 }
 
 func listBrowsers(resolver *config.Resolver, stdout, stderr io.Writer) int {
-	return listProviderFamily(resolver, "browser", true, stdout, stderr)
+	inventory, err := resolvedMachineInventory(resolver)
+	if err != nil {
+		return reportError(stderr, err)
+	}
+	found := false
+	for _, candidate := range inventory.Contexts {
+		if candidate.Runtime != "browser" || candidate.Selection == "" {
+			continue
+		}
+		fmt.Fprintf(stdout, "%s:%s\n", candidate.Adapter, candidate.Selection)
+		found = true
+	}
+	if !found {
+		fmt.Fprintln(stderr, "ctx: no supported browser contexts found")
+		return 1
+	}
+	return 0
 }
 
 func listVirtualizers(resolver *config.Resolver, stdout, stderr io.Writer) int {
-	return listProviderFamily(resolver, "virtualizer", true, stdout, stderr)
+	inventory, err := resolvedMachineInventory(resolver)
+	if err != nil {
+		return reportError(stderr, err)
+	}
+	if printDiscoveredVirtualizers(inventory, stdout) == 0 {
+		fmt.Fprintln(stderr, "ctx: no supported virtualizer contexts found")
+		return 1
+	}
+	return 0
 }
 
 func listProviderFamily(resolver *config.Resolver, runtimeName string, prefix bool, stdout, stderr io.Writer) int {
@@ -437,6 +493,10 @@ func invokeAdapter(resolver *config.Resolver, candidate *adapterpkg.Adapter, ope
 }
 
 func invokeAdapterIO(resolver *config.Resolver, candidate *adapterpkg.Adapter, operation, selection string, args []string, requestedCommand string, stdin io.Reader, stdout, stderr io.Writer) int {
+	return invokeAdapterIOWithEnv(resolver, candidate, operation, selection, args, requestedCommand, stdin, stdout, stderr, nil)
+}
+
+func invokeAdapterIOWithEnv(resolver *config.Resolver, candidate *adapterpkg.Adapter, operation, selection string, args []string, requestedCommand string, stdin io.Reader, stdout, stderr io.Writer, extraEnv map[string]string) int {
 	store := adapterStore()
 	if err := store.AssertTrusted(candidate); err != nil {
 		return reportError(stderr, err)
@@ -486,7 +546,46 @@ func invokeAdapterIO(resolver *config.Resolver, candidate *adapterpkg.Adapter, o
 	for key, value := range profileValues {
 		command.Env = setEnvironment(command.Env, key, value)
 	}
+	if candidate.IsRuntime("virtualizer") {
+		command.Env = setEnvironment(command.Env, "CTX_VIRTUALIZER_ADDRESS", "")
+	}
+	for key, value := range extraEnv {
+		command.Env = setEnvironment(command.Env, key, value)
+	}
+	if operation == "list" || operation == "observe" {
+		return runPreparedDiscovery(command, stdout, stderr)
+	}
 	return runPreparedIO(command, stdin, stdout, stderr)
+}
+
+func runPreparedDiscovery(command *exec.Cmd, stdout, stderr io.Writer) int {
+	command.Stdin = nil
+	command.Stdout = stdout
+	command.Stderr = stderr
+	command.WaitDelay = 2 * time.Second
+	if err := command.Start(); err != nil {
+		fmt.Fprintf(stderr, "ctx: %v\n", err)
+		return 1
+	}
+	var expired atomic.Bool
+	timer := time.AfterFunc(10*time.Second, func() {
+		expired.Store(true)
+		_ = command.Process.Kill()
+	})
+	err := command.Wait()
+	timer.Stop()
+	if expired.Load() {
+		fmt.Fprintln(stderr, "ctx: adapter discovery timed out after 10 seconds")
+		return 124
+	}
+	if err != nil {
+		if exitError, ok := err.(*exec.ExitError); ok {
+			return exitError.ExitCode()
+		}
+		fmt.Fprintf(stderr, "ctx: %v\n", err)
+		return 1
+	}
+	return 0
 }
 
 func runPrepared(command *exec.Cmd, stdout, stderr io.Writer) int {

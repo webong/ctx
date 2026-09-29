@@ -26,9 +26,14 @@ build_bundle() {
   (cd "$ROOT" && CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
     go build -trimpath -ldflags "-s -w -X github.com/webong/ctx/internal/app.Version=${VERSION#v}" \
     -o "$binary" ./cmd/ctx)
-
   for adapter in $BUNDLED_ADAPTERS; do
     cp -R "$ROOT/adapters/$adapter" "$bundle/adapters/$adapter"
+  done
+  for adapter in firefox chrome chromium safari; do
+    (cd "$ROOT" && CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
+      go build -trimpath -ldflags "-s -w" \
+      -o "$bundle/adapters/$adapter/ctx-$adapter-share$extension" "./adapters/$adapter/native")
+    rm -rf "$bundle/adapters/$adapter/native"
   done
   cp "$ROOT/LICENSE" "$ROOT/README.md" "$bundle/"
 

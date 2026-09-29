@@ -175,6 +175,10 @@ func validateAttributes(attrs map[string]any) error {
 	return nil
 }
 
+// ValidateAttributes checks ordinary graph metadata before projection. It
+// applies the same secret-marker and size rules as Store.Apply.
+func ValidateAttributes(attrs map[string]any) error { return validateAttributes(attrs) }
+
 func validateLabels(labels map[string]string) error {
 	for key, value := range labels {
 		if secretKeyPattern.MatchString(key) || isSecretMarker(value) {

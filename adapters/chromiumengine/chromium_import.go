@@ -1,4 +1,4 @@
-package app
+package chromiumengine
 
 import (
 	"bytes"
@@ -19,12 +19,12 @@ import (
 	"time"
 )
 
-func importChromiumCookie(provider, profile string, cookie browserCookie, replace bool) error {
+func importChromiumCookie(provider Config, profile string, cookie browserCookie, replace bool) error {
 	if runtime.GOOS == "windows" {
 		return errors.New("Chrome/Chromium profile import is unavailable on Windows because target encryption is browser-bound")
 	}
-	if cookie.OriginAttributes != "" {
-		return errors.New("Chromium profile import cannot map Firefox container or partition attributes")
+	if len(cookie.Attributes) != 0 {
+		return errors.New("Chromium profile import cannot map this adapter's cookie attributes")
 	}
 	database, err := chromiumCookieDatabase(provider, profile)
 	if err != nil {
@@ -39,7 +39,7 @@ func importChromiumCookie(provider, profile string, cookie browserCookie, replac
 	}
 	for _, required := range []string{"host_key", "name", "path", "value", "encrypted_value", "expires_utc", "is_secure", "is_httponly", "samesite"} {
 		if !hasSQLiteColumn(columns, required) {
-			return fmt.Errorf("%s target cookie database lacks %s", provider, required)
+			return fmt.Errorf("%s target cookie database lacks %s", provider.Name, required)
 		}
 	}
 	if cookie.PartitionKey != "" && !hasSQLiteColumn(columns, "top_frame_site_key") {
@@ -162,7 +162,7 @@ func chromiumDatabaseVersion(database string) (int, error) {
 	return versions[0].Version, nil
 }
 
-func chromiumTargetEncryption(provider, database string) (string, string, int, error) {
+func chromiumTargetEncryption(provider Config, database string) (string, string, int, error) {
 	if runtime.GOOS == "darwin" {
 		secret, err := chromiumMacKeychainPassword(provider)
 		return "v10", secret, 1003, err

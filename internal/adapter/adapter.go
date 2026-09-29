@@ -24,7 +24,7 @@ const legacyAPIVersion = "1"
 const legacyDecimalAPIVersion = "1.0"
 
 var validName = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
-var validBrowserShareOperation = regexp.MustCompile(`^[a-z]+\.[a-z]+$`)
+var validBrowserShareOperation = regexp.MustCompile(`^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$`)
 var validEnvironmentName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 var validComputerHookEvent = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9]*$`)
 
@@ -619,7 +619,7 @@ func validateManifest(manifest Manifest, directory string) error {
 	}
 	for _, capability := range manifest.Capabilities {
 		switch capability {
-		case "list", "configure", "validate", "run", "doctor", "open", "build", "share",
+		case "list", "observe", "configure", "validate", "run", "doctor", "open", "build", "share",
 			"image_push", "image_pull", "image_save", "image_load",
 			"volume_exists", "volume_create", "volume_export", "volume_import":
 		default:

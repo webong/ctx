@@ -9,8 +9,19 @@ selection=${1:-}
 if [ "$#" -gt 0 ]; then shift; fi
 if [ "${1:-}" = -- ]; then shift; fi
 volume_image=${CTX_VOLUME_IMAGE:-alpine:3.21}
+address=${CTX_VIRTUALIZER_ADDRESS:-}
 
-namespaces() { "$nerdctl" namespace ls --quiet; }
+run_nerdctl() {
+  if [ -n "$address" ]; then "$nerdctl" --address "$address" "$@"
+  else "$nerdctl" "$@"
+  fi
+}
+exec_nerdctl() {
+  if [ -n "$address" ]; then exec "$nerdctl" --address "$address" "$@"
+  else exec "$nerdctl" "$@"
+  fi
+}
+namespaces() { run_nerdctl namespace ls --quiet; }
 has_namespace() { namespaces | grep -Fxq "$1"; }
 has_run_override() {
   if [ -n "${CONTAINERD_NAMESPACE:-}" ] || [ -n "${CONTAINERD_ADDRESS:-}" ] || [ "${1:-}" = namespace ]; then return 0; fi
@@ -29,15 +40,15 @@ case "$operation" in
     if [ -n "$selection" ]; then set -- --namespace "$selection" build --cache-from "type=registry,ref=$cache_ref" --cache-to "type=registry,ref=$cache_ref,mode=max" "$@"
     else set -- build --cache-from "type=registry,ref=$cache_ref" --cache-to "type=registry,ref=$cache_ref,mode=max" "$@"
     fi
-    exec "$nerdctl" "$@"
+    exec_nerdctl "$@"
     ;;
-  image_push) exec "$nerdctl" --namespace "$selection" push "$@" ;;
-  image_pull) exec "$nerdctl" --namespace "$selection" pull "$@" ;;
-  image_save) archive=$1; shift; exec "$nerdctl" --namespace "$selection" save -o "$archive" "$@" ;;
-  image_load) exec "$nerdctl" --namespace "$selection" load -i "$1" ;;
-  volume_exists) "$nerdctl" --namespace "$selection" volume inspect "$1" >/dev/null 2>&1 ;;
-  volume_create) exec "$nerdctl" --namespace "$selection" volume create "$1" ;;
-  volume_export) exec "$nerdctl" --namespace "$selection" run --rm -v "$1:/volume:ro" "$volume_image" tar -C /volume -cf - . ;;
-  volume_import) exec "$nerdctl" --namespace "$selection" run --rm -i -v "$1:/volume" "$volume_image" tar -C /volume -xf - ;;
+  image_push) exec_nerdctl --namespace "$selection" push "$@" ;;
+  image_pull) exec_nerdctl --namespace "$selection" pull "$@" ;;
+  image_save) archive=$1; shift; exec_nerdctl --namespace "$selection" save -o "$archive" "$@" ;;
+  image_load) exec_nerdctl --namespace "$selection" load -i "$1" ;;
+  volume_exists) run_nerdctl --namespace "$selection" volume inspect "$1" >/dev/null 2>&1 ;;
+  volume_create) exec_nerdctl --namespace "$selection" volume create "$1" ;;
+  volume_export) exec_nerdctl --namespace "$selection" run --rm -v "$1:/volume:ro" "$volume_image" tar -C /volume -cf - . ;;
+  volume_import) exec_nerdctl --namespace "$selection" run --rm -i -v "$1:/volume" "$volume_image" tar -C /volume -xf - ;;
   *) exit 2 ;;
 esac

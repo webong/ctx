@@ -8,6 +8,9 @@ Their manifests declare `runtime = "virtualizer"` and `surfaces = "shell"`;
 each package owns its native CLI syntax, context discovery, validation, routing,
 build behavior, and supported image and volume operations. The ctx core sees
 only the common capability protocol.
+Docker also implements the versioned `observe` operation for the system graph;
+the other providers continue to use their `list` fallback until they expose
+additional context or resource observations.
 
 The Docker, Podman, and nerdctl directories also contain tiny command shims. The
 installer copies those launcher files into the binary directory under the native
@@ -20,6 +23,15 @@ implementations themselves remain installed and trusted under
 profile discovery, validation, launching, and declared browser share operations.
 `ctx share:browser` bridges resources between trusted adapters using the
 versioned JSON protocol in [the adapter API](../docs/adapter-api.md).
+Release and source installers build a separate share executable from each
+browser adapter's `native` directory. Shared request handling, policy reading,
+and SQLite access live in `adapters/browsercommon`; Chrome and Chromium share
+their storage engine through `adapters/chromiumengine`. The executable is part
+of that adapter's trusted checksum; CTX core only routes
+the declared operation and validates the shared envelope.
+The installers update the catalog and refresh active browser adapters with the
+packaged helper. Replacing only the `ctx` binary leaves old browser adapter
+packages in place; install the new bundle before using browser sharing.
 
 `kube`, `aws`, `gcloud`, `postgres`, and `mysql` are maintained computer-runtime
 adapters. Every adapter has an `adapter.toml` manifest and implements ctx adapter

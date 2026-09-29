@@ -1,4 +1,4 @@
-package app
+package chromiumengine
 
 import (
 	"bytes"
@@ -37,12 +37,10 @@ type chromiumCookieRow struct {
 	SameSite             int    `json:"sameSite"`
 	TopFrameSiteKey      string `json:"topFrameSiteKey"`
 	HasCrossSiteAncestor int    `json:"hasCrossSiteAncestor"`
-	SourceScheme         int    `json:"sourceScheme"`
-	SourcePort           int    `json:"sourcePort"`
 	HasExpires           int    `json:"hasExpires"`
 }
 
-func readChromiumSiteCookies(provider, profile string, site *url.URL, name string) ([]browserCookie, string, error) {
+func readChromiumSiteCookies(provider Config, profile string, site *url.URL, name string) ([]browserCookie, string, error) {
 	database, err := chromiumCookieDatabase(provider, profile)
 	if err != nil {
 		return nil, "", err
@@ -54,7 +52,7 @@ func readChromiumSiteCookies(provider, profile string, site *url.URL, name strin
 	defer cleanup()
 	for _, required := range []string{"host_key", "name", "path", "expires_utc", "is_secure", "is_httponly", "samesite", "value", "encrypted_value"} {
 		if !hasSQLiteColumn(columns, required) {
-			return nil, "", fmt.Errorf("%s cookie database lacks %s; this profile schema is not supported", provider, required)
+			return nil, "", fmt.Errorf("%s cookie database lacks %s; this profile schema is not supported", provider.Name, required)
 		}
 	}
 	host := strings.TrimSuffix(strings.ToLower(site.Hostname()), ".")
@@ -65,8 +63,6 @@ func readChromiumSiteCookies(provider, profile string, site *url.URL, name strin
 		"is_secure AS isSecure,is_httponly AS isHttpOnly,samesite AS sameSite," +
 		chromiumColumnExpr(columns, "top_frame_site_key", "''", "topFrameSiteKey") + "," +
 		chromiumColumnExpr(columns, "has_cross_site_ancestor", "0", "hasCrossSiteAncestor") + "," +
-		chromiumColumnExpr(columns, "source_scheme", "0", "sourceScheme") + "," +
-		chromiumColumnExpr(columns, "source_port", "0", "sourcePort") + "," +
 		chromiumColumnExpr(columns, "has_expires", "1", "hasExpires") +
 		" FROM cookies WHERE host_key IN (" + cookieHostSQL(host) + ")"
 	if name != "" {
@@ -95,9 +91,8 @@ func readChromiumSiteCookies(provider, profile string, site *url.URL, name strin
 		cookie := browserCookie{
 			ID: row.ID, Name: row.Name, Domain: row.Host, Path: row.Path,
 			Expiry: expiry, Secure: row.IsSecure != 0, HTTPOnly: row.IsHTTPOnly != 0,
-			SameSite: row.SameSite, SameSitePolicy: chromiumSameSitePolicy(row.SameSite),
-			PartitionKey: row.TopFrameSiteKey, CrossSiteAncestor: row.HasCrossSiteAncestor != 0,
-			SourceScheme: row.SourceScheme, SourcePort: row.SourcePort,
+			SameSitePolicy: chromiumSameSitePolicy(row.SameSite),
+			PartitionKey:   row.TopFrameSiteKey, CrossSiteAncestor: row.HasCrossSiteAncestor != 0,
 		}
 		if cookieDomainMatches(host, cookie.Domain) && (!cookie.Secure || site.Scheme == "https") && cookieActive(cookie) {
 			cookies = append(cookies, cookie)
@@ -128,7 +123,7 @@ func chromiumSameSitePolicy(raw int) string {
 	}
 }
 
-func chromiumCookieDatabase(provider, profile string) (string, error) {
+func chromiumCookieDatabase(provider Config, profile string) (string, error) {
 	if profile == "" || profile == "." || profile == ".." || filepath.Base(profile) != profile || strings.ContainsAny(profile, `/\\`) {
 		return "", errors.New("invalid Chromium profile directory")
 	}
@@ -139,45 +134,33 @@ func chromiumCookieDatabase(provider, profile string) (string, error) {
 	var root string
 	switch runtime.GOOS {
 	case "darwin":
-		if provider == "chrome" {
-			root = filepath.Join(home, "Library", "Application Support", "Google", "Chrome")
-		} else {
-			root = filepath.Join(home, "Library", "Application Support", "Chromium")
-		}
+		root = filepath.Join(home, "Library", "Application Support", provider.MacUserData)
 	case "windows":
 		local := os.Getenv("LOCALAPPDATA")
 		if local == "" {
 			return "", errors.New("LOCALAPPDATA is not set")
 		}
-		if provider == "chrome" {
-			root = filepath.Join(local, "Google", "Chrome", "User Data")
-		} else {
-			root = filepath.Join(local, "Chromium", "User Data")
-		}
+		root = filepath.Join(local, provider.WindowsUserData)
 	default:
 		root = os.Getenv("XDG_CONFIG_HOME")
 		if root == "" {
 			root = filepath.Join(home, ".config")
 		}
-		if provider == "chrome" {
-			root = filepath.Join(root, "google-chrome")
-		} else {
-			root = filepath.Join(root, "chromium")
-		}
+		root = filepath.Join(root, provider.LinuxUserData)
 	}
 	profileDir := filepath.Join(root, profile)
 	if info, err := os.Stat(filepath.Join(profileDir, "Preferences")); err != nil || !info.Mode().IsRegular() {
-		return "", fmt.Errorf("%s profile %q is unavailable", provider, profile)
+		return "", fmt.Errorf("%s profile %q is unavailable", provider.Name, profile)
 	}
 	for _, candidate := range []string{filepath.Join(profileDir, "Network", "Cookies"), filepath.Join(profileDir, "Cookies")} {
 		if info, err := os.Stat(candidate); err == nil && info.Mode().IsRegular() {
 			return candidate, nil
 		}
 	}
-	return "", fmt.Errorf("%s cookie database is unavailable for profile %q", provider, profile)
+	return "", fmt.Errorf("%s cookie database is unavailable for profile %q", provider.Name, profile)
 }
 
-func readChromiumCookieValue(provider, database string, cookie browserCookie) (string, error) {
+func readChromiumCookieValue(provider Config, database string, cookie browserCookie) (string, error) {
 	readable, cleanup, columns, err := readableCookieDatabase(database, "cookies")
 	if err != nil {
 		return "", err
@@ -194,12 +177,6 @@ func readChromiumCookieValue(provider, database string, cookie browserCookie) (s
 			ancestor = 1
 		}
 		statement += " AND has_cross_site_ancestor=" + strconv.Itoa(ancestor)
-	}
-	if hasSQLiteColumn(columns, "source_scheme") {
-		statement += " AND source_scheme=" + strconv.Itoa(cookie.SourceScheme)
-	}
-	if hasSQLiteColumn(columns, "source_port") {
-		statement += " AND source_port=" + strconv.Itoa(cookie.SourcePort)
 	}
 	output, err := runSQLite(readable, true, statement)
 	if err != nil {
@@ -251,7 +228,7 @@ func readChromiumCookieValue(provider, database string, cookie browserCookie) (s
 	return plaintext, nil
 }
 
-func decryptChromiumCookie(provider, database string, ciphertext []byte) (string, error) {
+func decryptChromiumCookie(provider Config, database string, ciphertext []byte) (string, error) {
 	if len(ciphertext) < 3 {
 		return "", errors.New("Chromium cookie uses an unsupported encryption format")
 	}
@@ -406,11 +383,8 @@ func chromiumPBKDF2Key(password []byte, iterations int) []byte {
 	return derived[:16]
 }
 
-func chromiumMacKeychainPassword(provider string) (string, error) {
-	service, account := "Chrome Safe Storage", "Chrome"
-	if provider == "chromium" {
-		service, account = "Chromium Safe Storage", "Chromium"
-	}
+func chromiumMacKeychainPassword(provider Config) (string, error) {
+	service, account := provider.KeychainService, provider.KeychainAccount
 	if _, err := exec.LookPath("security"); err != nil {
 		return "", errors.New("macOS security command is required to unlock Chromium cookies")
 	}
@@ -423,7 +397,7 @@ func chromiumMacKeychainPassword(provider string) (string, error) {
 	return strings.TrimSuffix(strings.TrimSuffix(string(output), "\n"), "\r"), nil
 }
 
-func chromiumLinuxSecret(provider string) (string, error) {
+func chromiumLinuxSecret(provider Config) (string, error) {
 	if strings.Contains(strings.ToUpper(os.Getenv("XDG_CURRENT_DESKTOP")), "KDE") {
 		if secret, err := chromiumKWalletSecret(provider); err == nil {
 			return secret, nil
@@ -439,13 +413,13 @@ func chromiumLinuxSecret(provider string) (string, error) {
 			return secret, nil
 		}
 	}
-	return "", fmt.Errorf("cannot read the %s cookie key from Secret Service or KWallet", provider)
+	return "", fmt.Errorf("cannot read the %s cookie key from Secret Service or KWallet", provider.Name)
 }
 
-func chromiumSecretServiceSecret(provider string) (string, error) {
+func chromiumSecretServiceSecret(provider Config) (string, error) {
 	if _, err := exec.LookPath("secret-tool"); err == nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		output, lookupErr := exec.CommandContext(ctx, "secret-tool", "lookup", "application", provider).Output()
+		output, lookupErr := exec.CommandContext(ctx, "secret-tool", "lookup", "application", provider.SecretApplication).Output()
 		cancel()
 		if lookupErr == nil && len(output) > 0 {
 			return strings.TrimRight(string(output), "\r\n"), nil
@@ -454,12 +428,9 @@ func chromiumSecretServiceSecret(provider string) (string, error) {
 	return "", errors.New("Secret Service key unavailable")
 }
 
-func chromiumKWalletSecret(provider string) (string, error) {
+func chromiumKWalletSecret(provider Config) (string, error) {
 	if _, err := exec.LookPath("kwallet-query"); err == nil {
-		folder, key := "Chromium Keys", "Chromium Safe Storage"
-		if provider == "chrome" {
-			folder, key = "Chrome Keys", "Chrome Safe Storage"
-		}
+		folder, key := provider.WalletFolder, provider.WalletKey
 		wallet := os.Getenv("CTX_KWALLET_NAME")
 		if wallet == "" {
 			wallet = "kdewallet"

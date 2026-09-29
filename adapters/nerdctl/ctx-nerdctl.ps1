@@ -10,8 +10,9 @@ if (-not $nerdctl -or -not (Test-Path -LiteralPath $nerdctl -PathType Leaf)) { [
 if ($Arguments.Count -gt 0 -and $Arguments[0] -eq '--') { $Arguments = @($Arguments | Select-Object -Skip 1) }
 $volumeImage = if ($env:CTX_VOLUME_IMAGE) { $env:CTX_VOLUME_IMAGE } else { 'alpine:3.21' }
 
-function Invoke-Nerdctl([string[]]$CommandArguments) { & $nerdctl @CommandArguments; exit $LASTEXITCODE }
-function Get-Namespaces { @(& $nerdctl namespace ls --quiet) }
+function Get-AddressPrefix { if ($env:CTX_VIRTUALIZER_ADDRESS) { return @('--address', $env:CTX_VIRTUALIZER_ADDRESS) }; return @() }
+function Invoke-Nerdctl([string[]]$CommandArguments) { $prefix = @(Get-AddressPrefix); & $nerdctl @prefix @CommandArguments; exit $LASTEXITCODE }
+function Get-Namespaces { $prefix = @(Get-AddressPrefix); @(& $nerdctl @prefix namespace ls --quiet) }
 function Has-RunOverride {
     if ($env:CONTAINERD_NAMESPACE -or $env:CONTAINERD_ADDRESS -or ($Arguments.Count -gt 0 -and $Arguments[0] -eq 'namespace')) { return $true }
     foreach ($argument in $Arguments) { if ($argument -eq '--namespace' -or $argument -like '--namespace=*' -or $argument -eq '--address' -or $argument -like '--address=*' -or $argument -eq '-n' -or $argument -like '-n?*' -or $argument -eq '-a' -or $argument -like '-a?*') { return $true } }
@@ -34,7 +35,7 @@ switch ($Operation) {
     'image_pull' { Invoke-Nerdctl (@('--namespace', $Selection, 'pull') + $Arguments) }
     'image_save' { Invoke-Nerdctl (@('--namespace', $Selection, 'save', '-o', $Arguments[0]) + @($Arguments | Select-Object -Skip 1)) }
     'image_load' { Invoke-Nerdctl @('--namespace', $Selection, 'load', '-i', $Arguments[0]) }
-    'volume_exists' { & $nerdctl --namespace $Selection volume inspect $Arguments[0] *> $null; exit $LASTEXITCODE }
+    'volume_exists' { $prefix = @(Get-AddressPrefix); & $nerdctl @prefix --namespace $Selection volume inspect $Arguments[0] *> $null; exit $LASTEXITCODE }
     'volume_create' { Invoke-Nerdctl @('--namespace', $Selection, 'volume', 'create', $Arguments[0]) }
     'volume_export' { Invoke-Nerdctl @('--namespace', $Selection, 'run', '--rm', '-v', "$($Arguments[0]):/volume:ro", $volumeImage, 'tar', '-C', '/volume', '-cf', '-', '.') }
     'volume_import' { Invoke-Nerdctl @('--namespace', $Selection, 'run', '--rm', '-i', '-v', "$($Arguments[0]):/volume", $volumeImage, 'tar', '-C', '/volume', '-xf', '-') }

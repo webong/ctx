@@ -30,8 +30,8 @@ $chrome = Find-Chrome
 switch ($Operation) {
     'share' {
         if ($Arguments.Count -gt 0 -and $Arguments[0] -eq '--') { $Arguments = @($Arguments | Select-Object -Skip 1) }
-        $ctxCommand = if ($env:CTX_EXECUTABLE) { $env:CTX_EXECUTABLE } else { 'ctx' }
-        & $ctxCommand __browser-native chrome $Selection @Arguments
+        $helper = Join-Path $PSScriptRoot 'ctx-chrome-share.exe'
+        & $helper $Selection @Arguments
         exit $LASTEXITCODE
     }
     'list' { if ($chrome) { Get-Profiles }; exit 0 }
