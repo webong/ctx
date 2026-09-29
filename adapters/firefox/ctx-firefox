@@ -57,6 +57,7 @@ profile_exists() {
 operation=${1:-}
 selection=${2:-}
 case "$operation" in
+  share) shift 2; [ "${1:-}" = -- ] && shift; exec "${CTX_EXECUTABLE:-ctx}" __browser-native firefox "$selection" "$@" ;;
   list) find_firefox || exit 0; list_profiles ;;
   validate) find_firefox && profile_exists "$selection" ;;
   doctor) find_firefox; [ -z "$selection" ] || profile_exists "$selection" ;;

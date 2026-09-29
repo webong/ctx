@@ -240,10 +240,11 @@ quiesce databases first. ctx refuses to import into an existing target volume.
 Apple Container image imports require a version newer than 1.3.0 because of
 [GHSA-r3h2-rgqf-9hv9](https://github.com/apple/containerization/security/advisories/GHSA-r3h2-rgqf-9hv9).
 
-`ctx share:browser` can select one site cookie from a Firefox, Chrome, or
-Chromium profile and deliver it to a new JSON file or a pipe. Firefox cookies
-can also be copied directly into another Firefox profile. It runs as a shell
-command and does not require a browser extension:
+`ctx share:browser` bridges browser resources through installed adapters.
+Firefox, Chrome, and Chromium can list and export a selected site cookie and
+import a supported cookie into a closed profile. Source and target may be
+different browser providers. It runs as a shell command and does not require
+a browser extension:
 
 ```sh
 ctx share:browser cookie list --from firefox:personal --site https://example.com
@@ -253,6 +254,10 @@ ctx share:browser cookie copy --from firefox:personal --site https://example.com
 ctx share:browser cookie list --from chrome:Default --site https://example.com
 ctx share:browser cookie copy --from chrome:Default --site https://example.com --name session --to-file ./chrome-cookie.json
 ctx share:browser cookie copy --from chromium:Default --site https://example.com --name session --stdout | consumer
+ctx share:browser cookie copy --from firefox:personal --site https://example.com --name session --to-profile chromium:Default
+ctx share:browser cookie import --from-file ./session-cookie.json --to-profile chrome:Profile\ 1
+ctx share:browser policy export --from chrome:Default --to-file ./chrome-policies.json
+ctx share:browser capabilities --from safari:default
 ```
 
 `--from` defaults to the selected browser. Listing prints cookie metadata, not
@@ -270,23 +275,36 @@ portable value; `same_site` retains the source browser's numeric value.
 Chrome and Chromium export reads the profile's committed SQLite cookies. On
 macOS, encrypted cookies require access to the browser's Safe Storage item in
 Keychain; ctx requests it only after a cookie is selected and the output is
-valid. On Linux, v10 cookies can be decoded locally and v11 cookies require a
-Secret Service entry retrievable with `secret-tool`; KWallet-only keys are not
-supported. Plaintext cookies can be exported on any platform; encrypted Windows
-cookies, unsupported encryption versions, and unavailable OS keys fail without
-writing a partial bundle. Chrome and Chromium
-profile import, cross-browser profile import, and Safari cookie access are not
-implemented.
+valid. On Linux, v10 cookies can be decoded locally; v11 cookies use Secret
+Service through `secret-tool` or KWallet through `kwallet-query` (set
+`CTX_KWALLET_NAME` for a non-default wallet). On Windows, legacy DPAPI and
+AES-GCM cookies can be exported for the current user. Chrome App-Bound (`v20`)
+cookies cannot be exported by a standalone ctx process. Unsupported encryption
+versions and unavailable OS keys fail without writing a partial bundle.
 
-Firefox profile copying requires `sqlite3` and `lsof`, both Firefox profiles
-closed, matching database schemas, and an unpartitioned cookie. It refuses to
-overwrite an existing target cookie unless `--replace` is given. The read-only
+Chrome and Chromium profile import encrypts the selected cookie for the target
+profile on macOS or Linux. The browser must be closed; `lsof` is required, and
+ctx rejects an existing Chromium `SingletonLock`. On Linux, ctx uses the
+target's existing v10 or v11 format, or v11 when a wallet key is available.
+Windows profile import is unavailable for browser-bound encryption. Cross-browser
+copy supports unpartitioned cookies when the target can represent their scope;
+otherwise the target adapter rejects the import. `cookie import` accepts a
+previously exported file or `--stdin` from a pipe. Safari's normal browsing
+cookies remain inaccessible through a supported shell interface.
+
+Firefox profile import requires `sqlite3` and `lsof`, a closed target profile,
+and an unpartitioned cookie. It refuses to overwrite an existing target cookie
+unless `--replace` is given. The read-only
 list and file/pipe forms need `sqlite3`; they can read committed cookies while
 the browser is open, though recent in-memory changes may not yet appear. When a
 read-only SQLite connection cannot open a write-ahead log, ctx makes a private
 temporary database snapshot and removes it on normal completion. A forced
 process termination can leave that snapshot in the system temporary directory.
-Browser policies and keys are not supported yet.
+`policy export` collects available machine policy files or registry entries
+from the selected browser adapter into a mode-0600 bundle. Policies are usually
+machine or user managed rather than profile data; export does not apply them to
+another browser. The adapter protocol permits additional resource operations.
+Browser encryption keys and non-exportable private keys are not transferable.
 
 `ctx share:computer` is reserved for sharing a computer context. Adapters can
 register other spaces through a `share` capability and optional `share_spaces`
@@ -345,7 +363,9 @@ See [Adapters](adapters/README.md) for the bundled packages and
 | `ctx plugin computer <adapter> ...` | Run a computer integration's plugin operation |
 | `ctx share:virtualizer image <sync|copy> ...` | Transfer images through installed virtualizer providers |
 | `ctx share:virtualizer volume <export|import|copy> ...` | Transfer named volumes through installed virtualizer providers |
-| `ctx share:browser cookie <list|copy> ...` | List site cookie metadata or export one Firefox, Chrome, or Chromium cookie |
+| `ctx share:browser cookie <list|copy|import> ...` | List, export, or import one site cookie through browser adapters |
+| `ctx share:browser policy export ...` | Export browser policy sources to a protected bundle or pipe |
+| `ctx share:browser capabilities ...` | Show a browser adapter's share operations |
 | `ctx share:<space> ...` | Invoke a trusted adapter's registered share operation |
 | `ctx doctor` | Validate configured selections and adapters |
 | `ctx hook <bash|zsh|powershell>` | Generate an optional shell prompt observer |

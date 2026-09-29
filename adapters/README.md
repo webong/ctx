@@ -17,7 +17,9 @@ implementations themselves remain installed and trusted under
 
 `firefox`, `chrome`, `chromium`, and `safari` are browser providers. The built-in
 `browser` context aggregates them while each provider owns application-specific
-profile discovery, validation, and launching.
+profile discovery, validation, launching, and declared browser share operations.
+`ctx share:browser` bridges resources between trusted adapters using the
+versioned JSON protocol in [the adapter API](../docs/adapter-api.md).
 
 `kube`, `aws`, `gcloud`, `postgres`, and `mysql` are maintained computer-runtime
 adapters. Every adapter has an `adapter.toml` manifest and implements ctx adapter

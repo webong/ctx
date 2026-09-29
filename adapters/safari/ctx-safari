@@ -15,6 +15,7 @@ find_safari() {
 operation=${1:-}
 selection=${2:-}
 case "$operation" in
+  share) shift 2; [ "${1:-}" = -- ] && shift; exec "${CTX_EXECUTABLE:-ctx}" __browser-native safari "$selection" "$@" ;;
   list) find_safari || exit 0; printf 'safari:default\n' ;;
   validate) [ "$selection" = default ] && find_safari ;;
   doctor) find_safari; [ -z "$selection" ] || [ "$selection" = default ] ;;

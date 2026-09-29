@@ -465,6 +465,93 @@ func copyFirefoxCookie(sourceDB, targetProfile string, cookie browserCookie, rep
 	return nil
 }
 
+func importFirefoxCookie(profile string, cookie browserCookie, replace bool) error {
+	if cookie.OriginAttributes != "" || cookie.PartitionKey != "" {
+		return errors.New("Firefox profile import cannot map a container or partitioned cookie")
+	}
+	database, err := firefoxCookieDatabase(profile)
+	if err != nil {
+		return err
+	}
+	if err := ensureFirefoxProfileClosed(database); err != nil {
+		return err
+	}
+	columns, err := firefoxCookieColumns(database)
+	if err != nil {
+		return err
+	}
+	for _, required := range []string{"name", "value", "host", "path", "expiry", "isSecure", "isHttpOnly", "sameSite", "originAttributes"} {
+		if !hasSQLiteColumn(columns, required) {
+			return fmt.Errorf("Firefox target cookie database lacks %s", required)
+		}
+	}
+	sameSite, err := firefoxImportedSameSite(cookie)
+	if err != nil {
+		return err
+	}
+	identity := "name=" + sqlString(cookie.Name) + " AND host=" + sqlString(cookie.Domain) + " AND path=" + sqlString(cookie.Path) + " AND originAttributes=''"
+	if !replace {
+		output, err := runSQLite(database, true, "SELECT count(*) AS existing FROM moz_cookies WHERE "+identity)
+		if err != nil {
+			return err
+		}
+		var counts []struct {
+			Existing int `json:"existing"`
+		}
+		if err := json.Unmarshal(output, &counts); err != nil || len(counts) != 1 {
+			return errors.New("cannot check destination Firefox cookie")
+		}
+		if counts[0].Existing != 0 {
+			return errors.New("destination already has this cookie; use --replace to overwrite it")
+		}
+	}
+	values := map[string]string{
+		"name": sqlString(cookie.Name), "value": sqlString(cookie.Value),
+		"host": sqlString(cookie.Domain), "path": sqlString(cookie.Path),
+		"expiry": strconv.FormatInt(cookie.Expiry, 10), "isSecure": sqlBool(cookie.Secure),
+		"isHttpOnly": sqlBool(cookie.HTTPOnly), "sameSite": strconv.Itoa(sameSite),
+		"originAttributes": "''",
+		"creationTime":     strconv.FormatInt(time.Now().UnixMicro(), 10),
+		"lastAccessed":     strconv.FormatInt(time.Now().UnixMicro(), 10),
+	}
+	var names, expressions []string
+	for _, column := range columns {
+		if value, ok := values[column]; ok {
+			names = append(names, sqlIdentifier(column))
+			expressions = append(expressions, value)
+		}
+	}
+	statement := "BEGIN IMMEDIATE; "
+	if replace {
+		statement += "DELETE FROM moz_cookies WHERE " + identity + "; "
+	}
+	statement += "INSERT INTO moz_cookies (" + strings.Join(names, ",") + ") VALUES (" + strings.Join(expressions, ",") + "); COMMIT;"
+	_, err = runSQLite(database, false, statement)
+	return err
+}
+
+func firefoxImportedSameSite(cookie browserCookie) (int, error) {
+	switch cookie.SameSitePolicy {
+	case "none":
+		return 0, nil
+	case "lax":
+		return 1, nil
+	case "strict":
+		return 2, nil
+	case "unspecified", "":
+		return 256, nil
+	default:
+		return 0, errors.New("unsupported cookie SameSite policy")
+	}
+}
+
+func sqlBool(value bool) string {
+	if value {
+		return "1"
+	}
+	return "0"
+}
+
 func ensureFirefoxProfileClosed(database string) error {
 	if _, err := exec.LookPath("lsof"); err != nil {
 		return errors.New("lsof is required to check Firefox profile locks before copying")

@@ -28,6 +28,12 @@ function Get-Profiles {
 
 $chromium = Find-Chromium
 switch ($Operation) {
+    'share' {
+        if ($Arguments.Count -gt 0 -and $Arguments[0] -eq '--') { $Arguments = @($Arguments | Select-Object -Skip 1) }
+        $ctxCommand = if ($env:CTX_EXECUTABLE) { $env:CTX_EXECUTABLE } else { 'ctx' }
+        & $ctxCommand __browser-native chromium $Selection @Arguments
+        exit $LASTEXITCODE
+    }
     'list' { if ($chromium) { Get-Profiles }; exit 0 }
     'validate' { if (-not $chromium -or -not (Test-Profile $Selection)) { exit 1 } }
     'doctor' { if (-not $chromium -or ($Selection -and -not (Test-Profile $Selection))) { exit 1 } }

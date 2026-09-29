@@ -23,6 +23,7 @@ const legacyAPIVersion = "1"
 const legacyDecimalAPIVersion = "1.0"
 
 var validName = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
+var validBrowserShareOperation = regexp.MustCompile(`^[a-z]+\.[a-z]+$`)
 var validEnvironmentName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 var reservedNames = map[string]bool{
@@ -45,6 +46,7 @@ type Manifest struct {
 	ComputerCommands     []string
 	ComputerCapabilities []string
 	ShareSpaces          []string
+	BrowserShare         []string
 	OverrideEnv          []string
 	DefaultProvider      bool
 }
@@ -95,6 +97,7 @@ func LoadDirectory(directory string) (*Adapter, error) {
 		ComputerCommands:     splitList(values["computer_commands"]),
 		ComputerCapabilities: splitList(values["computer_capabilities"]),
 		ShareSpaces:          splitList(values["share_spaces"]),
+		BrowserShare:         splitList(values["browser_share"]),
 		OverrideEnv:          splitList(values["override_env"]),
 		DefaultProvider:      values["default_provider"] == "true",
 	}
@@ -163,6 +166,10 @@ func (s *Store) List() ([]*Adapter, error) {
 
 func (a *Adapter) HasCapability(capability string) bool {
 	return contains(a.Manifest.Capabilities, capability) || a.HasComputerCapability(capability)
+}
+
+func (a *Adapter) HasBrowserShare(operation string) bool {
+	return a.IsRuntime("browser") && contains(a.Manifest.BrowserShare, operation)
 }
 
 func (a *Adapter) IsRuntime(runtimeName string) bool {
@@ -502,9 +509,19 @@ func validateManifest(manifest Manifest, directory string) error {
 	if len(manifest.ShareSpaces) > 0 && !contains(manifest.Capabilities, "share") {
 		return fmt.Errorf("adapter %s declares share spaces without the share capability", manifest.Name)
 	}
+	if len(manifest.BrowserShare) > 0 && (manifest.Runtime != "browser" || !contains(manifest.Capabilities, "share")) {
+		return fmt.Errorf("adapter %s browser_share requires a browser runtime with share capability", manifest.Name)
+	}
+	seenBrowserShare := map[string]bool{}
+	for _, operation := range manifest.BrowserShare {
+		if !validBrowserShareOperation.MatchString(operation) || seenBrowserShare[operation] {
+			return fmt.Errorf("adapter %s has invalid browser share operation %s", manifest.Name, operation)
+		}
+		seenBrowserShare[operation] = true
+	}
 	seenShareSpaces := map[string]bool{}
 	for _, space := range manifest.ShareSpaces {
-		if !validName.MatchString(space) || space == "virtualizer" || space == "container" || space == "browser" || space == "computer" || seenShareSpaces[space] {
+		if !validName.MatchString(space) || space == "virtualizer" || space == "container" || (space == "browser" && manifest.Runtime != "browser") || space == "computer" || seenShareSpaces[space] {
 			return fmt.Errorf("adapter %s has invalid or duplicate share space %s", manifest.Name, space)
 		}
 		seenShareSpaces[space] = true

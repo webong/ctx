@@ -40,6 +40,7 @@ profile_exists() { root=$(profiles_root); [ -f "$root/$1/Preferences" ]; }
 operation=${1:-}
 selection=${2:-}
 case "$operation" in
+  share) shift 2; [ "${1:-}" = -- ] && shift; exec "${CTX_EXECUTABLE:-ctx}" __browser-native chromium "$selection" "$@" ;;
   list) find_chromium || exit 0; list_profiles ;;
   validate) find_chromium && profile_exists "$selection" ;;
   doctor) find_chromium; [ -z "$selection" ] || profile_exists "$selection" ;;

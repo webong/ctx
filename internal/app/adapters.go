@@ -476,6 +476,9 @@ func invokeAdapterIO(resolver *config.Resolver, candidate *adapterpkg.Adapter, o
 	if err != nil {
 		return reportError(stderr, err)
 	}
+	if executable, err := os.Executable(); err == nil {
+		command.Env = setEnvironment(command.Env, "CTX_EXECUTABLE", executable)
+	}
 	profileValues, err := profileEnvironment(resolver)
 	if err != nil {
 		return reportError(stderr, err)

@@ -70,6 +70,9 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	if args[0] == "graph" {
 		return graphCommand(args[1:], stdout, stderr)
 	}
+	if args[0] == "__browser-native" {
+		return browserNativeCommand(args[1:], os.Stdin, stdout, stderr)
+	}
 	resolver, err := newResolver()
 	if err != nil {
 		fmt.Fprintf(stderr, "ctx: %v\n", err)
@@ -187,8 +190,12 @@ usage:
   ctx share:virtualizer volume <export|import|copy> [arguments...]
   ctx share:browser cookie list [--from <browser:profile>] --site <URL>
   ctx share:browser cookie copy [--from <browser:profile>] --site <URL> --name <cookie>
-      [--domain <domain>] [--path <path>] [--id <row-id>] [--origin-attributes <value>]
+      [--domain <domain>] [--path <path>] [--id <row-id>] [--ref <reference>]
+      [--origin-attributes <value>]
       (--to-profile <browser:profile> | --to-file <path> | --stdout) [--replace]
+  ctx share:browser cookie import (--from-file <path> | --stdin) --to-profile <browser:profile> [--replace]
+  ctx share:browser policy export [--from <browser:profile>] (--to-file <path> | --stdout)
+  ctx share:browser capabilities [--from <browser:profile>]
   ctx share:computer (reserved; unavailable)
   ctx share:<space> [arguments...] (when an adapter registers the space)
   ctx run <provider-or-adapter-command> [arguments...]

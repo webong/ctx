@@ -8,6 +8,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha1"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -221,7 +222,7 @@ func readChromiumCookieValue(provider, database string, cookie browserCookie) (s
 	if err != nil {
 		return "", errors.New("Chromium cookie ciphertext is malformed")
 	}
-	plaintext, err := decryptChromiumCookie(provider, ciphertext)
+	plaintext, err := decryptChromiumCookie(provider, database, ciphertext)
 	if err != nil {
 		return "", err
 	}
@@ -250,11 +251,14 @@ func readChromiumCookieValue(provider, database string, cookie browserCookie) (s
 	return plaintext, nil
 }
 
-func decryptChromiumCookie(provider string, ciphertext []byte) (string, error) {
+func decryptChromiumCookie(provider, database string, ciphertext []byte) (string, error) {
 	if len(ciphertext) < 3 {
 		return "", errors.New("Chromium cookie uses an unsupported encryption format")
 	}
 	version := string(ciphertext[:3])
+	if runtime.GOOS == "windows" {
+		return decryptChromiumWindowsCookie(database, ciphertext)
+	}
 	var password string
 	var iterations int
 	switch runtime.GOOS {
@@ -307,6 +311,83 @@ func decryptChromiumCookie(provider string, ciphertext []byte) (string, error) {
 	return string(plaintext[:len(plaintext)-padding]), nil
 }
 
+func decryptChromiumWindowsCookie(database string, ciphertext []byte) (string, error) {
+	if bytes.HasPrefix(ciphertext, []byte("v20")) {
+		return "", errors.New("Chrome cookie uses App-Bound Encryption; standalone profile export is unavailable")
+	}
+	if !bytes.HasPrefix(ciphertext, []byte("v10")) && !bytes.HasPrefix(ciphertext, []byte("v11")) {
+		plaintext, err := windowsDPAPIUnprotect(ciphertext)
+		return string(plaintext), err
+	}
+	key, err := chromiumWindowsLegacyKey(database)
+	if err != nil {
+		return "", err
+	}
+	data := ciphertext[3:]
+	if len(data) < 12+16 {
+		return "", errors.New("Chromium cookie ciphertext is too short")
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return "", err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", err
+	}
+	plaintext, err := gcm.Open(nil, data[:12], data[12:], nil)
+	if err != nil {
+		return "", errors.New("Chromium cookie decryption failed")
+	}
+	return string(plaintext), nil
+}
+
+func chromiumWindowsLegacyKey(database string) ([]byte, error) {
+	root := chromiumUserDataRootFromDatabase(database)
+	content, err := os.ReadFile(filepath.Join(root, "Local State"))
+	if err != nil {
+		return nil, fmt.Errorf("cannot read Chromium Local State: %w", err)
+	}
+	var state struct {
+		OSCrypt struct {
+			EncryptedKey string `json:"encrypted_key"`
+		} `json:"os_crypt"`
+	}
+	if err := json.Unmarshal(content, &state); err != nil || state.OSCrypt.EncryptedKey == "" {
+		return nil, errors.New("Chromium Local State has no legacy encrypted key")
+	}
+	encoded, err := base64.StdEncoding.DecodeString(state.OSCrypt.EncryptedKey)
+	if err != nil || !bytes.HasPrefix(encoded, []byte("DPAPI")) {
+		return nil, errors.New("Chromium Local State uses an unsupported key format")
+	}
+	return windowsDPAPIUnprotect(encoded[5:])
+}
+
+func chromiumUserDataRootFromDatabase(database string) string {
+	profileDir := filepath.Dir(database)
+	if filepath.Base(profileDir) == "Network" {
+		profileDir = filepath.Dir(profileDir)
+	}
+	return filepath.Dir(profileDir)
+}
+
+func windowsDPAPIUnprotect(ciphertext []byte) ([]byte, error) {
+	const script = `Add-Type -AssemblyName System.Security; $raw=[Convert]::FromBase64String($env:CTX_DPAPI_DATA); $clear=[Security.Cryptography.ProtectedData]::Unprotect($raw,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser); [Console]::Out.Write([Convert]::ToBase64String($clear))`
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script)
+	command.Env = append(os.Environ(), "CTX_DPAPI_DATA="+base64.StdEncoding.EncodeToString(ciphertext))
+	output, err := command.Output()
+	if err != nil {
+		return nil, errors.New("Windows DPAPI could not unlock this Chromium cookie for the current user")
+	}
+	plaintext, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(output)))
+	if err != nil {
+		return nil, errors.New("Windows DPAPI returned malformed data")
+	}
+	return plaintext, nil
+}
+
 func chromiumPBKDF2Key(password []byte, iterations int) []byte {
 	// Chromium's desktop OSCrypt v10/v11 key derivation uses PBKDF2-HMAC-SHA1
 	// with saltysalt; macOS uses 1003 rounds and Linux uses one.
@@ -343,14 +424,52 @@ func chromiumMacKeychainPassword(provider string) (string, error) {
 }
 
 func chromiumLinuxSecret(provider string) (string, error) {
-	if _, err := exec.LookPath("secret-tool"); err != nil {
-		return "", errors.New("secret-tool is required for Linux v11 Chromium cookies")
+	if strings.Contains(strings.ToUpper(os.Getenv("XDG_CURRENT_DESKTOP")), "KDE") {
+		if secret, err := chromiumKWalletSecret(provider); err == nil {
+			return secret, nil
+		}
+		if secret, err := chromiumSecretServiceSecret(provider); err == nil {
+			return secret, nil
+		}
+	} else {
+		if secret, err := chromiumSecretServiceSecret(provider); err == nil {
+			return secret, nil
+		}
+		if secret, err := chromiumKWalletSecret(provider); err == nil {
+			return secret, nil
+		}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	output, err := exec.CommandContext(ctx, "secret-tool", "lookup", "application", provider).Output()
-	if err != nil || len(output) == 0 {
-		return "", fmt.Errorf("cannot read the %s cookie key from the Linux secret service", provider)
+	return "", fmt.Errorf("cannot read the %s cookie key from Secret Service or KWallet", provider)
+}
+
+func chromiumSecretServiceSecret(provider string) (string, error) {
+	if _, err := exec.LookPath("secret-tool"); err == nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		output, lookupErr := exec.CommandContext(ctx, "secret-tool", "lookup", "application", provider).Output()
+		cancel()
+		if lookupErr == nil && len(output) > 0 {
+			return strings.TrimRight(string(output), "\r\n"), nil
+		}
 	}
-	return strings.TrimSuffix(strings.TrimSuffix(string(output), "\n"), "\r"), nil
+	return "", errors.New("Secret Service key unavailable")
+}
+
+func chromiumKWalletSecret(provider string) (string, error) {
+	if _, err := exec.LookPath("kwallet-query"); err == nil {
+		folder, key := "Chromium Keys", "Chromium Safe Storage"
+		if provider == "chrome" {
+			folder, key = "Chrome Keys", "Chrome Safe Storage"
+		}
+		wallet := os.Getenv("CTX_KWALLET_NAME")
+		if wallet == "" {
+			wallet = "kdewallet"
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		output, lookupErr := exec.CommandContext(ctx, "kwallet-query", "-f", folder, "-r", key, wallet).Output()
+		cancel()
+		if lookupErr == nil && len(output) > 0 {
+			return strings.TrimRight(string(output), "\r\n"), nil
+		}
+	}
+	return "", errors.New("KWallet key unavailable")
 }

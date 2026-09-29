@@ -49,6 +49,15 @@ A browser adapter normally uses `selector_key = "browser"`. Its `list` output
 uses `name:profile` values, while `validate`, `doctor`, and `open` receive only
 the profile portion as their selection.
 
+A browser adapter participating in `ctx share:browser` declares, for example:
+
+~~~toml
+runtime = "browser"
+capabilities = "list,validate,open,doctor,share"
+share_spaces = "browser"
+browser_share = "cookie.list,cookie.export,cookie.import,policy.export"
+~~~
+
 A virtualizer adapter's unqualified `list` output contains native context,
 connection, or namespace names. `ctx ls virtualizer` prefixes each result as
 `name:selection`. A provider may implement `build`, image, and volume
@@ -203,16 +212,24 @@ stream to stdout, while volume import reads a tar stream from stdin.
 Virtualizer resource transfers are exposed through `ctx share:virtualizer`.
 The installed virtualizer adapters register the actual image and volume
 capabilities, and ctx rejects a transfer when either endpoint lacks a needed
-capability. `ctx share:browser cookie` is a shell-only browser profile reader
-implemented by ctx. It uses trusted installed browser adapters for provider
-identity, with internal cookie backends for Firefox, Chrome, and Chromium. The
-list path reads metadata only; file and pipe export load one selected value.
-The bundle includes normalized `same_site_policy` alongside the source numeric
-`same_site`, and preserves partition scope where available. Firefox can copy
-one unpartitioned cookie into another closed Firefox profile. Chrome and
-Chromium can export to a new mode-0600 JSON file or stdout for a pipe, but do
-not yet write native profiles. Safari, cross-browser profile import, browser
-policies, and keys still need provider-specific support.
+capability. `ctx share:browser` bridges browser resources between trusted
+adapters. Browser adapters declare `share` and `share_spaces = "browser"`, then
+list operations in `browser_share`, for example
+`cookie.list,cookie.export,cookie.import,policy.export`. ctx invokes an
+operation as `share PROFILE -- RESOURCE OPERATION`. The adapter receives one
+JSON request on stdin with `version = 1`. `cookie.list` receives `site` and
+returns a JSON array of cookie metadata without values. `cookie.export`
+receives `site` and a listed `cookie`, then returns that cookie with its value.
+`cookie.import` receives `bundle` and `replace`, and returns no body.
+`policy.export` receives only `version` and returns a policy bundle with
+`version` and `entries`. A nonzero exit code reports failure on stderr.
+Cookie `id` is a source row ID where available; adapters without row IDs can
+return an opaque `ref`. Adapters must preserve cookie scope and reject fields
+they cannot map. ctx selects one listed cookie before exporting its value,
+then delivers a versioned bundle to a file, pipe, or importing adapter. A
+source and target can be different browser providers. Maintained browser
+adapters invoke ctx's linked native storage helper; external adapters can
+implement the protocol entirely in their own executable.
 `ctx share:computer` is also reserved. Any other installed adapter can declare
 the `share` capability and optional `share_spaces` to register
 `ctx share:<space>` commands. When `share_spaces` is omitted, the adapter name
