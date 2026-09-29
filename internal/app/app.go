@@ -103,6 +103,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return showEnvironment(resolver, stdout, stderr)
 	case "adapter":
 		return adapterCommand(resolver, args[1:], stdout, stderr)
+	case "computer":
+		return computerCommand(args[1:], stdout, stderr)
 	case "plugin":
 		if len(args) < 2 || args[1] != "computer" {
 			fmt.Fprintln(stderr, "ctx: plugin requires computer <adapter> [arguments...]")
@@ -180,6 +182,7 @@ usage:
   ctx set <selector> <name> [options]
   ctx clear [selector|profile]
   ctx profile <ls|show|use|set|unset|env|env-unset|clear> [arguments...]
+  ctx computer hooks <print|install|remove> <adapter> [--events <name,...>] [--handler <executable>]
   ctx adapter <ls [runtime|surface]|available|add|refresh|inspect|install|trust|test|doctor|remove> [arguments...]
   ctx setup [adapters] [--all|--minimal|--adapters <name,...>]
   ctx ls <selector>

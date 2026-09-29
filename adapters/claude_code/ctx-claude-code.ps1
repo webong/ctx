@@ -23,8 +23,9 @@ switch ($Operation) {
     }
     'hook' {
         if ($Arguments.Count -eq 0) { [Console]::Error.WriteLine('claude: hook needs an event name'); exit 2 }
-        if (-not $env:CTX_COMPUTER_HOOK_COMMAND) { [Console]::Error.WriteLine('claude: set CTX_COMPUTER_HOOK_COMMAND to a hook handler executable'); exit 127 }
-        & $env:CTX_COMPUTER_HOOK_COMMAND $Arguments[0]
+        $handler = if ($env:CTX_ADAPTER_VALUE_COMPUTER_HOOK_COMMAND) { $env:CTX_ADAPTER_VALUE_COMPUTER_HOOK_COMMAND } else { $env:CTX_COMPUTER_HOOK_COMMAND }
+        if (-not $handler) { [Console]::Error.WriteLine('claude: configure computer_hook_command or CTX_COMPUTER_HOOK_COMMAND'); exit 127 }
+        & $handler $Arguments[0]
         exit $LASTEXITCODE
     }
     'plugin' {

@@ -95,7 +95,17 @@ surfaces = "shell"
 computer_commands = "claude"
 computer_capabilities = "hook,plugin"
 capabilities = "validate,doctor,run"
+extra_keys = "computer_hook_command"
+computer_hook_events = "PreToolUse,PermissionRequest,PostToolUse"
+computer_hook_default_events = "PreToolUse,PermissionRequest"
+computer_hook_settings_file = ".claude/settings.local.json"
+computer_hook_template = "computer-hooks.json"
 ~~~
+
+`computer-hooks.json` contains the adapter's native hook object with
+`{{event}}` and `{{adapter}}` placeholders. A different computer adapter can
+use a different path, event set, and template format while using the same ctx
+commands.
 
 The package includes a `claude` launcher file that delegates to
 `ctx run claude "$@"`. When trusted, ctx installs that launcher beside `ctx`.
@@ -107,65 +117,61 @@ For a Codex integration, declare `computer_commands = "codex"` and include the
 matching `codex` launcher in its package.
 
 `computer_capabilities` currently accepts `hook` and `plugin`.
+Adapters that support project hook setup also declare their own
+`computer_hook_events`, optional `computer_hook_default_events`,
+`computer_hook_settings_file`, and `computer_hook_template`. The template is a
+JSON object rendered once per selected event; it may use `{{event}}` and
+`{{adapter}}`. The adapter package owns the native settings path, schema, event
+names, and generated entry shape. ctx only validates declared events and
+generically merges or removes the rendered JSON patch, preserving unrelated
+project settings. No provider names or native file formats are built into
+`internal/app`.
+
 `ctx hook computer <adapter> <event>` passes the native hook payload from stdin
 to the adapter as `hook -- EVENT`; stdout, stderr, and exit status flow back to
 the CLI runtime. The adapter owns the event schema and response contract.
 `ctx plugin computer <adapter> [ARGUMENTS...]` invokes
 `plugin -- ARGUMENTS...` for provider-specific extension setup. These operations
-use the same adapter trust and checksum checks as shims. The core does not parse
-or rewrite provider hook or plugin configuration files.
+use the same adapter trust and checksum checks as shims. `ctx computer hooks
+print|install|remove <adapter>` previews or manages project hooks in the
+native settings file declared by that adapter. Install preserves unrelated
+settings and records `computer_hook_command`,
+`computer_<adapter>_hooks`, and the exact generated patch in the current
+directory's `.ctx` file. The handler path and event list therefore resolve per
+project when a CLI hook invokes ctx from that directory. Plugin operations
+remain adapter-owned CLI passthroughs, so native project-scope flags and
+configuration are decided by the selected adapter's CLI.
 
 The bundled `claude_code` and `codex` packages install `claude` and `codex`
 shims. Put ctx's bin directory before the vendor CLI directory on `PATH`, then
 activate them with `ctx setup --adapters claude_code,codex`. `ctx run claude
---version` and `ctx run codex --version` reach the installed CLIs. For hook
-experiments, set `CTX_COMPUTER_HOOK_COMMAND` to a handler executable; ctx passes
-the event name as its first argument and preserves the vendor's JSON stdin,
-stdout, stderr, and exit status. Plugin operations delegate to each CLI's own
-plugin command:
+--version` and `ctx run codex --version` reach the installed CLIs. To install
+project hooks, provide a handler executable; ctx passes the event name as its
+first argument and preserves the vendor's JSON stdin/stdout, stderr, and exit
+status:
 
 ~~~sh
-ctx plugin computer claude_code marketplace list
-ctx plugin computer codex marketplace list
+ctx computer hooks install claude_code --handler ./scripts/ctx-policy
+ctx computer hooks install codex --events PreToolUse,PermissionRequest --handler ./scripts/ctx-policy
+ctx computer hooks print claude_code
+ctx computer hooks remove claude_code
 ~~~
 
-For a local hook smoke test, add a native command hook to the CLI's own settings.
-For example, this Claude Code entry can go in `.claude/settings.local.json`:
+Claude Code hooks are written to `.claude/settings.local.json`; Codex hooks are
+written to `.codex/hooks.json`. These are project-scoped native config files,
+with the handler and event list also stored in the git-ignored `.ctx` file. The
+installer preserves existing JSON keys and other hook entries. The event list
+defaults to `PreToolUse,PermissionRequest`, and a later install without
+`--events` reuses the project-local selection. For plugin operations, ctx
+delegates to the native CLI and accepts its scope flags:
 
-~~~json
-{
-  "hooks": {
-    "PreToolUse": [{
-      "matcher": "*",
-      "hooks": [{
-        "type": "command",
-        "command": "ctx hook computer claude_code PreToolUse"
-      }]
-    }]
-  }
-}
+~~~sh
+ctx plugin computer claude_code install <plugin>@<marketplace> --scope project
 ~~~
 
-Codex reads the equivalent event from `~/.codex/hooks.json`:
-
-~~~json
-{
-  "hooks": {
-    "PreToolUse": [{
-      "matcher": "*",
-      "hooks": [{
-        "type": "command",
-        "command": "ctx hook computer codex PreToolUse"
-      }]
-    }]
-  }
-}
-~~~
-
-Both hook declarations require `CTX_COMPUTER_HOOK_COMMAND` to point to a local
-handler before starting the CLI. The handler receives the event name as argv[1]
-and the native hook JSON on stdin. These examples are user-side CLI settings;
-the adapter package itself does not write to either CLI's configuration.
+The plugin command is a pass-through. Claude Code's `--scope project` targets
+the current repository. Codex project plugins use its repository marketplace
+and `.codex/config.toml` settings; ctx does not scaffold those files yet.
 
 This boundary matches Neura Relay's builder flow: an action is reviewed, a
 decision receipt is returned, and the CLI runtime decides what to do next.

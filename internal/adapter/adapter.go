@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -25,6 +26,7 @@ const legacyDecimalAPIVersion = "1.0"
 var validName = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 var validBrowserShareOperation = regexp.MustCompile(`^[a-z]+\.[a-z]+$`)
 var validEnvironmentName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+var validComputerHookEvent = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9]*$`)
 
 var reservedNames = map[string]bool{
 	"browser": true, "container": true, "profile": true, "shell": true, "env": true, "image": true,
@@ -45,6 +47,10 @@ type Manifest struct {
 	Commands             []string
 	ComputerCommands     []string
 	ComputerCapabilities []string
+	ComputerHookEvents   []string
+	ComputerHookDefaults []string
+	ComputerHookSettings string
+	ComputerHookTemplate string
 	ShareSpaces          []string
 	BrowserShare         []string
 	OverrideEnv          []string
@@ -96,6 +102,10 @@ func LoadDirectory(directory string) (*Adapter, error) {
 		Commands:             splitList(values["commands"]),
 		ComputerCommands:     splitList(values["computer_commands"]),
 		ComputerCapabilities: splitList(values["computer_capabilities"]),
+		ComputerHookEvents:   splitList(values["computer_hook_events"]),
+		ComputerHookDefaults: splitList(values["computer_hook_default_events"]),
+		ComputerHookSettings: values["computer_hook_settings_file"],
+		ComputerHookTemplate: values["computer_hook_template"],
 		ShareSpaces:          splitList(values["share_spaces"]),
 		BrowserShare:         splitList(values["browser_share"]),
 		OverrideEnv:          splitList(values["override_env"]),
@@ -506,6 +516,48 @@ func validateManifest(manifest Manifest, directory string) error {
 		}
 		seenComputerCapabilities[capability] = true
 	}
+	if manifest.ComputerHookSettings != "" || manifest.ComputerHookTemplate != "" || len(manifest.ComputerHookEvents) > 0 || len(manifest.ComputerHookDefaults) > 0 {
+		if manifest.Runtime != "computer" || !contains(manifest.ComputerCapabilities, "hook") ||
+			manifest.ComputerHookSettings == "" || manifest.ComputerHookTemplate == "" || len(manifest.ComputerHookEvents) == 0 {
+			return fmt.Errorf("adapter %s project hook setup requires a computer hook capability, settings file, template, and events", manifest.Name)
+		}
+		if !validPackagePath(manifest.ComputerHookSettings) {
+			return fmt.Errorf("adapter %s has an invalid computer hook settings path", manifest.Name)
+		}
+		if !validPackagePath(manifest.ComputerHookTemplate) {
+			return fmt.Errorf("adapter %s has an invalid computer hook template path", manifest.Name)
+		}
+		templatePath := filepath.Join(directory, filepath.FromSlash(manifest.ComputerHookTemplate))
+		if info, err := os.Stat(templatePath); err != nil || !info.Mode().IsRegular() {
+			return fmt.Errorf("adapter %s hook template is missing or not a regular file", manifest.Name)
+		}
+		seenEvents := map[string]bool{}
+		for _, event := range manifest.ComputerHookEvents {
+			if !validComputerHookEvent.MatchString(event) || seenEvents[event] {
+				return fmt.Errorf("adapter %s has invalid or duplicate computer hook event %s", manifest.Name, event)
+			}
+			seenEvents[event] = true
+		}
+		seenDefaults := map[string]bool{}
+		for _, event := range manifest.ComputerHookDefaults {
+			if !seenEvents[event] || seenDefaults[event] {
+				return fmt.Errorf("adapter %s has an invalid or duplicate default computer hook event %s", manifest.Name, event)
+			}
+			seenDefaults[event] = true
+		}
+		contents, err := os.ReadFile(templatePath)
+		if err != nil {
+			return fmt.Errorf("read adapter %s hook template: %w", manifest.Name, err)
+		}
+		if !strings.Contains(string(contents), "{{event}}") || !strings.Contains(string(contents), "{{adapter}}") {
+			return fmt.Errorf("adapter %s hook template must use {{event}} and {{adapter}} placeholders", manifest.Name)
+		}
+		rendered := strings.NewReplacer("{{event}}", manifest.ComputerHookEvents[0], "{{adapter}}", manifest.Name).Replace(string(contents))
+		var templateJSON map[string]any
+		if err := json.Unmarshal([]byte(rendered), &templateJSON); err != nil {
+			return fmt.Errorf("adapter %s hook template is not a JSON object: %w", manifest.Name, err)
+		}
+	}
 	if len(manifest.ShareSpaces) > 0 && !contains(manifest.Capabilities, "share") {
 		return fmt.Errorf("adapter %s declares share spaces without the share capability", manifest.Name)
 	}
@@ -575,6 +627,18 @@ func validateManifest(manifest Manifest, directory string) error {
 		}
 	}
 	return nil
+}
+
+func validPackagePath(value string) bool {
+	if value == "" || filepath.IsAbs(value) || strings.Contains(value, "\\") {
+		return false
+	}
+	for _, part := range strings.Split(value, "/") {
+		if part == "" || part == "." || part == ".." {
+			return false
+		}
+	}
+	return true
 }
 
 func rejectLinks(root string) error {

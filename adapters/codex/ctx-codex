@@ -19,7 +19,7 @@ case "$operation" in
   hook)
     event=${1:-}
     [ -n "$event" ] || { printf 'codex: hook needs an event name\n' >&2; exit 2; }
-    handler=${CTX_COMPUTER_HOOK_COMMAND:-}
+    handler=${CTX_ADAPTER_VALUE_COMPUTER_HOOK_COMMAND:-${CTX_COMPUTER_HOOK_COMMAND:-}}
     [ -n "$handler" ] || { printf 'codex: set CTX_COMPUTER_HOOK_COMMAND to a hook handler executable\n' >&2; exit 127; }
     exec "$handler" "$event"
     ;;

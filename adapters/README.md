@@ -33,9 +33,13 @@ capability set, and trust record.
 Shell-launched AI CLIs use the `computer` runtime and declare
 `computer_commands` and optional `computer_capabilities` in their manifest.
 Computer integrations can install command shims and provide native hook and
-plugin operations. Hook payloads stream through stdin/stdout; provider config
-and plugin formats remain adapter-owned. See [the adapter API](../docs/adapter-api.md#computer-side-cli-integrations).
+plugin operations. ctx manages the small hook entries that call its bridge;
+handlers retain each provider's payload and response contract, and plugin
+commands remain provider-specific. See [the adapter API](../docs/adapter-api.md#computer-side-cli-integrations).
 The first-party `claude_code` and `codex` packages are bundled in the installer
 catalog. Their shims route launches through ctx, hooks forward JSON stdin to
-`CTX_COMPUTER_HOOK_COMMAND` with the event name, and plugin operations delegate
-to each CLI's native plugin subcommand.
+the project-resolved `computer_hook_command` (or the fallback environment
+variable `CTX_COMPUTER_HOOK_COMMAND`) with the event name, and plugin operations
+delegate to each CLI's native plugin subcommand. `ctx computer hooks install`
+writes the CLI's project settings and records the selected handler and events
+in the local `.ctx` file.

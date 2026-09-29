@@ -186,21 +186,24 @@ claude
 codex
 ```
 
-The shims launch the real CLIs through ctx. For local hook experiments, set
-`CTX_COMPUTER_HOOK_COMMAND` to a handler executable, then configure the native
-Claude Code or Codex hook to call:
+The shims launch the real CLIs through ctx. Install hooks for the current
+project with a local handler executable:
 
 ```sh
-ctx hook computer claude_code PreToolUse
-ctx hook computer codex PreToolUse
+ctx computer hooks install claude_code --handler ./scripts/ctx-policy
+ctx computer hooks install codex --events PreToolUse,PermissionRequest --handler ./scripts/ctx-policy
 ```
 
-The event name is passed to the handler as its first argument, and native hook
-JSON flows through stdin/stdout. `ctx plugin computer <adapter> ...` delegates
-plugin and marketplace operations to the CLI's native plugin command. See [the
-adapter API](docs/adapter-api.md#computer-side-cli-integrations) for sample
-settings and setup details. The design follows the runtime-neutral decision
-boundary and local operator controls described by
+This writes native hook entries to `.claude/settings.local.json` or
+`.codex/hooks.json`, and stores the handler and event list in the project's
+git-ignored `.ctx` file. The event name is passed to the handler as its first
+argument, and native hook JSON flows through stdin/stdout. Preview generated
+settings with `ctx computer hooks print claude_code`; remove ctx-managed hooks
+with `ctx computer hooks remove claude_code`. `ctx plugin computer <adapter>
+...` delegates plugin and marketplace operations to the CLI's native plugin
+command, where provider-specific project scope is supported. See [the adapter
+API](docs/adapter-api.md#computer-side-cli-integrations) for details. The design
+follows the runtime-neutral decision boundary and local operator controls described by
 [Neura for Builders](https://www.neurarelay.com/builders) and
 [Neura Local settings](https://www.neurarelay.com/operators#neura-local-settings).
 
