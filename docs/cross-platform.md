@@ -11,6 +11,8 @@ PowerShell implementations where Windows needs them.
 - Profile environment application through `ctx env`, `ctx run --`, and `ctx shell`.
 - Provider-driven Docker, Podman, nerdctl/containerd, and Apple Container
   selection through `ctx run`.
+- Manager-app adapters for Rancher Desktop, OrbStack (macOS), and Docker
+  Desktop, with read-only diagnostics and explicit CLI-backed start/stop.
 - Native compilation on macOS, Linux, and Windows.
 - Windows `.cmd` engine shims and a PowerShell source installer.
 - Adapter API v2.0 discovery, checksum trust, lifecycle commands, and process dispatch.

@@ -27,6 +27,14 @@ implementations themselves remain installed and trusted under
 The `internal/mod` Go package manages these ctx modifications: manifests,
 installation, trust, and invocation. Provider behavior stays in `adapters/`.
 
+`rancher_desktop`, `orbstack`, and `docker_desktop` are manager-app adapters.
+They declare `supports = "virtualizer"` and implement app status, explicit
+start/stop, and read-only diagnostics through each product's own CLI. They do
+not replace the `docker` or `nerdctl` engine adapters, and they never claim
+ownership of the global Docker CLI plugin links. The generic
+`ctx manager app <adapter> <action>` route invokes these packages without
+hard-coding product behavior in ctx core.
+
 `firefox`, `chrome`, `chromium`, and `safari` are browser providers. The built-in
 `browser` context aggregates them while each provider owns application-specific
 profile discovery, validation, launching, and declared browser share operations.

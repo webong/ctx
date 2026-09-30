@@ -303,6 +303,27 @@ ctx manager ls
 ctx manager show dev-vm
 ```
 
+Rancher Desktop, OrbStack, and Docker Desktop have separate app adapters. Install
+the ones you use from the bundled catalog; they inspect the desktop app, while
+`docker` and `nerdctl` remain the workload-engine adapters:
+
+```sh
+ctx adapter add rancher_desktop orbstack docker_desktop
+ctx manager apps
+ctx manager app rancher_desktop status
+ctx manager app rancher_desktop doctor
+ctx manager app orbstack status
+ctx manager app docker_desktop status
+ctx manager doctor
+```
+
+`ctx manager app <name> start` and `stop` explicitly call that app's supported
+CLI. Merely running a doctor never starts, stops, resets, or reconfigures an
+app. Rancher's adapter checks its last failed Lima boot for filesystem and
+guest-SSH errors, and its latest startup failure for a k3s crash. It assesses
+global Docker plugin links only when the engine is Moby; in containerd mode
+those links are irrelevant to `nerdctl`.
+
 On macOS, Docker-based managers can use their own CLI and Compose/Buildx
 plugins without changing `~/.docker/cli-plugins` symlinks. For example:
 
@@ -325,9 +346,9 @@ a temporary Docker config for each invocation, retaining your contexts and
 credentials while routing Compose/Buildx through that manager's directory.
 Ordinary Docker commands, including `docker login`, keep the normal config;
 an explicit Docker `--config` also takes precedence over plugin routing. ctx
-does not modify the global links. `ctx manager doctor` reports contested
-global links and the last recorded Rancher Desktop VM boot. It also checks
-available host disk space, but it does not repair an EXT4 filesystem or reset
+does not modify the global links. With the Rancher app adapter installed,
+`ctx manager doctor` can report a failed VM boot, host disk pressure, and
+relevant plugin-link conflicts. It does not repair an EXT4 filesystem or reset
 the VM; back up important volumes before attempting either repair.
 If the VM is down, add `--offline` to register its selection without contacting
 the engine; `ctx set docker @rancher` still requires it to be available.
@@ -591,6 +612,8 @@ See [Adapters](adapters/README.md) for the bundled packages and
 | `ctx adapter index <output> <archives...>` | Create a platform index with archive checksums |
 | `ctx adapter install <source>` | Install a local directory, archive, or pinned HTTPS package |
 | `ctx manager <add|ls|show|doctor|remove> ...` | Register named manager instances and diagnose their toolchains |
+| `ctx manager apps` | List installed, trusted manager-app adapters |
+| `ctx manager app <adapter> <status|start|stop|doctor>` | Inspect or explicitly control an installed desktop manager |
 | `ctx build [provider|@instance] --cache-ref <ref> -- <args>` | Build with a registry-backed cache on a capable manager |
 | `ctx share:manager image <sync|copy> ...` | Transfer images through installed manager providers |
 | `ctx share:manager volume <export|import|copy> ...` | Transfer named volumes through installed manager providers |

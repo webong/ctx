@@ -136,6 +136,15 @@ selectors before calling the adapter, so adapters continue to receive their
 native selection. `ctx manager doctor` checks toolchain paths and host-side
 manager issues without changing any configuration.
 
+An API v2.0 manager adapter may set `self_contained = "true"` and omit
+`commands` when its executable handles its own native CLI discovery. Without
+this opt-in, `commands` still defaults to the adapter name. Manager-app adapters declare
+`supports = "virtualizer"` and implement `list`, `validate`, `run`, and
+`doctor`; `ctx manager app <adapter> <status|start|stop|doctor>` routes these
+operations generically. The bundled Rancher Desktop, OrbStack, and Docker
+Desktop packages own their product-specific status and diagnostic logic. The
+core does not decide which desktop app owns Docker CLI plugins.
+
 `selector_key` defaults to the adapter name, or to `browser` for browser
 adapters. Direct computer integrations that only declare `computer_commands`
 or `computer_capabilities` need no selector. `extra_keys` declares additional

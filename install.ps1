@@ -12,7 +12,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $repositoryRoot = $PSScriptRoot
 $localSource = Test-Path (Join-Path $repositoryRoot 'cmd\ctx\main.go')
-$bundledAdapters = @('docker', 'podman', 'nerdctl', 'apple', 'firefox', 'chrome', 'chromium', 'safari', 'kube', 'aws', 'gcloud', 'postgres', 'mysql', 'php', 'claude_code', 'codex')
+$bundledAdapters = @('docker', 'podman', 'nerdctl', 'apple', 'rancher_desktop', 'orbstack', 'docker_desktop', 'firefox', 'chrome', 'chromium', 'safari', 'kube', 'aws', 'gcloud', 'postgres', 'mysql', 'php', 'claude_code', 'codex')
 $bundleRoot = $null
 $downloadRoot = $null
 

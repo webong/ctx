@@ -69,7 +69,7 @@ release_dir="$TEST_ROOT/release"
 bundle_stage="$TEST_ROOT/bundle-stage"
 mkdir -p "$release_dir" "$bundle_stage/ctx/bin" "$bundle_stage/ctx/adapters"
 cp "$CTX_BIN_DIR/ctx" "$bundle_stage/ctx/bin/ctx"
-for adapter in docker podman nerdctl apple firefox chrome chromium safari kube aws gcloud postgres mysql claude_code codex; do
+for adapter in docker podman nerdctl apple rancher_desktop orbstack docker_desktop firefox chrome chromium safari kube aws gcloud postgres mysql php claude_code codex; do
   cp -R "$ROOT/adapters/$adapter" "$bundle_stage/ctx/adapters/$adapter"
 done
 os=$(uname -s)
