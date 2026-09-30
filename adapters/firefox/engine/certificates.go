@@ -1,4 +1,4 @@
-package main
+package firefox
 
 import (
 	"context"
@@ -24,7 +24,7 @@ type firefoxCertificatePayload struct {
 	Data     string `json:"data"`
 }
 
-func nativeFirefoxCertificateCommand(profile, operation string, input io.Reader, stdout, stderr io.Writer) int {
+func nativeFirefoxCertificateCommand(config Config, profile, operation string, input io.Reader, stdout, stderr io.Writer) int {
 	if operation != "list" && operation != "export" && operation != "import" {
 		fmt.Fprintln(stderr, "ctx: Firefox certificate operation must be list, export, or import")
 		return 2
@@ -64,7 +64,7 @@ func nativeFirefoxCertificateCommand(profile, operation string, input io.Reader,
 			return reportErrorCode(stderr, err, 2)
 		}
 	}
-	directory, err := firefoxProfileDirectory(profile)
+	directory, err := firefoxProfileDirectory(config, profile)
 	if err != nil {
 		return reportError(stderr, err)
 	}

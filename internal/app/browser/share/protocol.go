@@ -42,11 +42,20 @@ type CookieBundle struct {
 }
 
 type CookieRequest struct {
-	Version int           `json:"version"`
-	Site    string        `json:"site,omitempty"`
-	Cookie  Cookie        `json:"cookie,omitempty"`
-	Bundle  *CookieBundle `json:"bundle,omitempty"`
-	Replace bool          `json:"replace,omitempty"`
+	Version        int           `json:"version"`
+	Site           string        `json:"site,omitempty"`
+	Names          []string      `json:"names,omitempty"`
+	IncludeExpired bool          `json:"include_expired,omitempty"`
+	AllowAllHosts  bool          `json:"allow_all_hosts,omitempty"`
+	Cookie         Cookie        `json:"cookie,omitempty"`
+	Bundle         *CookieBundle `json:"bundle,omitempty"`
+	Replace        bool          `json:"replace,omitempty"`
+}
+
+// CookieQueryResult contains values and non-fatal per-cookie read warnings.
+type CookieQueryResult struct {
+	Cookies  []Cookie `json:"cookies"`
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 type ResourceBundle struct {

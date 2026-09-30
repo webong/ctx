@@ -43,6 +43,10 @@ type chromiumCookieRow struct {
 }
 
 func readChromiumSiteCookies(provider Config, profile string, site *url.URL, name string) ([]browserCookie, string, error) {
+	return queryChromiumCookies(provider, profile, site, name, false)
+}
+
+func queryChromiumCookies(provider Config, profile string, site *url.URL, name string, includeExpired bool) ([]browserCookie, string, error) {
 	database, err := chromiumCookieDatabase(provider, profile)
 	if err != nil {
 		return nil, "", err
@@ -57,16 +61,19 @@ func readChromiumSiteCookies(provider Config, profile string, site *url.URL, nam
 			return nil, "", fmt.Errorf("%s cookie database lacks %s; this profile schema is not supported", provider.Name, required)
 		}
 	}
-	host := strings.TrimSuffix(strings.ToLower(site.Hostname()), ".")
-	if host == "" {
-		return nil, "", errors.New("site has no hostname")
-	}
 	statement := "SELECT rowid AS id,name,host_key AS host,path,expires_utc AS expiresUTC," +
 		"is_secure AS isSecure,is_httponly AS isHttpOnly,samesite AS sameSite," +
 		chromiumColumnExpr(columns, "top_frame_site_key", "''", "topFrameSiteKey") + "," +
 		chromiumColumnExpr(columns, "has_cross_site_ancestor", "0", "hasCrossSiteAncestor") + "," +
 		chromiumColumnExpr(columns, "has_expires", "1", "hasExpires") +
-		" FROM cookies WHERE host_key IN (" + cookieHostSQL(host) + ")"
+		" FROM cookies WHERE 1=1"
+	if site != nil {
+		host := strings.TrimSuffix(strings.ToLower(site.Hostname()), ".")
+		if host == "" {
+			return nil, "", errors.New("site has no hostname")
+		}
+		statement += " AND host_key IN (" + cookieHostSQL(host) + ")"
+	}
 	if name != "" {
 		statement += " AND name=" + sqlString(name)
 	}
@@ -96,7 +103,7 @@ func readChromiumSiteCookies(provider Config, profile string, site *url.URL, nam
 			SameSitePolicy: chromiumSameSitePolicy(row.SameSite),
 			PartitionKey:   row.TopFrameSiteKey, CrossSiteAncestor: row.HasCrossSiteAncestor != 0,
 		}
-		if share.CookieMatchesSite(site, cookie) {
+		if share.CookieMatchesSiteOptions(site, cookie, includeExpired) {
 			cookies = append(cookies, cookie)
 		}
 	}
@@ -126,6 +133,15 @@ func chromiumSameSitePolicy(raw int) string {
 }
 
 func chromiumCookieDatabase(provider Config, profile string) (string, error) {
+	if filepath.IsAbs(profile) {
+		if info, err := os.Stat(profile); err == nil && info.Mode().IsRegular() && filepath.Base(profile) == "Cookies" {
+			return profile, nil
+		}
+		if info, err := os.Stat(filepath.Join(profile, "Preferences")); err != nil || !info.Mode().IsRegular() {
+			return "", fmt.Errorf("%s profile directory is unavailable: %s", provider.Name, profile)
+		}
+		return chromiumCookieDatabaseInProfile(provider.Name, profile)
+	}
 	if profile == "" || profile == "." || profile == ".." || filepath.Base(profile) != profile || strings.ContainsAny(profile, `/\\`) {
 		return "", errors.New("invalid Chromium profile directory")
 	}
@@ -136,14 +152,27 @@ func chromiumCookieDatabase(provider Config, profile string) (string, error) {
 	var root string
 	switch runtime.GOOS {
 	case "darwin":
+		if provider.MacUserData == "" {
+			return "", fmt.Errorf("%s has no default macOS profile location", provider.Name)
+		}
 		root = filepath.Join(home, "Library", "Application Support", provider.MacUserData)
 	case "windows":
-		local := os.Getenv("LOCALAPPDATA")
+		if provider.WindowsUserData == "" {
+			return "", fmt.Errorf("%s has no default Windows profile location", provider.Name)
+		}
+		environment := "LOCALAPPDATA"
+		if provider.WindowsRoaming {
+			environment = "APPDATA"
+		}
+		local := os.Getenv(environment)
 		if local == "" {
-			return "", errors.New("LOCALAPPDATA is not set")
+			return "", fmt.Errorf("%s is not set", environment)
 		}
 		root = filepath.Join(local, provider.WindowsUserData)
 	default:
+		if provider.LinuxUserData == "" {
+			return "", fmt.Errorf("%s has no default Linux profile location", provider.Name)
+		}
 		root = os.Getenv("XDG_CONFIG_HOME")
 		if root == "" {
 			root = filepath.Join(home, ".config")
@@ -151,15 +180,22 @@ func chromiumCookieDatabase(provider Config, profile string) (string, error) {
 		root = filepath.Join(root, provider.LinuxUserData)
 	}
 	profileDir := filepath.Join(root, profile)
+	if profile == "root" {
+		profileDir = root
+	}
 	if info, err := os.Stat(filepath.Join(profileDir, "Preferences")); err != nil || !info.Mode().IsRegular() {
 		return "", fmt.Errorf("%s profile %q is unavailable", provider.Name, profile)
 	}
+	return chromiumCookieDatabaseInProfile(provider.Name, profileDir)
+}
+
+func chromiumCookieDatabaseInProfile(name, profileDir string) (string, error) {
 	for _, candidate := range []string{filepath.Join(profileDir, "Network", "Cookies"), filepath.Join(profileDir, "Cookies")} {
 		if info, err := os.Stat(candidate); err == nil && info.Mode().IsRegular() {
 			return candidate, nil
 		}
 	}
-	return "", fmt.Errorf("%s cookie database is unavailable for profile %q", provider.Name, profile)
+	return "", fmt.Errorf("%s cookie database is unavailable for profile %q", name, profileDir)
 }
 
 func readChromiumCookieValue(provider Config, database string, cookie browserCookie) (string, error) {
@@ -346,6 +382,9 @@ func chromiumUserDataRootFromDatabase(database string) string {
 	profileDir := filepath.Dir(database)
 	if filepath.Base(profileDir) == "Network" {
 		profileDir = filepath.Dir(profileDir)
+	}
+	if info, err := os.Stat(filepath.Join(profileDir, "Local State")); err == nil && info.Mode().IsRegular() {
+		return profileDir
 	}
 	return filepath.Dir(profileDir)
 }

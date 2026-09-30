@@ -14,6 +14,7 @@ type Config struct {
 	Name              string
 	MacUserData       string
 	WindowsUserData   string
+	WindowsRoaming    bool
 	LinuxUserData     string
 	KeychainService   string
 	KeychainAccount   string
@@ -48,6 +49,9 @@ func cookieDomainMatches(siteHost, cookieDomain string) bool {
 func List(config Config, profile string, site *url.URL, name string) ([]Cookie, string, error) {
 	return readChromiumSiteCookies(config, profile, site, name)
 }
+func Query(config Config, profile string, site *url.URL, includeExpired bool) ([]Cookie, string, error) {
+	return queryChromiumCookies(config, profile, site, "", includeExpired)
+}
 func ReadValue(config Config, database string, cookie Cookie) (string, error) {
 	return readChromiumCookieValue(config, database, cookie)
 }
@@ -59,7 +63,7 @@ func Import(config Config, profile string, cookie Cookie, replace bool) error {
 // an OS credential helper. Export and import remain unknown until attempted.
 func Probe(config Config, profile string) map[string]string {
 	result := map[string]string{
-		"cookie.list": "blocked", "cookie.export": "blocked", "cookie.import": "blocked",
+		"cookie.list": "blocked", "cookie.export": "blocked", "cookie.query": "blocked", "cookie.import": "blocked",
 		"policy.export": "ready",
 	}
 	if _, err := chromiumCookieDatabase(config, profile); err != nil {
@@ -70,6 +74,7 @@ func Probe(config Config, profile string) map[string]string {
 	}
 	result["cookie.list"] = "ready"
 	result["cookie.export"] = "unknown"
+	result["cookie.query"] = "unknown"
 	if runtime.GOOS != "windows" {
 		result["cookie.import"] = "unknown"
 	}

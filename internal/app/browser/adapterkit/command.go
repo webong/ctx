@@ -12,9 +12,12 @@ import (
 // CookieBackend is supplied by one browser adapter. The command never chooses
 // a browser implementation or receives a provider name.
 type CookieBackend struct {
-	List      func(profile string, site *url.URL, name string) ([]share.Cookie, string, error)
-	ReadValue func(handle string, cookie share.Cookie) (string, error)
-	Import    func(profile string, cookie share.Cookie, replace bool) error
+	List  func(profile string, site *url.URL, name string) ([]share.Cookie, string, error)
+	Query func(profile string, site *url.URL, includeExpired bool) ([]share.Cookie, string, error)
+	// QueryValues means Query already populated each cookie's value.
+	QueryValues bool
+	ReadValue   func(handle string, cookie share.Cookie) (string, error)
+	Import      func(profile string, cookie share.Cookie, replace bool) error
 }
 
 func RunCookie(profile, operation string, input io.Reader, stdout, stderr io.Writer, backend CookieBackend) int {
@@ -24,6 +27,54 @@ func RunCookie(profile, operation string, input io.Reader, stdout, stderr io.Wri
 		return 2
 	}
 	switch operation {
+	case "query":
+		if backend.Query == nil || (!backend.QueryValues && backend.ReadValue == nil) {
+			fmt.Fprintln(stderr, "ctx: cookie query is unavailable")
+			return 2
+		}
+		var site *url.URL
+		if request.Site != "" {
+			var err error
+			site, err = share.ParseSite(request.Site)
+			if err != nil {
+				return ReportErrorCode(stderr, err, 2)
+			}
+		} else if !request.AllowAllHosts {
+			fmt.Fprintln(stderr, "ctx: cookie query needs a site or allow_all_hosts")
+			return 2
+		}
+		cookies, handle, err := backend.Query(profile, site, request.IncludeExpired)
+		if err != nil {
+			return ReportError(stderr, err)
+		}
+		result := share.CookieQueryResult{Cookies: make([]share.Cookie, 0, len(cookies))}
+		for _, cookie := range cookies {
+			if !share.CookieMatchesSiteOptions(site, cookie, request.IncludeExpired) {
+				continue
+			}
+			if len(request.Names) > 0 {
+				matched := false
+				for _, name := range request.Names {
+					if cookie.Name == name {
+						matched = true
+						break
+					}
+				}
+				if !matched {
+					continue
+				}
+			}
+			if !backend.QueryValues {
+				value, err := backend.ReadValue(handle, cookie)
+				if err != nil {
+					result.Warnings = append(result.Warnings, fmt.Sprintf("cookie %q at %q could not be read: %v", cookie.Name, cookie.Domain, err))
+					continue
+				}
+				cookie.Value = value
+			}
+			result.Cookies = append(result.Cookies, cookie)
+		}
+		return Encode(stdout, result)
 	case "list", "export":
 		if backend.List == nil || (operation == "export" && backend.ReadValue == nil) {
 			fmt.Fprintln(stderr, "ctx: cookie list or export is unavailable")

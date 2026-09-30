@@ -28,9 +28,9 @@ type safariCookieRecord struct {
 	value  string
 }
 
-func safariShareStatus() map[string]string {
-	operations := map[string]string{"policy.export": "ready", "cookie.list": "blocked", "cookie.export": "blocked"}
-	paths, err := safariCookieStorePaths()
+func safariShareStatus(profile string) map[string]string {
+	operations := map[string]string{"policy.export": "ready", "cookie.list": "blocked", "cookie.export": "blocked", "cookie.query": "blocked"}
+	paths, err := safariCookieStorePaths(profile)
 	if err != nil {
 		return operations
 	}
@@ -43,26 +43,31 @@ func safariShareStatus() map[string]string {
 	}
 	operations["cookie.list"] = "ready"
 	operations["cookie.export"] = "ready"
+	operations["cookie.query"] = "ready"
 	return operations
 }
 
 func readSafariSiteCookies(profile string, site *url.URL, name string) ([]browsershare.Cookie, string, error) {
-	if profile != "default" {
-		return nil, "", errors.New("Safari only supports the default profile")
-	}
-	paths, err := safariCookieStorePaths()
+	return querySafariCookies(profile, site, name, false, false)
+}
+
+func querySafariCookies(profile string, site *url.URL, name string, includeExpired, withValue bool) ([]browsershare.Cookie, string, error) {
+	paths, err := safariCookieStorePaths(profile)
 	if err != nil {
 		return nil, "", err
 	}
 	var cookies []browsershare.Cookie
 	for _, path := range paths {
-		records, err := readSafariCookieStore(path, false)
+		records, err := readSafariCookieStore(path, withValue)
 		if err != nil {
 			return nil, "", err
 		}
 		for _, record := range records {
 			cookie := record.cookie
-			if (name == "" || cookie.Name == name) && browsershare.CookieMatchesSite(site, cookie) {
+			if (name == "" || cookie.Name == name) && browsershare.CookieMatchesSiteOptions(site, cookie, includeExpired) {
+				if withValue {
+					cookie.Value = record.value
+				}
 				cookies = append(cookies, cookie)
 			}
 		}
@@ -70,8 +75,8 @@ func readSafariSiteCookies(profile string, site *url.URL, name string) ([]browse
 	return cookies, "", nil
 }
 
-func readSafariCookieValue(_ string, cookie browsershare.Cookie) (string, error) {
-	paths, err := safariCookieStorePaths()
+func readSafariCookieValue(profile string, cookie browsershare.Cookie) (string, error) {
+	paths, err := safariCookieStorePaths(profile)
 	if err != nil {
 		return "", err
 	}
@@ -89,7 +94,13 @@ func readSafariCookieValue(_ string, cookie browsershare.Cookie) (string, error)
 	return "", errors.New("Safari cookie changed since listing; retry")
 }
 
-func safariCookieStorePaths() ([]string, error) {
+func safariCookieStorePaths(profile string) ([]string, error) {
+	if profile != "default" {
+		if !filepath.IsAbs(profile) || filepath.Base(profile) != "Cookies.binarycookies" {
+			return nil, errors.New("Safari profile must be default or an absolute Cookies.binarycookies path")
+		}
+		return []string{profile}, nil
+	}
 	if override := os.Getenv("CTX_SAFARI_COOKIE_FILE"); override != "" {
 		if !filepath.IsAbs(override) {
 			return nil, errors.New("CTX_SAFARI_COOKIE_FILE must be an absolute path")

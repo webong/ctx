@@ -4,7 +4,7 @@ set -eu
 VERSION=${1:-0.8.0-dev}
 OUTPUT=${2:-dist}
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-CATALOG_ADAPTERS='docker podman nerdctl apple rancher_desktop orbstack docker_desktop firefox chrome chromium edge brave safari kube aws gcloud postgres mysql php claude_code codex'
+CATALOG_ADAPTERS='docker podman nerdctl apple rancher_desktop orbstack docker_desktop firefox zen floorp waterfox librewolf chrome chromium edge brave safari vivaldi opera whale arc comet dia atlas helium kube aws gcloud postgres mysql php claude_code codex'
 
 case "$OUTPUT" in ''|/|.) printf 'ctx: unsafe release output directory: %s\n' "$OUTPUT" >&2; exit 2;; esac
 if [ -e "$OUTPUT" ]; then
@@ -38,13 +38,14 @@ build_bundle() {
   for adapter in $CATALOG_ADAPTERS; do
     cp -R "$ROOT/adapters/$adapter" "$bundle/adapters/$adapter"
   done
-  for adapter in firefox chrome chromium edge brave safari; do
+  for adapter in firefox zen floorp waterfox librewolf chrome chromium edge brave safari vivaldi opera whale arc comet dia atlas helium; do
     (cd "$ROOT" && CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
       go build -trimpath -ldflags "-s -w" \
       -o "$bundle/adapters/$adapter/ctx-$adapter-share$extension" "./adapters/$adapter/native")
     rm -rf "$bundle/adapters/$adapter/native"
   done
   rm -rf "$bundle/adapters/chromium/engine"
+  rm -rf "$bundle/adapters/firefox/engine"
   if [ "$os" = windows ]; then
     (cd "$staging" && zip -qr "$OUTPUT/ctx-adapters-$os-$arch.zip" ctx/adapters)
   else

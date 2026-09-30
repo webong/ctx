@@ -90,6 +90,9 @@ func cookieMatchesAttributes(cookie browserCookie, filter cookieAttributeFilter)
 }
 
 func shareBrowserCommand(resolver *config.Resolver, args []string, stdout, stderr io.Writer) int {
+	if len(args) > 1 && args[0] == "cookie" && args[1] == "query" {
+		return shareBrowserCookieQuery(args[2:], stdout, stderr)
+	}
 	if len(args) > 0 && args[0] == "capabilities" {
 		flags := flag.NewFlagSet("share:browser capabilities", flag.ContinueOnError)
 		flags.SetOutput(stderr)
@@ -117,7 +120,7 @@ func shareBrowserCommand(resolver *config.Resolver, args []string, stdout, stder
 		return shareBrowserCookieImport(resolver, args[2:], stdout, stderr)
 	}
 	if len(args) < 2 || args[0] != "cookie" || (args[1] != "list" && args[1] != "copy") {
-		fmt.Fprintln(stderr, "ctx: share:browser requires capabilities, cookie list|copy|import, or policy export")
+		fmt.Fprintln(stderr, "ctx: share:browser requires capabilities, cookie list|query|copy|import, or policy export")
 		return 2
 	}
 	action := args[1]

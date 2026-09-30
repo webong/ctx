@@ -618,8 +618,8 @@ func validateManifest(manifest Manifest, directory, goos string) error {
 	if !contains(manifest.Capabilities, "validate") || !contains(manifest.Capabilities, "doctor") {
 		return fmt.Errorf("adapter %s must provide validate and doctor", manifest.Name)
 	}
-	if !contains(manifest.Capabilities, "run") && !contains(manifest.Capabilities, "open") {
-		return fmt.Errorf("adapter %s must provide run or open", manifest.Name)
+	if !contains(manifest.Capabilities, "run") && !contains(manifest.Capabilities, "open") && !contains(manifest.Capabilities, "share") {
+		return fmt.Errorf("adapter %s must provide run, open, or share", manifest.Name)
 	}
 	if contains(manifest.Capabilities, "run") && !contains(manifest.Surfaces, "shell") {
 		return fmt.Errorf("adapter %s provides run without the shell surface", manifest.Name)

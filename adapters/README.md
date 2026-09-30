@@ -35,16 +35,19 @@ ownership of the global Docker CLI plugin links. The generic
 `ctx manager app <adapter> <action>` route invokes these packages without
 hard-coding product behavior in ctx core.
 
-`firefox`, `chrome`, `chromium`, `edge`, `brave`, and `safari` are browser providers. The built-in
+`firefox`, `zen`, `floorp`, `waterfox`, `librewolf`, `chrome`, `chromium`, `edge`,
+`brave`, `vivaldi`, `opera`, `whale`, `arc`, `comet`, `dia`, `atlas`, `helium`, and
+`safari` are browser providers. The built-in
 `browser` context aggregates them while each provider owns application-specific
 profile discovery, validation, launching, and declared browser share operations.
 `ctx share:browser` bridges resources between trusted adapters using the
 versioned JSON protocol in [the adapter API](../docs/adapter-api.md).
 The optional release catalog and explicit source-installer selection provide a
 separate share executable built from each browser adapter's `native` directory.
-Shared request handling, policy reading,
-and SQLite access live in `internal/app/browser/adapterkit`; Chrome, Edge, Brave, and other
-Chromium-based adapters can use the engine owned by `adapters/chromium/engine`.
+Shared request handling, policy reading, and SQLite access live in
+`internal/app/browser/adapterkit`. The browser-specific engines live in
+`adapters/chromium/engine` and `adapters/firefox/engine`; their respective
+families configure and reuse them.
 The executable is part
 of that adapter's trusted checksum; CTX core only routes
 the declared operation and validates the shared envelope.

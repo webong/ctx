@@ -55,7 +55,7 @@ their runtime. `supports` describes resource kinds the native tool can manage;
 | Project contexts | Select native tool contexts in `.ctx`, group selections in profiles, inspect resolution, and apply profile environment values to a command or child shell. |
 | Computer tools | Route Kubernetes, AWS, gcloud, PostgreSQL, and MySQL commands through their selected contexts. Claude Code and Codex adapters provide CLI shims, project hooks, and native plugin delegation. |
 | Managers | Route Docker, Podman, nerdctl, and Apple Container commands. Register named engine connections, use supported registry build caches, and transfer images or named volumes between engines. |
-| Browsers | Open URLs in a selected Firefox, Chrome, Chromium, Edge, Brave, or Safari profile. Browser adapters can share the resources listed [below](#browser-sharing). |
+| Browsers | Open URLs in a selected Firefox, Chrome, Chromium, Edge, Brave, or Safari profile. Additional browser adapters can query and share the resources listed [below](#browser-sharing). |
 | System graph | Scan trusted adapters for available contexts and capabilities, resolve usable providers, and inspect or export the local inventory. Other services can import the graph and supervisor Go packages. |
 | Extensions | Install maintained or third-party adapters on demand. A prebuilt, platform-specific adapter archive works with a bare ctx binary; building an adapter from Go source requires Go. |
 
@@ -450,12 +450,18 @@ platform-specific code.
 
 | Maintained adapter | Declared share operations |
 | --- | --- |
-| Firefox | Cookie list, export, and import; policy export; certificate list, export, and import |
-| Chrome, Chromium, Edge, and Brave | Cookie list, export, and import; policy export |
-| Safari (macOS) | Cookie list and export from a readable `Cookies.binarycookies` store; policy export |
+| Firefox | Cookie list, query, export, and import; policy export; certificate list, export, and import |
+| Zen, Floorp, Waterfox, and LibreWolf | Cookie list, query, export, and import; certificate list, export, and import |
+| Chrome, Chromium, Edge, and Brave | Cookie list, query, export, and import; policy export |
+| Vivaldi, Opera, Whale, Arc, Comet, Dia, Atlas, and Helium | Cookie list, query, export, and import |
+| Safari (macOS) | Cookie list, query, and export from a readable `Cookies.binarycookies` store; policy export |
 
 The adapter's declared operations are the starting point; OS encryption and
-profile state can further limit an individual transfer.
+profile state can further limit an individual transfer. Default profile
+discovery is available only on platforms where that browser has a known
+profile location; an absolute profile directory or cookie-store path can be
+used for a supported store elsewhere. The new share-only adapters do not
+implement `ctx open`.
 
 Firefox and the Chromium-family adapters can list and export a selected site cookie and
 import a supported cookie into a closed profile. Source and target may be
@@ -464,6 +470,9 @@ a browser extension:
 
 ```sh
 ctx share:browser cookie list --from firefox:personal --site https://example.com
+ctx share:browser cookie query --from firefox:personal --site https://example.com --name session --to-file ./site-cookies.json
+ctx share:browser cookie query --browser firefox --browser chrome --site https://example.com --mode first --stdout | consumer
+ctx share:browser cookie query --from chrome:Default --all-hosts --include-expired --to-file ./all-cookies.json
 ctx share:browser cookie copy --from firefox:personal --site https://example.com --name session --to-profile firefox:work
 ctx share:browser cookie copy --from firefox:personal --site https://example.com --name session --to-file ./session-cookie.json
 ctx share:browser cookie copy --from firefox:personal --site https://example.com --name session --stdout | consumer
@@ -498,6 +507,20 @@ with mode 0600 and are plain JSON containing `version`, `source`, `site`, and a
 `cookie` object with its value and scope fields. `same_site_policy` is the
 portable value; browser-specific fields are namespaced under `attributes`.
 `--stdout` requires a pipe; use `--to-file` for a protected file.
+
+`cookie query` returns a JSON `cookies` array with values and a `warnings`
+array for cookies that could not be read. Repeat `--site`, `--name`, or `--from`
+to select multiple sites, names, or ordered profiles. Without `--from` or
+`--browser`, ctx discovers profiles from installed, trusted browser adapters.
+`--mode merge` combines the sources and keeps the first cookie with each scope;
+`--mode first` stops at the first source with a match. `--inline-file` or
+`--inline-stdin` adds JSON cookies ahead of the adapters; `--inline-only` uses
+only that input. `--all-hosts` explicitly permits a query without `--site`,
+and `--include-expired` includes expired rows. The public
+`github.com/webong/ctx/browser` package exposes the same query as `Get` for
+other Go services. Browser adapters retain ownership of profile paths and
+credential access. Older adapters with only list/export can answer site
+queries; all-host and expired queries require `cookie.query`.
 
 Chromium-family export reads the profile's committed SQLite cookies. On
 macOS, encrypted cookies require access to the browser's Safe Storage item in
@@ -656,7 +679,7 @@ See [Adapters](adapters/README.md) for maintained packages and
 | `ctx build [provider|@instance] --cache-ref <ref> -- <args>` | Build with a registry-backed cache on a capable manager |
 | `ctx share:manager image <sync|copy> ...` | Transfer images through installed manager providers |
 | `ctx share:manager volume <export|import|copy> ...` | Transfer named volumes through installed manager providers |
-| `ctx share:browser cookie <list|copy|import> ...` | List, export, or import one site cookie through browser adapters |
+| `ctx share:browser cookie <list|query|copy|import> ...` | List, query, export, or import cookies through browser adapters |
 | `ctx share:browser policy export ...` | Export browser policy sources to a protected bundle or pipe |
 | `ctx share:browser certificate <list|export|copy|import> ...` | Share an exportable certificate through a capable browser adapter |
 | `ctx share:browser capabilities ...` | Show declared browser share operations and live prerequisite states |

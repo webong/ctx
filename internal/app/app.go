@@ -201,6 +201,8 @@ usage:
   ctx share:manager volume <export|import|copy> [arguments...]
       endpoints: @instance or provider:selection
   ctx share:browser cookie list [--from <browser:profile>] --site <URL>
+  ctx share:browser cookie query --site <URL> [--from <browser:profile>] [--name <cookie>]
+      [--mode merge|first] (--to-file <path> | --stdout)
   ctx share:browser cookie copy [--from <browser:profile>] --site <URL> --name <cookie>
       [--domain <domain>] [--path <path>] [--id <row-id>] [--ref <reference>]
       [--attribute <namespace.key=value>]

@@ -1,6 +1,7 @@
 package mod
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -19,6 +20,16 @@ type Invocation struct {
 }
 
 func (a *Adapter) Command(invocation Invocation) (*exec.Cmd, error) {
+	return a.command(nil, invocation)
+}
+
+// CommandContext prepares an adapter invocation whose process is cancelled
+// when ctx is done. A nil context retains Command's behavior.
+func (a *Adapter) CommandContext(ctx context.Context, invocation Invocation) (*exec.Cmd, error) {
+	return a.command(ctx, invocation)
+}
+
+func (a *Adapter) command(ctx context.Context, invocation Invocation) (*exec.Cmd, error) {
 	if !a.HasCapability(invocation.Operation) {
 		return nil, fmt.Errorf("adapter %s does not support %s", a.Manifest.Name, invocation.Operation)
 	}
@@ -36,7 +47,7 @@ func (a *Adapter) Command(invocation Invocation) (*exec.Cmd, error) {
 		args = append(args, "--")
 		args = append(args, invocation.Arguments...)
 	}
-	command := adapterCommand(a.ExecutablePath(), args)
+	command := adapterCommandContext(ctx, a.ExecutablePath(), args)
 	command.Env = os.Environ()
 	command.Env = setEnvironment(command.Env, "CTX_ADAPTER_API", a.Manifest.APIVersion)
 	command.Env = setEnvironment(command.Env, "CTX_ADAPTER_NAME", a.Manifest.Name)

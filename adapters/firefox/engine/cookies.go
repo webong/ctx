@@ -1,4 +1,4 @@
-package main
+package firefox
 
 import (
 	"bufio"
@@ -32,8 +32,12 @@ type firefoxCookieRow struct {
 	OriginAttributes string `json:"originAttributes"`
 }
 
-func readFirefoxSiteCookies(profile string, site *url.URL, name string) ([]browserCookie, string, error) {
-	database, err := firefoxCookieDatabase(profile)
+func readFirefoxSiteCookies(config Config, profile string, site *url.URL, name string) ([]browserCookie, string, error) {
+	return queryFirefoxCookies(config, profile, site, name, false)
+}
+
+func queryFirefoxCookies(config Config, profile string, site *url.URL, name string, includeExpired bool) ([]browserCookie, string, error) {
+	database, err := firefoxCookieDatabase(config, profile)
 	if err != nil {
 		return nil, "", err
 	}
@@ -47,11 +51,14 @@ func readFirefoxSiteCookies(profile string, site *url.URL, name string) ([]brows
 			return nil, "", fmt.Errorf("Firefox cookie database lacks %s; this profile schema is not supported", required)
 		}
 	}
-	host := strings.TrimSuffix(strings.ToLower(site.Hostname()), ".")
-	if host == "" {
-		return nil, "", errors.New("site has no hostname")
+	statement := "SELECT id,name,host,path,expiry,isSecure,isHttpOnly,sameSite,originAttributes FROM moz_cookies WHERE 1=1"
+	if site != nil {
+		host := strings.TrimSuffix(strings.ToLower(site.Hostname()), ".")
+		if host == "" {
+			return nil, "", errors.New("site has no hostname")
+		}
+		statement += " AND host IN (" + cookieHostSQL(host) + ")"
 	}
-	statement := "SELECT id,name,host,path,expiry,isSecure,isHttpOnly,sameSite,originAttributes FROM moz_cookies WHERE host IN (" + cookieHostSQL(host) + ")"
 	if name != "" {
 		statement += " AND name=" + sqlString(name)
 	}
@@ -82,7 +89,7 @@ func readFirefoxSiteCookies(profile string, site *url.URL, name string) ([]brows
 				}
 			}
 		}
-		if browsershare.CookieMatchesSite(site, cookie) {
+		if browsershare.CookieMatchesSiteOptions(site, cookie, includeExpired) {
 			cookies = append(cookies, cookie)
 		}
 	}
@@ -173,8 +180,8 @@ func cookieDomainMatches(siteHost, cookieDomain string) bool {
 	return browsershare.CookieDomainMatches(siteHost, cookieDomain)
 }
 
-func firefoxCookieDatabase(profile string) (string, error) {
-	directory, err := firefoxProfileDirectory(profile)
+func firefoxCookieDatabase(config Config, profile string) (string, error) {
+	directory, err := firefoxProfileDirectory(config, profile)
 	if err != nil {
 		return "", err
 	}
@@ -186,8 +193,17 @@ func firefoxCookieDatabase(profile string) (string, error) {
 	return database, nil
 }
 
-func firefoxProfileDirectory(profile string) (string, error) {
-	ini, err := firefoxProfilesINI()
+func firefoxProfileDirectory(config Config, profile string) (string, error) {
+	if filepath.IsAbs(profile) {
+		if filepath.Base(profile) == "cookies.sqlite" {
+			return filepath.Dir(profile), nil
+		}
+		if info, err := os.Stat(profile); err == nil && info.IsDir() {
+			return filepath.Clean(profile), nil
+		}
+		return "", fmt.Errorf("Firefox profile directory is unavailable: %s", profile)
+	}
+	ini, err := firefoxProfilesINI(config)
 	if err != nil {
 		return "", err
 	}
@@ -235,7 +251,7 @@ func firefoxProfileDirectory(profile string) (string, error) {
 	return matches[0], nil
 }
 
-func firefoxProfilesINI() (string, error) {
+func firefoxProfilesINI(config Config) (string, error) {
 	home := os.Getenv("HOME")
 	if home == "" {
 		var err error
@@ -246,19 +262,31 @@ func firefoxProfilesINI() (string, error) {
 	}
 	switch runtime.GOOS {
 	case "darwin":
-		return filepath.Join(home, "Library", "Application Support", "Firefox", "profiles.ini"), nil
+		if config.MacProfileRoot == "" {
+			return "", fmt.Errorf("%s has no default macOS profile location", config.Name)
+		}
+		return filepath.Join(home, "Library", "Application Support", filepath.FromSlash(config.MacProfileRoot), "profiles.ini"), nil
 	case "windows":
+		if config.WindowsProfileRoot == "" {
+			return "", fmt.Errorf("%s has no default Windows profile location", config.Name)
+		}
 		root := os.Getenv("APPDATA")
 		if root == "" {
 			return "", errors.New("APPDATA is not set")
 		}
-		return filepath.Join(root, "Mozilla", "Firefox", "profiles.ini"), nil
+		return filepath.Join(root, filepath.FromSlash(config.WindowsProfileRoot), "profiles.ini"), nil
 	default:
-		standard := filepath.Join(home, ".mozilla", "firefox", "profiles.ini")
+		if config.LinuxProfileRoot == "" {
+			return "", fmt.Errorf("%s has no default Linux profile location", config.Name)
+		}
+		standard := filepath.Join(home, filepath.FromSlash(config.LinuxProfileRoot), "profiles.ini")
 		if _, err := os.Stat(standard); err == nil {
 			return standard, nil
 		}
-		return filepath.Join(home, "snap", "firefox", "common", ".mozilla", "firefox", "profiles.ini"), nil
+		if config.LinuxFallbackProfileRoot != "" {
+			return filepath.Join(home, filepath.FromSlash(config.LinuxFallbackProfileRoot), "profiles.ini"), nil
+		}
+		return standard, nil
 	}
 }
 
@@ -275,11 +303,11 @@ func snapshotFirefoxCookieDatabase(database string) (string, func(), error) {
 	return snapshotCookieDatabase(database)
 }
 
-func importFirefoxCookie(profile string, cookie browserCookie, replace bool) error {
+func importFirefoxCookie(config Config, profile string, cookie browserCookie, replace bool) error {
 	if len(cookie.Attributes) != 0 || cookie.PartitionKey != "" {
 		return errors.New("Firefox profile import cannot map a container or partitioned cookie")
 	}
-	database, err := firefoxCookieDatabase(profile)
+	database, err := firefoxCookieDatabase(config, profile)
 	if err != nil {
 		return err
 	}

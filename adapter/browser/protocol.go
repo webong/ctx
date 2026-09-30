@@ -18,6 +18,7 @@ type AvailabilityReport = share.AvailabilityReport
 type Cookie = share.Cookie
 type CookieBundle = share.CookieBundle
 type CookieRequest = share.CookieRequest
+type CookieQueryResult = share.CookieQueryResult
 type ResourceBundle = share.ResourceBundle
 type ResourceRequest = share.ResourceRequest
 type PolicyEntry = share.PolicyEntry
@@ -49,8 +50,15 @@ func ValidateResourceBundle(bundle ResourceBundle, resource string) error {
 	return share.ValidateResourceBundle(bundle, resource)
 }
 func SameListedCookie(a, b Cookie) bool { return share.SameListedCookie(a, b) }
+func CookieActive(cookie Cookie) bool   { return share.CookieActive(cookie) }
+func CookieDomainMatches(siteHost, cookieDomain string) bool {
+	return share.CookieDomainMatches(siteHost, cookieDomain)
+}
 func CookieMatchesSite(site *url.URL, cookie Cookie) bool {
 	return share.CookieMatchesSite(site, cookie)
+}
+func CookieMatchesSiteOptions(site *url.URL, cookie Cookie, includeExpired bool) bool {
+	return share.CookieMatchesSiteOptions(site, cookie, includeExpired)
 }
 func CookiePathMatches(requestPath, cookiePath string) bool {
 	return share.CookiePathMatches(requestPath, cookiePath)

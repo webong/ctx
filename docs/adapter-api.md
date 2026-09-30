@@ -32,7 +32,9 @@ default_provider = "false"
 
 Names use lowercase letters, numbers, and underscores, and cannot collide with a
 runtime, surface, or ctx command. `validate` and `doctor` are required. An
-adapter must provide `run` or `open`; `list` is optional.
+adapter must provide `run`, `open`, or `share`; `list` is optional. A
+share-only browser adapter can expose profile discovery and browser resources
+without implementing URL launching.
 
 ### Machine graph observation
 
@@ -104,7 +106,7 @@ A browser adapter participating in `ctx share:browser` declares, for example:
 runtime = "browser"
 capabilities = "list,validate,open,doctor,share"
 share_spaces = "browser"
-browser_share = "cookie.list,cookie.export,cookie.import,policy.export,certificate.list,certificate.export,certificate.import"
+browser_share = "cookie.list,cookie.export,cookie.query,cookie.import,policy.export,certificate.list,certificate.export,certificate.import"
 ~~~
 
 A manager adapter's unqualified `list` output contains native context,
@@ -309,12 +311,19 @@ registry-backed build cache where the chosen adapter supports `build`.
 `ctx share:browser` bridges browser resources between trusted
 adapters. Browser adapters declare `share` and `share_spaces = "browser"`, then
 list operations in `browser_share`, for example
-`cookie.list,cookie.export,cookie.import,policy.export`. ctx invokes an
+`cookie.list,cookie.export,cookie.query,cookie.import,policy.export`. ctx invokes an
 operation as `share PROFILE -- RESOURCE OPERATION`. The adapter receives one
 JSON request on stdin with `version = 2`. `cookie.list` receives `site` and
 returns a JSON array of cookie metadata without values. `cookie.export`
 receives `site` and a listed `cookie`, then returns that cookie with its value.
 `cookie.import` receives `bundle` and `replace`, and returns no body.
+`cookie.query` receives `site` and optional `names`, `include_expired`, and
+`allow_all_hosts`. The site can be omitted only when `allow_all_hosts` is true.
+It returns `{"cookies":[...],"warnings":[...]}`; cookies include their values,
+while warnings describe individual reads that failed. Do not put cookie values
+in warnings. Query results must obey the requested site, name, and expiry
+filters. An adapter that cannot query all hosts or include expired rows should
+omit `cookie.query` or reject those options explicitly.
 `policy.export` receives only `version` and returns a policy bundle with
 `version` and `entries`. A nonzero exit code reports failure on stderr.
 Cookie `id` is a source row ID where available; adapters without row IDs can
@@ -362,8 +371,17 @@ External Go adapters import its stable public facade at
 helper executable. The bare Chromium adapter owns the reusable storage engine at
 `github.com/webong/ctx/adapters/chromium/engine`; Chrome and other
 Chromium-based Go adapters can configure and import it through its exported
-`Config`, `Cookie`, `List`, `ReadValue`, `Import`, and `Probe` API. The versioned JSON
+`Config`, `Cookie`, `List`, `Query`, `ReadValue`, `Import`, and `Probe` API. The versioned JSON
 contract remains the interface for external adapters.
+
+Other Go services can import `github.com/webong/ctx/browser` and call
+`browser.Get(ctx, browser.Options{URL: "https://example.com", Sources: []string{"firefox:personal"}})`.
+The library invokes installed, trusted browser
+adapters, combines scoped cookies, and returns source warnings. Its options
+also support ordered merge/first results, browser/profile discovery, inline
+JSON/Base64/file cookies, timeout, all-host reads, and expired cookies. A
+trusted adapter with only list/export can serve ordinary site queries; the
+all-host and expired modes require `cookie.query`.
 
 For example, `cookie.list` receives `{"version":2,"site":"https://example.com"}`
 and can respond with:

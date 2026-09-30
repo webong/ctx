@@ -45,9 +45,16 @@ func CookiePathMatches(requestPath, cookiePath string) bool {
 }
 
 func CookieMatchesSite(site *url.URL, cookie Cookie) bool {
+	return CookieMatchesSiteOptions(site, cookie, false)
+}
+
+func CookieMatchesSiteOptions(site *url.URL, cookie Cookie, includeExpired bool) bool {
+	if site == nil {
+		return includeExpired || CookieActive(cookie)
+	}
 	return CookieDomainMatches(site.Hostname(), cookie.Domain) &&
 		(site.Path == "" || CookiePathMatches(site.EscapedPath(), cookie.Path)) &&
-		(!cookie.Secure || site.Scheme == "https") && CookieActive(cookie)
+		(!cookie.Secure || site.Scheme == "https") && (includeExpired || CookieActive(cookie))
 }
 
 func SameListedCookie(a, b Cookie) bool {
