@@ -86,7 +86,7 @@ the selected context with its trusted adapter before acting.
 `run` and command shims; `web` permits `open`. An adapter may expose both.
 `capabilities` names executable operations such as `run`, `build`, and
 `image_save`. `supports` names resource kinds that the native tool can manage,
-such as `virtualizer` and `container`. A tool may declare both regardless of
+such as `virtualizer`, `container`, and `interpreter`. A tool may declare both regardless of
 its runtime. Support declarations aid discovery; they do not add transfer or
 invocation operations. API v2.0 does not accept `kind`.
 

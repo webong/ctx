@@ -1,0 +1,129 @@
+#!/bin/sh
+set -eu
+
+operation=${1:-}
+[ "$#" -gt 0 ] && shift
+
+real_php() {
+  if [ -n "${CTX_ADAPTER_REAL_COMMAND:-}" ] && [ -x "$CTX_ADAPTER_REAL_COMMAND" ]; then
+    printf '%s\n' "$CTX_ADAPTER_REAL_COMMAND"
+    return
+  fi
+  if [ -n "${CTX_EXECUTABLE:-}" ] && [ -x "$CTX_EXECUTABLE" ]; then
+    resolved=$("$CTX_EXECUTABLE" real php 2>/dev/null || true)
+    if [ -n "$resolved" ] && [ -x "$resolved" ]; then
+      printf '%s\n' "$resolved"
+      return
+    fi
+  fi
+  ctx_command=$(command -v ctx 2>/dev/null || true)
+  if [ -n "$ctx_command" ] && [ -x "$ctx_command" ]; then
+    resolved=$("$ctx_command" real php 2>/dev/null || true)
+    if [ -n "$resolved" ] && [ -x "$resolved" ]; then
+      printf '%s\n' "$resolved"
+      return
+    fi
+  fi
+  command -v php 2>/dev/null || true
+}
+
+inventory() {
+  if command -v brew >/dev/null 2>&1; then
+    brew list --formula --versions 2>/dev/null | while read -r formula version rest; do
+      [ -n "${version:-}" ] || continue
+      base=${formula##*/}
+      case "$base" in
+        php) selection=$(printf '%s\n' "$version" | awk -F. '{print $1 "." $2}') ;;
+        php@*) selection=${base#php@} ;;
+        *) continue ;;
+      esac
+      prefix=$(brew --prefix "$formula" 2>/dev/null || true)
+      executable=$prefix/bin/php
+      [ -x "$executable" ] || continue
+      printf '%s\t%s\t%s\thomebrew\t%s\n' "$selection" "$executable" "$version" "$formula"
+    done
+  fi
+  executable=$(real_php)
+  if [ -n "$executable" ] && [ -x "$executable" ]; then
+    version=$("$executable" -r 'echo PHP_VERSION;' 2>/dev/null || true)
+    if [ -n "$version" ]; then
+      selection=$(printf '%s\n' "$version" | awk -F. '{print $1 "." $2}')
+      existing=$(inventory_homebrew_selection "$selection")
+      if [ -z "$existing" ]; then
+        printf '%s\t%s\t%s\tpath\t\n' "$selection" "$executable" "$version"
+      fi
+    fi
+  fi
+}
+
+inventory_homebrew_selection() {
+  wanted=$1
+  if command -v brew >/dev/null 2>&1; then
+    brew list --formula --versions 2>/dev/null | while read -r formula version rest; do
+      [ -n "${version:-}" ] || continue
+      base=${formula##*/}
+      case "$base" in
+        php) selection=$(printf '%s\n' "$version" | awk -F. '{print $1 "." $2}') ;;
+        php@*) selection=${base#php@} ;;
+        *) continue ;;
+      esac
+      if [ "$selection" = "$wanted" ]; then printf '%s\n' "$formula"; break; fi
+    done
+  fi
+}
+
+find_record() {
+  wanted=$1
+  inventory | awk -F '\t' -v wanted="$wanted" '$1 == wanted { print; exit }'
+}
+
+case "$operation" in
+  list)
+    inventory | awk -F '\t' 'NF >= 4 && !seen[$1]++ { print $1 }'
+    ;;
+  observe)
+    tab=$(printf '\t')
+    separator=
+    printf '{"version":1,"contexts":['
+    inventory | while IFS="$tab" read -r selection executable version manager formula; do
+      [ -n "$selection" ] || continue
+      printf '%s{"selection":"%s","attributes":{"version":"%s","manager":"%s"' "$separator" "$selection" "$version" "$manager"
+      if [ -n "$formula" ]; then printf ',"formula":"%s"' "$formula"; fi
+      printf '}}'
+      separator=,
+    done
+    printf ']}\n'
+    ;;
+  validate)
+    selection=${1:-}
+    [ -n "$selection" ] && [ -n "$(find_record "$selection")" ] || { printf 'php: PHP %s is not installed\n' "${selection:-<empty>}" >&2; exit 1; }
+    ;;
+  doctor)
+    selection=${1:-}
+    if [ -n "$selection" ]; then
+      record=$(find_record "$selection")
+      [ -n "$record" ] || { printf 'php: PHP %s is not installed\n' "$selection" >&2; exit 1; }
+      tab=$(printf '\t')
+      executable=$(printf '%s\n' "$record" | awk -F '\t' '{print $2}')
+    else
+      executable=$(real_php)
+    fi
+    [ -n "$executable" ] && [ -x "$executable" ] || { printf 'php: PHP CLI is not installed\n' >&2; exit 127; }
+    "$executable" -v
+    ;;
+  run)
+    selection=
+    if [ "$#" -gt 0 ] && [ "$1" != "--" ]; then selection=$1; shift; fi
+    [ "${1:-}" = "--" ] && shift
+    if [ -n "$selection" ]; then
+      record=$(find_record "$selection")
+      [ -n "$record" ] || { printf 'php: PHP %s is not installed\n' "$selection" >&2; exit 1; }
+      executable=$(printf '%s\n' "$record" | awk -F '\t' '{print $2}')
+    else
+      executable=$(real_php)
+    fi
+    [ -n "$executable" ] && [ -x "$executable" ] || { printf 'php: PHP CLI is not installed\n' >&2; exit 127; }
+    exec "$executable" "$@"
+    ;;
+  *) exit 2 ;;
+esac

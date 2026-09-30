@@ -264,6 +264,23 @@ follows the runtime-neutral decision boundary and local operator controls descri
 [Neura for Builders](https://www.neurarelay.com/builders) and
 [Neura Local settings](https://www.neurarelay.com/operators#neura-local-settings).
 
+## PHP interpreter adapter
+
+PHP is available as a computer-runtime interpreter adapter. Install it from the
+bundled catalog, inspect its discovered versions, and select a version for the
+current project:
+
+```sh
+ctx adapter add php
+ctx ls php
+ctx set php 8.4
+ctx graph resolve computer --supports interpreter
+```
+
+The adapter declares interpreter support in the graph and routes `php` to the
+selected installed version. On Homebrew systems it discovers versioned PHP
+formulae; it does not change Homebrew's global link.
+
 ## Manager sharing and build caches
 
 `ctx graph scan` discovers installed adapters and their declared capabilities.

@@ -43,7 +43,7 @@ The installers update the catalog and refresh active browser adapters with the
 packaged helper. Replacing only the `ctx` binary leaves old browser adapter
 packages in place; install the new bundle before using browser sharing.
 
-`kube`, `aws`, `gcloud`, `postgres`, and `mysql` are maintained computer-runtime
+`kube`, `aws`, `gcloud`, `postgres`, `mysql`, and `php` are maintained computer-runtime
 adapters. Every adapter has an `adapter.toml` manifest and implements ctx adapter
 API v2.0. Native installers copy maintained packages into
 `$CTX_HOME/catalog/adapters`; `ctx setup` or `ctx adapter add` activates selected
@@ -51,6 +51,10 @@ packages under `$CTX_HOME/adapters` and records their checksum trust. A package
 can declare `executable_windows` alongside its default executable; the native
 core selects the platform implementation at runtime while keeping one manifest,
 capability set, and trust record.
+
+`php` is the PHP interpreter adapter. It declares `supports = "interpreter"`,
+observes installed Homebrew PHP formulae as graph contexts, and runs the selected
+version for the current project without relinking the host's global `php` command.
 
 Shell-launched AI CLIs use the `computer` runtime and declare
 `computer_commands` and optional `computer_capabilities` in their manifest.
