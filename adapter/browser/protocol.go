@@ -1,13 +1,17 @@
-// Package browser exposes the browser share protocol to external Go adapters.
+// Package browser exposes shared browser resource and profile-management
+// protocols to external Go adapters.
 // Browser implementations remain separate executables that ctx invokes through
 // the adapter API; this package only provides shared request and response code.
 package browser
 
 import (
+	"context"
+	"encoding/json"
 	"io"
 	"net/url"
 
 	kit "github.com/webong/ctx/internal/app/browser/adapterkit"
+	"github.com/webong/ctx/internal/app/browser/management"
 	"github.com/webong/ctx/internal/app/browser/share"
 )
 
@@ -25,6 +29,12 @@ type PolicyEntry = share.PolicyEntry
 type PolicyRequest = share.PolicyRequest
 type PolicyBundle = share.PolicyBundle
 
+type ManagementRequest = management.Request
+type ManagementResponse = management.Response
+type ManagementBackend = kit.ManagementBackend
+
+const ManagementVersion = management.Version
+
 type CookieBackend = kit.CookieBackend
 type PolicyFile = kit.PolicyFile
 type PolicyRoot = kit.PolicyRoot
@@ -36,6 +46,29 @@ func RunCookie(profile, operation string, input io.Reader, stdout, stderr io.Wri
 
 func RunPolicyExport(input io.Reader, stdout, stderr io.Writer, sources PolicySources) int {
 	return kit.RunPolicyExport(input, stdout, stderr, sources)
+}
+
+func RunManagement(ctx context.Context, profile string, input io.Reader, stdout, stderr io.Writer, backend ManagementBackend) int {
+	return kit.RunManagement(ctx, profile, input, stdout, stderr, backend)
+}
+
+func NewManagementRequest(kind, action string, input any) (ManagementRequest, error) {
+	return management.NewRequest(kind, action, input)
+}
+
+func ValidateManagementRequest(request ManagementRequest) error {
+	return management.ValidateRequest(request)
+}
+
+func ValidateManagementResponse(response ManagementResponse, request ManagementRequest) error {
+	return management.ValidateResponse(response, request)
+}
+
+func ManagementOperations() map[string][]string { return management.Operations() }
+
+func ManagementResult(value any) json.RawMessage {
+	data, _ := json.Marshal(value)
+	return data
 }
 
 func ExportPolicies(sources PolicySources) (PolicyBundle, error) {

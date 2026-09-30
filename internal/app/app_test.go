@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -25,6 +26,55 @@ func TestMissingRunCommand(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	if code := Run([]string{"run"}, &stdout, &stderr); code != 2 {
 		t.Fatalf("got exit code %d", code)
+	}
+}
+
+func TestBrowserManagementCLIRequiresDeclaredOperation(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HOME", filepath.Join(root, "home"))
+	t.Setenv("CTX_HOME", filepath.Join(root, "state"))
+	t.Setenv("CTX_ADAPTER_HOME", filepath.Join(root, "state", "adapters"))
+	adapterDir := filepath.Join(root, "browser-adapter")
+	if err := os.MkdirAll(adapterDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	manifest := `api_version = "2.0"
+name = "fixture"
+runtime = "browser"
+surfaces = "web"
+executable = "ctx-fixture"
+capabilities = "list,validate,open,doctor,share"
+browser_management = "extension.prepare"
+`
+	if err := os.WriteFile(filepath.Join(adapterDir, "adapter.toml"), []byte(manifest), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("shell adapter fixture requires a Unix host")
+	}
+	executable := "#!/bin/sh\n[ \"$1\" = manage ] || exit 2\ncat >/dev/null\nprintf '%s\\n' '{\"version\":\"1.0\",\"kind\":\"extension\",\"action\":\"prepare\",\"status\":\"prepared\"}'\n"
+	if err := os.WriteFile(filepath.Join(adapterDir, "ctx-fixture"), []byte(executable), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	store := adapterStore()
+	installed, err := store.Install(adapterDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Trust(installed); err != nil {
+		t.Fatal(err)
+	}
+	run := func(action string) (int, string) {
+		t.Helper()
+		var stdout, stderr bytes.Buffer
+		code := Run([]string{"browser", "manage", "extension", action, "--target", "fixture:Default"}, &stdout, &stderr)
+		return code, stderr.String()
+	}
+	if code, errText := run("prepare"); code != 0 {
+		t.Fatalf("prepare exit=%d stderr=%q", code, errText)
+	}
+	if code, errText := run("install"); code == 0 || !strings.Contains(errText, "does not support management operation") {
+		t.Fatalf("undeclared install exit=%d stderr=%q", code, errText)
 	}
 }
 

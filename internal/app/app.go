@@ -122,6 +122,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return listContexts(resolver, args[1:], stdout, stderr)
 	case "open":
 		return openBrowser(resolver, args[1:], stdout, stderr)
+	case "browser":
+		return browserCommand(resolver, args[1:], stdout, stderr)
 	case "doctor":
 		return doctor(resolver, stdout, stderr)
 	case "build":
@@ -195,6 +197,7 @@ usage:
   ctx setup [adapters] [--all|--minimal|--adapters <name,...>]
   ctx ls <selector>
   ctx open [URL...]
+  ctx browser manage <extension|userscript|bookmarklet> <action> [--target <browser:profile>] [--input <json>]
   ctx doctor
   ctx build [provider|@instance] --cache-ref <registry-ref> [--] <build arguments>
   ctx share:manager image <sync|copy> <source> <target> <image>...

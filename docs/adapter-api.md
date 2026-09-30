@@ -109,6 +109,18 @@ share_spaces = "browser"
 browser_share = "cookie.list,cookie.export,cookie.query,cookie.import,policy.export,certificate.list,certificate.export,certificate.import"
 ~~~
 
+Browser adapters can also expose profile-management workflows with the
+optional `browser_management` field. It requires the browser runtime and the
+`share` capability. For example:
+
+~~~toml
+browser_management = "extension.targets,extension.prepare,extension.package,extension.stage,extension.install,extension.activate,userscript.prepare,userscript.install,userscript.activate,bookmarklet.encode,bookmarklet.decode"
+~~~
+
+CTX invokes these through `manage <kind> <action>` with one versioned JSON
+request on stdin. See [Browser management](browser-management.md) for the
+public Go API, operation list, and lifecycle boundaries.
+
 A manager adapter's unqualified `list` output contains native context,
 connection, or namespace names. `ctx ls manager` prefixes each result as
 `name:selection`. A provider may implement `build`, image, and volume

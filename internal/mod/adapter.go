@@ -26,6 +26,17 @@ const legacyDecimalAPIVersion = "1.0"
 var validName = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 var validExecutable = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 var validBrowserShareOperation = regexp.MustCompile(`^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$`)
+var validBrowserManagementOperation = regexp.MustCompile(`^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$`)
+var knownBrowserManagementOperations = map[string]bool{
+	"extension.targets": true, "extension.capabilities": true, "extension.prepare": true,
+	"extension.package": true, "extension.sign": true, "extension.stage": true,
+	"extension.install": true, "extension.activate": true, "extension.store_install": true,
+	"extension.store_remove": true, "userscript.prepare": true, "userscript.install": true,
+	"userscript.update": true, "userscript.list": true, "userscript.describe": true,
+	"userscript.enable": true, "userscript.disable": true, "userscript.uninstall": true,
+	"userscript.activate": true, "bookmarklet.encode": true, "bookmarklet.decode": true,
+	"bookmarklet.install_page": true,
+}
 var validEnvironmentName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 var validComputerHookEvent = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9]*$`)
 
@@ -58,6 +69,7 @@ type Manifest struct {
 	OverrideEnv          []string
 	DefaultProvider      bool
 	SelfContained        bool
+	BrowserManagement    []string
 }
 
 type Adapter struct {
@@ -144,6 +156,7 @@ func LoadDirectoryForOS(directory, goos string) (*Adapter, error) {
 	if contains(manifest.Capabilities, "share") && len(manifest.ShareSpaces) == 0 {
 		manifest.ShareSpaces = []string{manifest.Name}
 	}
+	manifest.BrowserManagement = splitList(values["browser_management"])
 	if err := validateManifest(manifest, absolute, goos); err != nil {
 		return nil, err
 	}
@@ -188,11 +201,18 @@ func (s *Store) List() ([]*Adapter, error) {
 }
 
 func (a *Adapter) HasCapability(capability string) bool {
+	if capability == "manage" && len(a.Manifest.BrowserManagement) > 0 && a.IsRuntime("browser") {
+		return true
+	}
 	return contains(a.Manifest.Capabilities, capability) || a.HasComputerCapability(capability)
 }
 
 func (a *Adapter) HasBrowserShare(operation string) bool {
 	return a.IsRuntime("browser") && contains(a.Manifest.BrowserShare, operation)
+}
+
+func (a *Adapter) HasBrowserManagement(operation string) bool {
+	return a.IsRuntime("browser") && contains(a.Manifest.BrowserManagement, operation)
 }
 
 func (a *Adapter) IsRuntime(runtimeName string) bool {
@@ -579,6 +599,16 @@ func validateManifest(manifest Manifest, directory, goos string) error {
 	}
 	if len(manifest.BrowserShare) > 0 && (manifest.Runtime != "browser" || !contains(manifest.Capabilities, "share")) {
 		return fmt.Errorf("adapter %s browser_share requires a browser runtime with share capability", manifest.Name)
+	}
+	if len(manifest.BrowserManagement) > 0 && (manifest.Runtime != "browser" || !contains(manifest.Capabilities, "share")) {
+		return fmt.Errorf("adapter %s browser_management requires a browser runtime with share capability", manifest.Name)
+	}
+	seenBrowserManagement := map[string]bool{}
+	for _, operation := range manifest.BrowserManagement {
+		if !validBrowserManagementOperation.MatchString(operation) || !knownBrowserManagementOperations[operation] || seenBrowserManagement[operation] {
+			return fmt.Errorf("adapter %s has invalid or duplicate browser management operation %s", manifest.Name, operation)
+		}
+		seenBrowserManagement[operation] = true
 	}
 	seenBrowserShare := map[string]bool{}
 	for _, operation := range manifest.BrowserShare {

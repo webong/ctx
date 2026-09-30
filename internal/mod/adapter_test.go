@@ -102,6 +102,35 @@ func TestManifestRuntimeAndSurface(t *testing.T) {
 	}
 }
 
+func TestBrowserManagementManifestOperations(t *testing.T) {
+	directory := fixtureAdapter(t, t.TempDir(), "browser_mgr", "browser")
+	path := filepath.Join(directory, "adapter.toml")
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated := strings.Replace(string(contents), `capabilities = "list,validate,open,doctor"`, `capabilities = "list,validate,open,doctor,share"`, 1) + `browser_management = "extension.prepare,extension.install,extension.activate,userscript.install,bookmarklet.encode"` + "\n"
+	if err := os.WriteFile(path, []byte(updated), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadDirectory(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !loaded.HasBrowserManagement("extension.prepare") || loaded.HasBrowserManagement("extension.sign") {
+		t.Fatalf("unexpected management operations: %v", loaded.Manifest.BrowserManagement)
+	}
+	for _, operation := range []string{"../prepare", "extension.unknown"} {
+		invalid := strings.Replace(updated, "extension.prepare", operation, 1)
+		if err := os.WriteFile(path, []byte(invalid), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := LoadDirectory(directory); err == nil {
+			t.Fatalf("invalid browser management operation %q was accepted", operation)
+		}
+	}
+}
+
 func TestSelfContainedAdapterOptInPreservesDefaultCommands(t *testing.T) {
 	root := t.TempDir()
 	directory := fixtureAdapter(t, root, "desktop", "manager")
