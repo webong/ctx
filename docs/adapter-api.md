@@ -58,6 +58,8 @@ capabilities and supports, when supplied, must be subsets of the manifest and
 narrow what the context offers. Resource IDs are local to the adapter and
 stored as graph digests. Relations use resource IDs as `from` and `to` and a
 plain `kind`.
+Browser contexts may also report `browser_share` as a map from a declared
+resource operation to `ready`, `blocked`, or `unknown`.
 Contexts and resources may have ordinary JSON metadata; never include cookies,
 keys, tokens, or other credentials. Unknown fields, duplicate IDs, invalid
 relations, or a response over 1 MiB invalidate the observation. CTX limits
@@ -68,7 +70,7 @@ line-oriented `list` behavior documented below.
 
 The public `github.com/webong/ctx/graph/system` package exposes
 `ObserveInventory`, `ResolveInventory`, and `Inventory.Find` for other Go
-consumers. `ctx graph resolve [runtime|all] [capability...] [--supports <kind>]`
+consumers. `ctx graph resolve [runtime|all] [capability...] [--supports <kind>] [--share <resource.operation>]`
 shows the same candidate view as JSON. `ctx graph vertices support` and
 `ctx graph edges supports-kind` expose declarations even for adapters that
 have not listed a context. These are observations; the caller must validate
@@ -318,6 +320,7 @@ receives `site` and a listed `cookie`, then returns that cookie with its value.
 Cookie `id` is a source row ID where available; adapters without row IDs can
 return an opaque `ref`. Adapters must preserve cookie scope and reject fields
 they cannot map. ctx selects one listed cookie before exporting its value,
+matching the request URL's scheme and host, and its path when supplied, before either operation,
 then delivers a versioned bundle to a file, pipe, or importing adapter. A
 source and target can be different browser providers. The maintained browser
 adapters package their own `ctx-<adapter>-share` executable, built from that
@@ -329,8 +332,26 @@ policy, and generic resource envelope types. External adapters implement the
 documented JSON contract directly. Cookie fields
 shared across browsers are portable; optional browser-specific fields go in
 `attributes` with namespaced keys such as `firefox.origin_attributes`.
+Firefox adapters may also expose `firefox.container_id` and
+`firefox.container_name` for explicit cookie selection; container IDs are
+profile-local and must not be silently copied to another profile.
 Importers must reject attributes they cannot preserve. Version 2 replaces the
 earlier version 1 browser share request and bundle format.
+
+An adapter may implement `share PROFILE -- status probe` to report local
+prerequisites without reading cookie values or requesting OS credentials. It
+reads no stdin and returns one JSON object, for example
+`{"version":1,"operations":{"cookie.list":"ready","cookie.export":"unknown"}}`.
+Keys must be declared `browser_share` operations. States are `ready` (local
+prerequisites confirmed), `blocked` (a known prerequisite is missing), or
+`unknown` (an attempt is needed to decide). The probe must not emit secrets or
+profile paths. Absent and invalid probes become `unknown`; statuses are
+observations, and operations still validate live state. A graph scan probes up
+to 32 profiles per adapter. Statuses appear in `ctx graph resolve browser` and
+`ctx share:browser capabilities --from name:profile`; `ctx graph resolve
+browser --share cookie.list` selects profiles reporting `ready`. Adapters using
+`observe` may provide the same `browser_share` map per context in their
+observation JSON.
 
 `internal/app/browser/adapterkit` contains the shared implementation for
 serving the share protocol, reading policy sources, and accessing SQLite.
@@ -341,7 +362,7 @@ External Go adapters import its stable public facade at
 helper executable. The bare Chromium adapter owns the reusable storage engine at
 `github.com/webong/ctx/adapters/chromium/engine`; Chrome and other
 Chromium-based Go adapters can configure and import it through its exported
-`Config`, `Cookie`, `List`, `ReadValue`, and `Import` API. The versioned JSON
+`Config`, `Cookie`, `List`, `ReadValue`, `Import`, and `Probe` API. The versioned JSON
 contract remains the interface for external adapters.
 
 For example, `cookie.list` receives `{"version":2,"site":"https://example.com"}`

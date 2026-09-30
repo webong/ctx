@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/webong/ctx/graph/system"
+	browsershare "github.com/webong/ctx/internal/app/browser/share"
 	"github.com/webong/ctx/internal/config"
 	modpkg "github.com/webong/ctx/internal/mod"
 )
@@ -77,6 +79,7 @@ func observeAdapterCandidate(resolver *config.Resolver, store *modpkg.Store, can
 		Surfaces:         append([]string(nil), candidate.Manifest.Surfaces...),
 		Capabilities:     append([]string(nil), candidate.Manifest.Capabilities...),
 		Supports:         append([]string(nil), candidate.Manifest.Supports...),
+		BrowserShare:     append([]string(nil), candidate.Manifest.BrowserShare...),
 		Trusted:          trusted,
 		ListSupported:    candidate.HasCapability("list"),
 		ObserveSupported: candidate.HasCapability("observe"),
@@ -89,7 +92,7 @@ func observeAdapterCandidate(resolver *config.Resolver, store *modpkg.Store, can
 		var output boundedObservationBuffer
 		var adapterError boundedObservationBuffer
 		if code := invokeAdapter(resolver, candidate, "observe", "", nil, "", &output, &adapterError); code == 0 {
-			contexts, resources, relations, parseErr := parseAdapterObservation(output.Bytes(), candidate.Manifest.Capabilities, candidate.Manifest.Supports)
+			contexts, resources, relations, parseErr := parseAdapterObservation(output.Bytes(), candidate.Manifest.Capabilities, candidate.Manifest.Supports, candidate.Manifest.BrowserShare)
 			if parseErr != nil {
 				observation.DiscoveryStatus = "invalid-response"
 			} else {
@@ -125,7 +128,47 @@ func observeAdapterCandidate(resolver *config.Resolver, store *modpkg.Store, can
 			observation.DiscoveryStatus = fmt.Sprintf("exit:%d", code)
 		}
 	}
+	if trusted && observation.Listed && candidate.IsRuntime("browser") && len(candidate.Manifest.BrowserShare) > 0 {
+		for index := range observation.Contexts {
+			if index >= 32 {
+				break
+			}
+			if observation.Contexts[index].BrowserShare == nil {
+				observation.Contexts[index].BrowserShare = probeBrowserShare(resolver, candidate, observation.Contexts[index].Selection)
+			}
+		}
+	}
 	return observation, nil
+}
+
+// A browser probe reports prerequisites only. It must not read cookie values,
+// unlock an OS key, or include profile paths in the graph.
+func probeBrowserShare(resolver *config.Resolver, candidate *modpkg.Adapter, selection string) map[string]string {
+	statuses := make(map[string]string, len(candidate.Manifest.BrowserShare))
+	for _, operation := range candidate.Manifest.BrowserShare {
+		statuses[operation] = "unknown"
+	}
+	var output boundedObservationBuffer
+	var adapterError boundedObservationBuffer
+	if code := invokeAdapter(resolver, candidate, "share", selection, []string{"status", "probe"}, "", &output, &adapterError); code != 0 {
+		return statuses
+	}
+	var report browsershare.AvailabilityReport
+	decoder := json.NewDecoder(bytes.NewReader(output.Bytes()))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&report); err != nil || report.Version != browsershare.AvailabilityVersion {
+		return statuses
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return statuses
+	}
+	for operation, state := range report.Operations {
+		if _, declared := statuses[operation]; declared && validBrowserShareState(state) {
+			statuses[operation] = state
+		}
+	}
+	return statuses
 }
 
 func scanMachineInventoryInGraph(resolver *config.Resolver) ([]systemgraph.AdapterObservation, error) {

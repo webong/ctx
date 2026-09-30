@@ -660,7 +660,7 @@ func invokeAdapterIOWithEnv(resolver *config.Resolver, candidate *modpkg.Adapter
 	for key, value := range extraEnv {
 		command.Env = setEnvironment(command.Env, key, value)
 	}
-	if operation == "list" || operation == "observe" {
+	if operation == "list" || operation == "observe" || (candidate.IsRuntime("browser") && operation == "share" && len(args) == 2 && args[0] == "status" && args[1] == "probe") {
 		return runPreparedDiscovery(command, stdout, stderr)
 	}
 	return runPreparedIO(command, stdin, stdout, stderr)

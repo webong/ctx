@@ -63,6 +63,7 @@ func graphCommand(args []string, stdout, stderr io.Writer) int {
 		runtimeName := ""
 		capabilities := []string(nil)
 		supports := []string(nil)
+		shareReady := []string(nil)
 		if len(args) > 1 {
 			runtimeName = args[1]
 			if runtimeName == "all" {
@@ -78,6 +79,15 @@ func graphCommand(args []string, stdout, stderr io.Writer) int {
 					supports = append(supports, args[index])
 					continue
 				}
+				if args[index] == "--share" {
+					if index+1 >= len(args) || args[index+1] == "" || strings.HasPrefix(args[index+1], "--") {
+						fmt.Fprintln(stderr, "ctx: graph resolve --share needs a browser resource.operation")
+						return 2
+					}
+					index++
+					shareReady = append(shareReady, args[index])
+					continue
+				}
 				capabilities = append(capabilities, args[index])
 			}
 		}
@@ -90,7 +100,7 @@ func graphCommand(args []string, stdout, stderr io.Writer) int {
 		}
 		selected := inventory.Contexts[:0]
 		for _, candidate := range inventory.Contexts {
-			if candidateOffers(candidate, capabilities...) && candidateSupports(candidate, supports...) {
+			if candidateOffers(candidate, capabilities...) && candidateSupports(candidate, supports...) && candidateShareReady(candidate, shareReady...) {
 				selected = append(selected, candidate)
 			}
 		}
@@ -202,7 +212,7 @@ func graphCommand(args []string, stdout, stderr io.Writer) int {
 		return 0
 	default:
 		fmt.Fprintf(stderr, "ctx: unknown graph command %s\n", args[0])
-		fmt.Fprintln(stderr, "ctx: use graph scan, resolve [runtime|all] [capability...] [--supports kind], status, vertices, edges, snapshot, or changes [cursor]")
+		fmt.Fprintln(stderr, "ctx: use graph scan, resolve [runtime|all] [capability...] [--supports kind] [--share resource.operation], status, vertices, edges, snapshot, or changes [cursor]")
 		return 2
 	}
 }
@@ -233,6 +243,15 @@ func candidateSupports(candidate systemgraph.ContextCandidate, required ...strin
 			}
 		}
 		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+func candidateShareReady(candidate systemgraph.ContextCandidate, required ...string) bool {
+	for _, operation := range required {
+		if candidate.BrowserShare[operation] != "ready" {
 			return false
 		}
 	}

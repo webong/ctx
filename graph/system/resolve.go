@@ -12,14 +12,15 @@ import (
 // ContextCandidate is a graph observation, not authorization to run an
 // adapter. Callers must still check trust and validate the native selection.
 type ContextCandidate struct {
-	Adapter           string    `json:"adapter"`
-	Runtime           string    `json:"runtime"`
-	Selection         string    `json:"selection"`
-	SelectionDigest   string    `json:"selection_digest"`
-	SelectionRedacted bool      `json:"selection_redacted,omitempty"`
-	Capabilities      []string  `json:"capabilities"`
-	Supports          []string  `json:"supports,omitempty"`
-	ObservedAt        time.Time `json:"observed_at"`
+	Adapter           string            `json:"adapter"`
+	Runtime           string            `json:"runtime"`
+	Selection         string            `json:"selection"`
+	SelectionDigest   string            `json:"selection_digest"`
+	SelectionRedacted bool              `json:"selection_redacted,omitempty"`
+	Capabilities      []string          `json:"capabilities"`
+	Supports          []string          `json:"supports,omitempty"`
+	BrowserShare      map[string]string `json:"browser_share,omitempty"`
+	ObservedAt        time.Time         `json:"observed_at"`
 }
 
 // Inventory is the latest reconciled adapter view. ObservedAt is refreshed on
@@ -105,7 +106,20 @@ func (g *Graph) ResolveInventory(ctx context.Context, runtimeName string) (Inven
 		}
 		sort.Strings(capabilities)
 		sort.Strings(supports)
-		result.Contexts = append(result.Contexts, ContextCandidate{Adapter: adapter, Runtime: runtimeValue, Selection: selection, SelectionDigest: selectionDigest, SelectionRedacted: selection == "", Capabilities: capabilities, Supports: supports, ObservedAt: vertex.Provenance.At})
+		browserShare := map[string]string{}
+		switch statuses := vertex.Attributes["browser_share"].(type) {
+		case map[string]string:
+			for operation, status := range statuses {
+				browserShare[operation] = status
+			}
+		case map[string]any:
+			for operation, status := range statuses {
+				if value, ok := status.(string); ok {
+					browserShare[operation] = value
+				}
+			}
+		}
+		result.Contexts = append(result.Contexts, ContextCandidate{Adapter: adapter, Runtime: runtimeValue, Selection: selection, SelectionDigest: selectionDigest, SelectionRedacted: selection == "", Capabilities: capabilities, Supports: supports, BrowserShare: browserShare, ObservedAt: vertex.Provenance.At})
 	}
 	sort.Slice(result.Contexts, func(i, j int) bool {
 		if result.Contexts[i].Adapter == result.Contexts[j].Adapter {

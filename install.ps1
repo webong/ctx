@@ -12,7 +12,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $repositoryRoot = $PSScriptRoot
 $localSource = Test-Path (Join-Path $repositoryRoot 'cmd\ctx\main.go')
-$catalogAdapters = @('docker', 'podman', 'nerdctl', 'apple', 'rancher_desktop', 'orbstack', 'docker_desktop', 'firefox', 'chrome', 'chromium', 'safari', 'kube', 'aws', 'gcloud', 'postgres', 'mysql', 'php', 'claude_code', 'codex')
+$catalogAdapters = @('docker', 'podman', 'nerdctl', 'apple', 'rancher_desktop', 'orbstack', 'docker_desktop', 'firefox', 'chrome', 'chromium', 'edge', 'brave', 'safari', 'kube', 'aws', 'gcloud', 'postgres', 'mysql', 'php', 'claude_code', 'codex')
 $needCatalog = $AllAdapters.IsPresent -or $Interactive.IsPresent -or [bool]$Adapters
 $bundleRoot = $null
 $downloadRoot = $null
@@ -96,7 +96,7 @@ if ($needCatalog) {
         }
         $adapterSource = if ($bundleRoot) { Join-Path $bundleRoot "adapters\$adapter" } else { Join-Path $repositoryRoot "adapters\$adapter" }
         Copy-Item -Recurse -Path $adapterSource -Destination $target
-        if ($localSource -and $adapter -in @('firefox', 'chrome', 'chromium', 'safari')) {
+        if ($localSource -and $adapter -in @('firefox', 'chrome', 'chromium', 'edge', 'brave', 'safari')) {
             $shareBinary = [System.IO.Path]::GetFullPath((Join-Path $target "ctx-$adapter-share.exe"))
             Push-Location $repositoryRoot
             try {

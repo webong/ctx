@@ -22,6 +22,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/webong/ctx/internal/app/browser/share"
 )
 
 const chromiumEpochOffsetMicros = int64(11644473600000000)
@@ -94,7 +96,7 @@ func readChromiumSiteCookies(provider Config, profile string, site *url.URL, nam
 			SameSitePolicy: chromiumSameSitePolicy(row.SameSite),
 			PartitionKey:   row.TopFrameSiteKey, CrossSiteAncestor: row.HasCrossSiteAncestor != 0,
 		}
-		if cookieDomainMatches(host, cookie.Domain) && (!cookie.Secure || site.Scheme == "https") && cookieActive(cookie) {
+		if share.CookieMatchesSite(site, cookie) {
 			cookies = append(cookies, cookie)
 		}
 	}

@@ -30,6 +30,10 @@ func run(args []string, input io.Reader, stdout, stderr io.Writer) int {
 	profile, resource, operation := args[0], args[1], args[2]
 	chromium := chromiumConfig()
 	switch resource {
+	case "status":
+		if operation == "probe" {
+			return kit.Encode(stdout, share.AvailabilityReport{Version: share.AvailabilityVersion, Operations: chromiumengine.Probe(chromium, profile)})
+		}
 	case "cookie":
 		return kit.RunCookie(profile, operation, input, stdout, stderr, kit.CookieBackend{
 			List: func(profile string, site *url.URL, name string) ([]share.Cookie, string, error) {

@@ -55,7 +55,7 @@ their runtime. `supports` describes resource kinds the native tool can manage;
 | Project contexts | Select native tool contexts in `.ctx`, group selections in profiles, inspect resolution, and apply profile environment values to a command or child shell. |
 | Computer tools | Route Kubernetes, AWS, gcloud, PostgreSQL, and MySQL commands through their selected contexts. Claude Code and Codex adapters provide CLI shims, project hooks, and native plugin delegation. |
 | Managers | Route Docker, Podman, nerdctl, and Apple Container commands. Register named engine connections, use supported registry build caches, and transfer images or named volumes between engines. |
-| Browsers | Open URLs in a selected Firefox, Chrome, Chromium, or Safari profile. Browser adapters can share the resources listed [below](#browser-sharing). |
+| Browsers | Open URLs in a selected Firefox, Chrome, Chromium, Edge, Brave, or Safari profile. Browser adapters can share the resources listed [below](#browser-sharing). |
 | System graph | Scan trusted adapters for available contexts and capabilities, resolve usable providers, and inspect or export the local inventory. Other services can import the graph and supervisor Go packages. |
 | Extensions | Install maintained or third-party adapters on demand. A prebuilt, platform-specific adapter archive works with a bare ctx binary; building an adapter from Go source requires Go. |
 
@@ -451,13 +451,13 @@ platform-specific code.
 | Maintained adapter | Declared share operations |
 | --- | --- |
 | Firefox | Cookie list, export, and import; policy export; certificate list, export, and import |
-| Chrome and Chromium | Cookie list, export, and import; policy export |
-| Safari | Policy export |
+| Chrome, Chromium, Edge, and Brave | Cookie list, export, and import; policy export |
+| Safari (macOS) | Cookie list and export from a readable `Cookies.binarycookies` store; policy export |
 
 The adapter's declared operations are the starting point; OS encryption and
 profile state can further limit an individual transfer.
 
-Firefox, Chrome, and Chromium can list and export a selected site cookie and
+Firefox and the Chromium-family adapters can list and export a selected site cookie and
 import a supported cookie into a closed profile. Source and target may be
 different browser providers. It runs as a shell command and does not require
 a browser extension:
@@ -470,27 +470,36 @@ ctx share:browser cookie copy --from firefox:personal --site https://example.com
 ctx share:browser cookie list --from chrome:Default --site https://example.com
 ctx share:browser cookie copy --from chrome:Default --site https://example.com --name session --to-file ./chrome-cookie.json
 ctx share:browser cookie copy --from chromium:Default --site https://example.com --name session --stdout | consumer
+ctx share:browser cookie list --from edge:Default --site https://example.com/account
+ctx share:browser cookie copy --from brave:Default --site https://example.com/account --name session --to-file ./brave-cookie.json
 ctx share:browser cookie copy --from firefox:personal --site https://example.com --name session --to-profile chromium:Default
 ctx share:browser cookie import --from-file ./session-cookie.json --to-profile chrome:Profile\ 1
+ctx share:browser cookie list --from safari:default --site https://example.com
+ctx share:browser cookie copy --from safari:default --site https://example.com --name session --to-file ./safari-cookie.json
 ctx share:browser policy export --from chrome:Default --to-file ./chrome-policies.json
 ctx share:browser capabilities --from safari:default
+ctx graph resolve browser --share cookie.list
 ctx share:browser certificate list --from firefox:personal
 ctx share:browser certificate copy --from firefox:personal --to-profile firefox:work -- --nickname 'Client Identity' --password-file ./identity.pass
 ```
 
 `--from` defaults to the selected browser. Listing prints cookie metadata, not
-values, and does not unlock the OS cookie key. The site URL selects the scheme
-and host; use `--path` to select an exact cookie path. A site can have cookies
+values, and does not unlock the OS cookie key. An origin-only `--site` lists all
+cookie paths for that host; including a URL path applies browser path matching.
+Use `--path` to select an exact cookie path. A site can have cookies
 with the same name in different domains, paths, or partitions. Use `--id` from
 `cookie list` to select an exact row, or narrow Firefox cookies with
-`--attribute firefox.origin_attributes=<value>`. Listing is tab-separated and includes name, domain,
+`--attribute firefox.container_name=Work` or
+`--attribute firefox.origin_attributes=<value>`. Firefox container names and
+profile-local IDs come from `containers.json` and appear as namespaced
+attributes when available. Listing is tab-separated and includes name, domain,
 path, expiry, SameSite policy, row ID, and partition scope. Files are created
 with mode 0600 and are plain JSON containing `version`, `source`, `site`, and a
 `cookie` object with its value and scope fields. `same_site_policy` is the
 portable value; browser-specific fields are namespaced under `attributes`.
 `--stdout` requires a pipe; use `--to-file` for a protected file.
 
-Chrome and Chromium export reads the profile's committed SQLite cookies. On
+Chromium-family export reads the profile's committed SQLite cookies. On
 macOS, encrypted cookies require access to the browser's Safe Storage item in
 Keychain; the source adapter requests it only after a cookie is selected and the output is
 valid. On Linux, v10 cookies can be decoded locally; v11 cookies use Secret
@@ -500,15 +509,19 @@ AES-GCM cookies can be exported for the current user. Chrome App-Bound (`v20`)
 cookies cannot be exported by a standalone ctx process. Unsupported encryption
 versions and unavailable OS keys fail without writing a partial bundle.
 
-Chrome and Chromium profile import encrypts the selected cookie for the target
+Chromium-family profile import encrypts the selected cookie for the target
 profile on macOS or Linux. The browser must be closed; `lsof` is required, and
 the adapter rejects an existing Chromium `SingletonLock`. On Linux, it uses the
 target's existing v10 or v11 format, or v11 when a wallet key is available.
 Windows profile import is unavailable for browser-bound encryption. Cross-browser
 copy supports unpartitioned cookies when the target can represent their scope;
 otherwise the target adapter rejects the import. `cookie import` accepts a
-previously exported file or `--stdin` from a pipe. Safari's normal browsing
-cookies remain inaccessible through a supported shell interface.
+previously exported file or `--stdin` from a pipe. On macOS, Safari can list and
+export cookies from its on-disk `Cookies.binarycookies` store when the invoking
+process has file access. The adapter checks the container and legacy locations;
+`CTX_SAFARI_COOKIE_FILE` can name an absolute path to another readable store.
+Recent in-memory cookies may not yet be present there. Safari cookie import is
+not supported, and a macOS access denial is reported by the adapter.
 
 Firefox profile import requires `sqlite3` and `lsof`, a closed target profile,
 and an unpartitioned cookie. It refuses to overwrite an existing target cookie
@@ -530,6 +543,14 @@ import needs `-- --password-file <mode-0600-file>`. The source and target Firefo
 profiles must be closed. A hardware-backed or otherwise non-exportable key
 fails in the NSS tool without a partial bundle.
 
+`ctx share:browser capabilities --from <browser:profile>` prints each declared
+operation with a live prerequisite state: `ready`, `blocked`, or `unknown`.
+`ctx graph resolve browser --share cookie.list` finds profiles whose adapter
+confirmed the local prerequisites for listing. A probe never reads cookie
+values or unlocks OS credentials. `unknown` means the adapter could not confirm
+the operation without attempting it, such as encrypted Chromium export; a
+`ready` operation can still fail if the profile or key changes afterward.
+
 Third-party browser adapters can register `resource.list`, `resource.export`,
 and `resource.import` under `browser_share`. `ctx share:browser <resource>` then
 routes list, file/pipe export, profile copy, and file/pipe import through a
@@ -547,7 +568,7 @@ The repository maintains adapters for:
 | Family | Adapters |
 | --- | --- |
 | Managers | Docker, Podman, nerdctl/containerd, Apple Container |
-| Browsers | Firefox, Chrome, Chromium, Safari |
+| Browsers | Firefox, Chrome, Chromium, Edge, Brave, Safari |
 | Cloud and orchestration | Kubernetes, AWS, gcloud |
 | Databases | PostgreSQL, MySQL |
 | Computer integrations | Shell AI CLI shims, hooks, and plugins |
@@ -638,7 +659,7 @@ See [Adapters](adapters/README.md) for maintained packages and
 | `ctx share:browser cookie <list|copy|import> ...` | List, export, or import one site cookie through browser adapters |
 | `ctx share:browser policy export ...` | Export browser policy sources to a protected bundle or pipe |
 | `ctx share:browser certificate <list|export|copy|import> ...` | Share an exportable certificate through a capable browser adapter |
-| `ctx share:browser capabilities ...` | Show a browser adapter's share operations |
+| `ctx share:browser capabilities ...` | Show declared browser share operations and live prerequisite states |
 | `ctx share:<space> ...` | Invoke a trusted adapter's registered share operation |
 | `ctx doctor` | Validate configured selections and adapters |
 | `ctx hook <bash|zsh|powershell>` | Generate an optional shell prompt observer |
@@ -647,6 +668,7 @@ See [Adapters](adapters/README.md) for maintained packages and
 | `ctx graph scan` | Refresh the machine's adapter, capability, and context inventory |
 | `ctx graph resolve [runtime|all] [capability...]` | Discover usable contexts from the refreshed graph |
 | `ctx graph resolve all --supports <kind>` | Find observed contexts whose adapter supports a resource kind |
+| `ctx graph resolve browser --share <resource.operation>` | Find browser profiles with confirmed local prerequisites for a share operation |
 | `ctx graph vertices [kind]` | Inspect observed graph vertices |
 | `ctx graph edges [relationship]` | Inspect observed graph relationships |
 | `ctx graph snapshot` | Export the CTX system graph as JSON |

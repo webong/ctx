@@ -22,6 +22,7 @@ type AdapterObservation struct {
 	Name, Runtime, Selector                          string
 	DiscoveryStatus                                  string
 	Surfaces, Capabilities, Supports                 []string
+	BrowserShare                                     []string
 	Trusted, ListSupported, ObserveSupported, Listed bool
 	Contexts                                         []ContextObservation
 	Resources                                        []ResourceObservation
@@ -31,10 +32,11 @@ type AdapterObservation struct {
 // ContextObservation is a native adapter selection with optional narrower
 // capabilities and resource support, plus ordinary non-secret metadata.
 type ContextObservation struct {
-	Selection    string         `json:"selection"`
-	Capabilities []string       `json:"capabilities,omitempty"`
-	Supports     []string       `json:"supports,omitempty"`
-	Attributes   map[string]any `json:"attributes,omitempty"`
+	Selection    string            `json:"selection"`
+	Capabilities []string          `json:"capabilities,omitempty"`
+	Supports     []string          `json:"supports,omitempty"`
+	BrowserShare map[string]string `json:"browser_share,omitempty"`
+	Attributes   map[string]any    `json:"attributes,omitempty"`
 }
 
 // ResourceObservation identifies a resource in one observed context. ID is
@@ -82,7 +84,7 @@ func (g *Graph) ObserveInventory(ctx context.Context, adapters []AdapterObservat
 		sort.Strings(capabilities)
 		sort.Strings(supports)
 		sort.Strings(surfaces)
-		vertices[adapterID] = graph.Vertex{ID: adapterID, Kind: Namespace + "/adapter", Attributes: map[string]any{"name": adapter.Name, "runtime": adapter.Runtime, "surfaces": surfaces, "supports": supports, "selector": adapter.Selector, "trusted": adapter.Trusted, "list_supported": adapter.ListSupported, "observe_supported": adapter.ObserveSupported, "listed": adapter.Listed, "discovery_status": adapter.DiscoveryStatus}, Provenance: graph.Provenance{Source: "ctx", Operation: "adapter-inventory", At: now}}
+		vertices[adapterID] = graph.Vertex{ID: adapterID, Kind: Namespace + "/adapter", Attributes: map[string]any{"name": adapter.Name, "runtime": adapter.Runtime, "surfaces": surfaces, "supports": supports, "browser_share": adapter.BrowserShare, "selector": adapter.Selector, "trusted": adapter.Trusted, "list_supported": adapter.ListSupported, "observe_supported": adapter.ObserveSupported, "listed": adapter.Listed, "discovery_status": adapter.DiscoveryStatus}, Provenance: graph.Provenance{Source: "ctx", Operation: "adapter-inventory", At: now}}
 		edgeID := "machine-adapter/" + adapter.Name
 		edges[edgeID] = graph.Edge{ID: edgeID, From: "machine/local", To: adapterID, Type: Namespace + "/has-adapter"}
 		for _, capability := range capabilities {
@@ -112,6 +114,9 @@ func (g *Graph) ObserveInventory(ctx context.Context, adapters []AdapterObservat
 			}
 			if context.Supports != nil {
 				attributes["supports"] = context.Supports
+			}
+			if context.BrowserShare != nil {
+				attributes["browser_share"] = context.BrowserShare
 			}
 			if len(context.Attributes) > 0 {
 				attributes["metadata"] = context.Attributes

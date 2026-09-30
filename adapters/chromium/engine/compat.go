@@ -2,6 +2,8 @@ package chromium
 
 import (
 	"net/url"
+	"os/exec"
+	"runtime"
 
 	kit "github.com/webong/ctx/internal/app/browser/adapterkit"
 	"github.com/webong/ctx/internal/app/browser/share"
@@ -51,4 +53,25 @@ func ReadValue(config Config, database string, cookie Cookie) (string, error) {
 }
 func Import(config Config, profile string, cookie Cookie, replace bool) error {
 	return importChromiumCookie(config, profile, cookie, replace)
+}
+
+// Probe checks local prerequisites without opening a cookie value or querying
+// an OS credential helper. Export and import remain unknown until attempted.
+func Probe(config Config, profile string) map[string]string {
+	result := map[string]string{
+		"cookie.list": "blocked", "cookie.export": "blocked", "cookie.import": "blocked",
+		"policy.export": "ready",
+	}
+	if _, err := chromiumCookieDatabase(config, profile); err != nil {
+		return result
+	}
+	if _, err := exec.LookPath("sqlite3"); err != nil {
+		return result
+	}
+	result["cookie.list"] = "ready"
+	result["cookie.export"] = "unknown"
+	if runtime.GOOS != "windows" {
+		result["cookie.import"] = "unknown"
+	}
+	return result
 }

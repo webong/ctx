@@ -8,6 +8,14 @@ import "encoding/json"
 // Version is the browser share request and bundle wire version.
 const Version = 2
 
+// AvailabilityVersion is the non-secret, best-effort profile probe format.
+const AvailabilityVersion = 1
+
+type AvailabilityReport struct {
+	Version    int               `json:"version"`
+	Operations map[string]string `json:"operations"`
+}
+
 type Cookie struct {
 	ID                int64  `json:"id,omitempty"`
 	Ref               string `json:"ref,omitempty"`

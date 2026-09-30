@@ -101,8 +101,9 @@ func shareBrowserCommand(resolver *config.Resolver, args []string, stdout, stder
 		if err != nil {
 			return reportErrorCode(stderr, err, 2)
 		}
+		statuses := probeBrowserShare(resolver, endpoint.Adapter, endpoint.Profile)
 		for _, capability := range endpoint.Adapter.Manifest.BrowserShare {
-			fmt.Fprintln(stdout, capability)
+			fmt.Fprintf(stdout, "%s\t%s\n", capability, statuses[capability])
 		}
 		return 0
 	}
@@ -214,7 +215,7 @@ func shareBrowserCommand(resolver *config.Resolver, args []string, stdout, stder
 		if !sameListedCookie(exported, cookie) {
 			return reportError(stderr, errors.New("source adapter returned a different cookie than selected"))
 		}
-		bundle := browserCookieBundle{Version: browsershare.Version, Source: source.Adapter.Manifest.Name + ":" + source.Profile, Site: siteURL.Scheme + "://" + siteURL.Host, Cookie: exported}
+		bundle := browserCookieBundle{Version: browsershare.Version, Source: source.Adapter.Manifest.Name + ":" + source.Profile, Site: cookieBundleSite(siteURL), Cookie: exported}
 		if err := browserAdapterShare(resolver, target, "cookie", "import", browserShareRequest{Bundle: &bundle, Replace: *replace}, nil, stderr); err != nil {
 			return reportError(stderr, err)
 		}
@@ -245,7 +246,7 @@ func shareBrowserCommand(resolver *config.Resolver, args []string, stdout, stder
 	if !sameListedCookie(exported, cookie) {
 		return reportError(stderr, errors.New("source adapter returned a different cookie than selected"))
 	}
-	bundle := browserCookieBundle{Version: browsershare.Version, Source: source.Adapter.Manifest.Name + ":" + source.Profile, Site: siteURL.Scheme + "://" + siteURL.Host, Cookie: exported}
+	bundle := browserCookieBundle{Version: browsershare.Version, Source: source.Adapter.Manifest.Name + ":" + source.Profile, Site: cookieBundleSite(siteURL), Cookie: exported}
 	if *toStdout {
 		if err := json.NewEncoder(stdout).Encode(bundle); err != nil {
 			return reportError(stderr, err)
@@ -313,6 +314,10 @@ func shareBrowserCookieImport(resolver *config.Resolver, args []string, stdout, 
 
 func parseCookieSite(raw string) (*url.URL, error) {
 	return browsershare.ParseSite(raw)
+}
+
+func cookieBundleSite(site *url.URL) string {
+	return (&url.URL{Scheme: site.Scheme, Host: site.Host, Path: site.Path, RawPath: site.RawPath}).String()
 }
 
 func resolveBrowserSource(resolver *config.Resolver, choice string) (browserEndpoint, error) {

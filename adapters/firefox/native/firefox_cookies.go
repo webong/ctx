@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	browsershare "github.com/webong/ctx/internal/app/browser/share"
 	"net/url"
 	"os"
 	"os/exec"
@@ -16,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	browsershare "github.com/webong/ctx/internal/app/browser/share"
 )
 
 type firefoxCookieRow struct {
@@ -64,6 +65,7 @@ func readFirefoxSiteCookies(profile string, site *url.URL, name string) ([]brows
 			return nil, "", errors.New("cannot decode Firefox cookie database response")
 		}
 	}
+	containerNames := firefoxContainerNames(filepath.Dir(database))
 	cookies := make([]browserCookie, 0, len(rows))
 	for _, row := range rows {
 		cookie := browserCookie{
@@ -73,12 +75,61 @@ func readFirefoxSiteCookies(profile string, site *url.URL, name string) ([]brows
 		}
 		if row.OriginAttributes != "" {
 			cookie.Attributes = map[string]string{"firefox.origin_attributes": row.OriginAttributes}
+			if id := firefoxContainerID(row.OriginAttributes); id > 0 {
+				cookie.Attributes["firefox.container_id"] = strconv.Itoa(id)
+				if label := containerNames[id]; label != "" {
+					cookie.Attributes["firefox.container_name"] = label
+				}
+			}
 		}
-		if cookieDomainMatches(host, cookie.Domain) && (!cookie.Secure || site.Scheme == "https") && cookieActive(cookie) {
+		if browsershare.CookieMatchesSite(site, cookie) {
 			cookies = append(cookies, cookie)
 		}
 	}
 	return cookies, database, nil
+}
+
+func firefoxContainerID(originAttributes string) int {
+	for _, attribute := range strings.Split(strings.TrimPrefix(originAttributes, "^"), "&") {
+		value, ok := strings.CutPrefix(attribute, "userContextId=")
+		if !ok {
+			continue
+		}
+		id, err := strconv.Atoi(value)
+		if err == nil && id > 0 {
+			return id
+		}
+		return 0
+	}
+	return 0
+}
+
+func firefoxContainerNames(profileDirectory string) map[int]string {
+	path := filepath.Join(profileDirectory, "containers.json")
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Size() > 1<<20 {
+		return nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var document struct {
+		Identities []struct {
+			ID   int    `json:"userContextId"`
+			Name string `json:"name"`
+		} `json:"identities"`
+	}
+	if json.Unmarshal(data, &document) != nil {
+		return nil
+	}
+	result := make(map[int]string, len(document.Identities))
+	for _, identity := range document.Identities {
+		if identity.ID > 0 {
+			result[identity.ID] = identity.Name
+		}
+	}
+	return result
 }
 
 func readFirefoxCookieValue(database string, cookie browserCookie) (string, error) {

@@ -4,7 +4,7 @@ set -eu
 DST_BIN=${CTX_BIN_DIR:-$HOME/.local/bin}
 CONFIG_DIR=${CTX_HOME:-$HOME/.config/ctx}
 VERSION=${CTX_VERSION:-latest}
-CATALOG_ADAPTERS='docker podman nerdctl apple rancher_desktop orbstack docker_desktop firefox chrome chromium safari kube aws gcloud postgres mysql php claude_code codex'
+CATALOG_ADAPTERS='docker podman nerdctl apple rancher_desktop orbstack docker_desktop firefox chrome chromium edge brave safari kube aws gcloud postgres mysql php claude_code codex'
 SETUP_MODE=minimal
 SETUP_CHOSEN=0
 SETUP_ADAPTERS=
@@ -69,7 +69,7 @@ if [ "$SETUP_MODE" != minimal ]; then
   if [ -n "$ROOT" ]; then
     mkdir -p "$bundle/adapters"
     for adapter in $CATALOG_ADAPTERS; do cp -R "$ROOT/adapters/$adapter" "$bundle/adapters/$adapter"; done
-    for adapter in firefox chrome chromium safari; do
+    for adapter in firefox chrome chromium edge brave safari; do
       (cd "$ROOT" && go build -o "$bundle/adapters/$adapter/ctx-$adapter-share" "./adapters/$adapter/native")
       rm -rf "$bundle/adapters/$adapter/native"
     done

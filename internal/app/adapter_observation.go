@@ -29,7 +29,7 @@ type adapterObservationDocument struct {
 	} `json:"relations,omitempty"`
 }
 
-func parseAdapterObservation(data []byte, declaredCapabilities, declaredSupports []string) ([]systemgraph.ContextObservation, []systemgraph.ResourceObservation, []systemgraph.RelationObservation, error) {
+func parseAdapterObservation(data []byte, declaredCapabilities, declaredSupports, declaredBrowserShare []string) ([]systemgraph.ContextObservation, []systemgraph.ResourceObservation, []systemgraph.RelationObservation, error) {
 	if len(data) > maxAdapterObservationBytes {
 		return nil, nil, nil, fmt.Errorf("adapter observation exceeds 1 MiB")
 	}
@@ -57,6 +57,10 @@ func parseAdapterObservation(data []byte, declaredCapabilities, declaredSupports
 	for _, kind := range declaredSupports {
 		supports[kind] = true
 	}
+	browserShare := map[string]bool{}
+	for _, operation := range declaredBrowserShare {
+		browserShare[operation] = true
+	}
 	contexts := map[string]bool{}
 	for _, item := range document.Contexts {
 		if !validObservationName(item.Selection) || contexts[item.Selection] {
@@ -77,6 +81,11 @@ func parseAdapterObservation(data []byte, declaredCapabilities, declaredSupports
 				return nil, nil, nil, fmt.Errorf("adapter context declares undeclared or duplicate support %q", kind)
 			}
 			seenSupports[kind] = true
+		}
+		for operation, state := range item.BrowserShare {
+			if !browserShare[operation] || !validBrowserShareState(state) {
+				return nil, nil, nil, fmt.Errorf("adapter context declares invalid browser share state for %q", operation)
+			}
 		}
 	}
 	resources := make([]systemgraph.ResourceObservation, 0, len(document.Resources))
@@ -99,6 +108,10 @@ func parseAdapterObservation(data []byte, declaredCapabilities, declaredSupports
 		relations = append(relations, systemgraph.RelationObservation{From: item.From, To: item.To, Kind: item.Kind})
 	}
 	return document.Contexts, resources, relations, nil
+}
+
+func validBrowserShareState(state string) bool {
+	return state == "ready" || state == "blocked" || state == "unknown"
 }
 
 func validObservationName(value string) bool {

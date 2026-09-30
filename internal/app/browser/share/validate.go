@@ -32,6 +32,24 @@ func CookieDomainMatches(siteHost, cookieDomain string) bool {
 	return siteHost == cookieDomain
 }
 
+// CookiePathMatches follows the path-match rule used when browsers send a
+// cookie. A prefix is not enough unless the next path character is '/'.
+func CookiePathMatches(requestPath, cookiePath string) bool {
+	if requestPath == "" {
+		requestPath = "/"
+	}
+	if cookiePath == "" || !strings.HasPrefix(requestPath, cookiePath) {
+		return false
+	}
+	return requestPath == cookiePath || strings.HasSuffix(cookiePath, "/") || requestPath[len(cookiePath)] == '/'
+}
+
+func CookieMatchesSite(site *url.URL, cookie Cookie) bool {
+	return CookieDomainMatches(site.Hostname(), cookie.Domain) &&
+		(site.Path == "" || CookiePathMatches(site.EscapedPath(), cookie.Path)) &&
+		(!cookie.Secure || site.Scheme == "https") && CookieActive(cookie)
+}
+
 func SameListedCookie(a, b Cookie) bool {
 	return a.ID == b.ID && a.Ref == b.Ref && a.Name == b.Name && a.Domain == b.Domain && a.Path == b.Path &&
 		a.PartitionKey == b.PartitionKey && a.CrossSiteAncestor == b.CrossSiteAncestor && maps.Equal(a.Attributes, b.Attributes)
@@ -47,8 +65,7 @@ func ValidateCookieBundle(bundle CookieBundle) error {
 	}
 	cookie := bundle.Cookie
 	if cookie.Name == "" || cookie.Domain == "" || !strings.HasPrefix(cookie.Path, "/") ||
-		!CookieDomainMatches(site.Hostname(), cookie.Domain) ||
-		(cookie.Secure && site.Scheme != "https") || !CookieActive(cookie) {
+		!CookieMatchesSite(site, cookie) {
 		return errors.New("cookie bundle has an invalid or expired site scope")
 	}
 	if (strings.HasPrefix(cookie.Name, "__Secure-") && !cookie.Secure) ||

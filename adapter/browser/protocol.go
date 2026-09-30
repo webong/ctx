@@ -12,7 +12,9 @@ import (
 )
 
 const Version = share.Version
+const AvailabilityVersion = share.AvailabilityVersion
 
+type AvailabilityReport = share.AvailabilityReport
 type Cookie = share.Cookie
 type CookieBundle = share.CookieBundle
 type CookieRequest = share.CookieRequest
@@ -47,6 +49,12 @@ func ValidateResourceBundle(bundle ResourceBundle, resource string) error {
 	return share.ValidateResourceBundle(bundle, resource)
 }
 func SameListedCookie(a, b Cookie) bool { return share.SameListedCookie(a, b) }
+func CookieMatchesSite(site *url.URL, cookie Cookie) bool {
+	return share.CookieMatchesSite(site, cookie)
+}
+func CookiePathMatches(requestPath, cookiePath string) bool {
+	return share.CookiePathMatches(requestPath, cookiePath)
+}
 
 func CookieHostSQL(host string) string { return kit.CookieHostSQL(host) }
 func CookieDatabaseColumns(database, table string) ([]string, error) {

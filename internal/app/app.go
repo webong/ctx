@@ -215,7 +215,7 @@ usage:
   ctx run -- <command> [arguments...]
   ctx shell [--shell <executable>] [-- <command> [arguments...]]
   ctx graph scan
-  ctx graph resolve [runtime|all] [capability...] [--supports <kind>]
+  ctx graph resolve [runtime|all] [capability...] [--supports <kind>] [--share <resource.operation>]
   ctx graph <scan|status|vertices|edges|snapshot|changes> [arguments...]
   ctx version`)
 }
