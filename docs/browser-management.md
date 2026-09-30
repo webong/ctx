@@ -86,6 +86,10 @@ func main() {
 }
 ~~~
 
+The same package exposes `PageSessionRuntime` and `PageSession` for explicit
+target discovery, page navigation, script injection, and userscript replay.
+The provider can call its page/session runtime through this interface while
+keeping CDP, WebDriver BiDi, and replay behavior behind that implementation.
 The current adapter runner dispatches the versioned request from stdin. The
 provider must preserve native browser consent and policy requirements, verify
 package revisions before install or activation, and report persistence only

@@ -32,6 +32,12 @@ type PolicyBundle = share.PolicyBundle
 type ManagementRequest = management.Request
 type ManagementResponse = management.Response
 type ManagementBackend = kit.ManagementBackend
+type SessionTarget = management.SessionTarget
+type InjectionOptions = management.InjectionOptions
+type UserscriptRegistration = management.UserscriptRegistration
+type ReplayResult = management.ReplayResult
+type PageSessionRuntime = management.PageSessionRuntime
+type PageSession = management.PageSession
 
 const ManagementVersion = management.Version
 
