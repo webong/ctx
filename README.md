@@ -57,7 +57,7 @@ their runtime. `supports` describes resource kinds the native tool can manage;
 | Managers | Route Docker, Podman, nerdctl, and Apple Container commands. Register named engine connections, use supported registry build caches, and transfer images or named volumes between engines. |
 | Browsers | Open URLs in a selected Firefox, Chrome, Chromium, or Safari profile. Browser adapters can share the resources listed [below](#browser-sharing). |
 | System graph | Scan trusted adapters for available contexts and capabilities, resolve usable providers, and inspect or export the local inventory. Other services can import the graph and supervisor Go packages. |
-| Extensions | Install bundled or third-party adapters. A prebuilt, platform-specific adapter archive works with a bare ctx binary; building an adapter from Go source requires Go. |
+| Extensions | Install maintained or third-party adapters on demand. A prebuilt, platform-specific adapter archive works with a bare ctx binary; building an adapter from Go source requires Go. |
 
 Available operations depend on the installed, trusted adapter and its native
 tool. Use `ctx adapter inspect <name>` and `ctx share:browser capabilities
@@ -76,28 +76,31 @@ cd ctx
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-The installer builds ctx and its Go browser helpers, then opens adapter
-selection when attached to a terminal. Put the install directory before the
-real container CLIs on `PATH`. For unattended installation, run one of these
-from the checkout:
+The default installer builds only the ctx core: no adapter catalog or adapter
+is included. Put the install directory before the real container CLIs on
+`PATH`. To opt into adapters, run one of these from the checkout:
 
 ```sh
 ./install.sh --adapters docker,kube,firefox
 ./install.sh --all
-./install.sh --minimal
+./install.sh --interactive
 ```
+
+These modes prepare the separate adapter catalog and install your selection.
+You can rerun the installer later to add more adapters; existing adapters are
+preserved by a core-only update.
 
 On Windows, install from a source checkout with Go 1.23 or newer:
 
 ```powershell
 git clone https://github.com/webong/ctx.git
 Set-Location ctx
-.\install.ps1 -Interactive
+.\install.ps1
 $env:PATH = (Join-Path $env:LOCALAPPDATA 'Programs\ctx\bin') + ';' + $env:PATH
 ```
 
-For unattended Windows setup, use `-Adapters docker,kube,firefox` or
-`-AllAdapters` in place of `-Interactive`.
+For Windows adapter selection, use `-Adapters docker,kube,firefox`,
+`-AllAdapters`, or `-Interactive`.
 The Windows installer writes PowerShell completion to
 `$env:APPDATA\ctx\ctx-completion.ps1` by default. Add this line to your
 PowerShell profile to enable it:
@@ -113,22 +116,32 @@ Go:
 curl -fsSL https://raw.githubusercontent.com/webong/ctx/main/install.sh | sh
 ```
 
+To add an adapter later without cloning the repository, rerun it with a
+selection, for example `curl -fsSL https://raw.githubusercontent.com/webong/ctx/main/install.sh | sh -s -- --adapters docker`.
+
 Windows can download the installer script to a temporary file and run it:
 
 ```powershell
 $ctxInstaller = Join-Path $env:TEMP 'ctx-install.ps1'
 Invoke-WebRequest https://raw.githubusercontent.com/webong/ctx/main/install.ps1 -OutFile $ctxInstaller
-& $ctxInstaller -Interactive
+& $ctxInstaller
 ```
 
-The remote installers verify release checksums. If GitHub Releases has no
-published version, use the source checkout instructions above.
+Rerun `$ctxInstaller -Adapters docker` to obtain the optional catalog and
+install Docker after a core-only installation.
+
+The remote installers verify release checksums. The core download is separate
+from the optional adapter catalog download; neither installer fetches the
+catalog by default. If GitHub Releases has no published version, use the source
+checkout instructions above.
 
 See [Cross-platform support](docs/cross-platform.md) for platform details. Set
 `CTX_BIN_DIR` and `CTX_HOME` to use custom installation locations.
 
 ## Quick start
 
+First opt into the adapters you intend to use, for example
+`./install.sh --adapters docker` or `.\install.ps1 -Adapters docker`.
 List the contexts available for a tool, select one in the current project, and
 inspect the result:
 
@@ -266,8 +279,8 @@ follows the runtime-neutral decision boundary and local operator controls descri
 
 ## PHP interpreter adapter
 
-PHP is available as a computer-runtime interpreter adapter. Install it from the
-bundled catalog, inspect its discovered versions, and select a version for the
+PHP is available as a computer-runtime interpreter adapter. After opting into
+the adapter catalog, install it, inspect its discovered versions, and select a version for the
 current project:
 
 ```sh
@@ -304,7 +317,7 @@ ctx manager show dev-vm
 ```
 
 Rancher Desktop, OrbStack, and Docker Desktop have separate app adapters. Install
-the ones you use from the bundled catalog; they inspect the desktop app, while
+the ones you use from the optional catalog; they inspect the desktop app, while
 `docker` and `nerdctl` remain the workload-engine adapters:
 
 ```sh
@@ -377,8 +390,8 @@ This runtime rename is a clean break: use `ctx manager` and
 `ctx share:manager`, update external adapter manifests to `runtime = "manager"`,
 and recreate any named registrations previously stored in
 `$CTX_HOME/virtualizers.json`. Project selections such as `docker=orbstack`
-continue to use their adapter selector keys. Re-run the installer to refresh
-bundled adapter packages; replacing only the ctx binary leaves older packages
+continue to use their adapter selector keys. Re-run the installer with adapter
+selection to refresh packages; replacing only the ctx binary leaves older packages
 with the removed runtime name.
 
 Share a registry-backed build cache using a registered instance:
@@ -435,7 +448,7 @@ adapters can use `github.com/webong/ctx/adapter/browser` for the shared types
 and validation helpers. CTX core does not contain browser storage or
 platform-specific code.
 
-| Bundled adapter | Declared share operations |
+| Maintained adapter | Declared share operations |
 | --- | --- |
 | Firefox | Cookie list, export, and import; policy export; certificate list, export, and import |
 | Chrome and Chromium | Cookie list, export, and import; policy export |
@@ -529,7 +542,7 @@ manifest field, exposed as `ctx share:<space> ...`.
 
 ## Adapters
 
-ctx ships maintained adapters for:
+The repository maintains adapters for:
 
 | Family | Adapters |
 | --- | --- |
@@ -539,8 +552,8 @@ ctx ships maintained adapters for:
 | Databases | PostgreSQL, MySQL |
 | Computer integrations | Shell AI CLI shims, hooks, and plugins |
 
-The native installer places bundled adapters in a local catalog. Install only
-what you need:
+The native installer downloads the adapter catalog only when you explicitly
+select adapters. Once the catalog is present, install only what you need:
 
 ```sh
 ctx setup
@@ -549,6 +562,11 @@ ctx adapter add podman postgres
 ctx adapter remove firefox
 ctx adapter refresh
 ```
+
+On a core-only installation, rerun the installer with `--adapters` or
+`--interactive` (PowerShell: `-Adapters` or `-Interactive`) to obtain the
+optional catalog first. `ctx adapter install` can also install a package from
+an explicit local path or checksum-pinned URL without the catalog.
 
 External adapters use the same API and are untrusted until explicitly reviewed
 and trusted:
@@ -580,7 +598,7 @@ Go adapter authors build the same archive explicitly with `ctx adapter build
 ./my-adapter`; this command requires Go. See the [Go example](examples/adapters/go_echo)
 and [adapter packaging guide](docs/adapter-api.md#binary-packages-and-go-builds).
 
-See [Adapters](adapters/README.md) for the bundled packages and
+See [Adapters](adapters/README.md) for maintained packages and
 [Adapter API v2.0](docs/adapter-api.md) to build an integration.
 
 ## Command reference
@@ -605,7 +623,7 @@ See [Adapters](adapters/README.md) for the bundled packages and
 | `ctx hook computer <adapter> <event>` | Pass a computer hook event through a trusted adapter |
 | `ctx computer hooks <print|install|remove> ...` | Manage ctx entries in supported AI CLI project settings |
 | `ctx plugin computer <adapter> ...` | Run a computer integration's plugin operation |
-| `ctx setup [--all|--minimal|--adapters <names>]` | Select bundled adapters to activate |
+| `ctx setup [--all|--minimal|--adapters <names>]` | Select adapters from a downloaded catalog |
 | `ctx adapter <ls|available|add|refresh|inspect|trust|test|doctor|remove> ...` | Inspect and manage adapter packages |
 | `ctx adapter build <source>` | Compile a Go adapter into a platform archive |
 | `ctx adapter pack <directory>` | Archive an already built adapter package |

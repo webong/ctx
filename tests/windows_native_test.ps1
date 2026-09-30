@@ -30,6 +30,13 @@ try {
     }
     if ($parseFailures.Count -gt 0) { throw ($parseFailures -join "`n") }
 
+    $coreBin = Join-Path $testRoot 'core-bin'
+    $coreConfig = Join-Path $testRoot 'core-config'
+    & (Join-Path $root 'install.ps1') -BinDir $coreBin -ConfigDir $coreConfig
+    Assert-Success 'core-only source installation'
+    if (Test-Path (Join-Path $coreConfig 'catalog\adapters\docker')) { throw 'default Windows install copied an adapter catalog' }
+    if (Test-Path (Join-Path $coreConfig 'adapters\docker')) { throw 'default Windows install activated Docker' }
+
     & (Join-Path $root 'install.ps1') -BinDir $bin -ConfigDir $config -AllAdapters
     Assert-Success 'source installation'
     $completionTokens = $null; $completionErrors = $null

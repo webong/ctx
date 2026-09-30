@@ -141,7 +141,7 @@ An API v2.0 manager adapter may set `self_contained = "true"` and omit
 this opt-in, `commands` still defaults to the adapter name. Manager-app adapters declare
 `supports = "virtualizer"` and implement `list`, `validate`, `run`, and
 `doctor`; `ctx manager app <adapter> <status|start|stop|doctor>` routes these
-operations generically. The bundled Rancher Desktop, OrbStack, and Docker
+operations generically. The maintained Rancher Desktop, OrbStack, and Docker
 Desktop packages own their product-specific status and diagnostic logic. The
 core does not decide which desktop app owns Docker CLI plugins.
 
@@ -222,7 +222,7 @@ project when a CLI hook invokes ctx from that directory. Plugin operations
 remain adapter-owned CLI passthroughs, so native project-scope flags and
 configuration are decided by the selected adapter's CLI.
 
-The bundled `claude_code` and `codex` packages install `claude` and `codex`
+The optional `claude_code` and `codex` packages install `claude` and `codex`
 shims. Put ctx's bin directory before the vendor CLI directory on `PATH`, then
 activate them with `ctx setup --adapters claude_code,codex`. `ctx run claude
 --version` and `ctx run codex --version` reach the installed CLIs. To install
@@ -324,7 +324,7 @@ adapters package their own `ctx-<adapter>-share` executable, built from that
 adapter's `native` directory; it is included in the adapter checksum and runs
 as a separate process. External adapters implement the same protocol in their own
 executable. CTX core has no browser-specific storage code or provider dispatch.
-Bundled adapters use `internal/app/browser/share` for versioned request, cookie,
+Maintained adapters use `internal/app/browser/share` for versioned request, cookie,
 policy, and generic resource envelope types. External adapters implement the
 documented JSON contract directly. Cookie fields
 shared across browsers are portable; optional browser-specific fields go in
@@ -481,10 +481,12 @@ ctx adapter install https://example.com/example.ctxadapter.json --sha256 "$INDEX
 ctx adapter trust example
 ~~~
 
-The installer-provided catalog lives under `$CTX_HOME/catalog/adapters` (or
-`CTX_CATALOG_HOME`). `ctx setup` and `ctx adapter add` copy explicitly selected
-catalog packages into the active adapter store and trust their checksums. Catalog
-membership is installer metadata, not a privilege or manifest property.
+The optional installer-provided catalog lives under `$CTX_HOME/catalog/adapters`
+(or `CTX_CATALOG_HOME`). A default core-only installation has no catalog.
+Request adapter selection with the installer to obtain it; `ctx setup` and
+`ctx adapter add` then copy selected catalog packages into the active adapter
+store and trust their checksums. Catalog membership is installer metadata, not
+a privilege or manifest property.
 
 Direct `ctx adapter install ./directory` installation does not imply trust. Trust
 records a checksum over every file in the adapter directory. Any subsequent

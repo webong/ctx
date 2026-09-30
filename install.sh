@@ -4,19 +4,25 @@ set -eu
 DST_BIN=${CTX_BIN_DIR:-$HOME/.local/bin}
 CONFIG_DIR=${CTX_HOME:-$HOME/.config/ctx}
 VERSION=${CTX_VERSION:-latest}
-BUNDLED_ADAPTERS='docker podman nerdctl apple rancher_desktop orbstack docker_desktop firefox chrome chromium safari kube aws gcloud postgres mysql php claude_code codex'
-SETUP_MODE=interactive
+CATALOG_ADAPTERS='docker podman nerdctl apple rancher_desktop orbstack docker_desktop firefox chrome chromium safari kube aws gcloud postgres mysql php claude_code codex'
+SETUP_MODE=minimal
+SETUP_CHOSEN=0
 SETUP_ADAPTERS=
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --all) [ "$SETUP_MODE" = interactive ] || { printf 'ctx: choose only one adapter selection mode\n' >&2; exit 2; }; SETUP_MODE=all ;;
-    --minimal) [ "$SETUP_MODE" = interactive ] || { printf 'ctx: choose only one adapter selection mode\n' >&2; exit 2; }; SETUP_MODE=minimal ;;
-    --adapters) [ "$SETUP_MODE" = interactive ] && [ "$#" -ge 2 ] || { printf 'ctx: --adapters needs a comma-separated value\n' >&2; exit 2; }; SETUP_MODE=selected; SETUP_ADAPTERS=$2; shift ;;
-    --adapters=*) [ "$SETUP_MODE" = interactive ] || { printf 'ctx: choose only one adapter selection mode\n' >&2; exit 2; }; SETUP_MODE=selected; SETUP_ADAPTERS=${1#--adapters=} ;;
+    --all) [ "$SETUP_CHOSEN" -eq 0 ] || { printf 'ctx: choose only one adapter selection mode\n' >&2; exit 2; }; SETUP_MODE=all; SETUP_CHOSEN=1 ;;
+    --minimal) [ "$SETUP_CHOSEN" -eq 0 ] || { printf 'ctx: choose only one adapter selection mode\n' >&2; exit 2; }; SETUP_MODE=minimal; SETUP_CHOSEN=1 ;;
+    --interactive) [ "$SETUP_CHOSEN" -eq 0 ] || { printf 'ctx: choose only one adapter selection mode\n' >&2; exit 2; }; SETUP_MODE=interactive; SETUP_CHOSEN=1 ;;
+    --adapters) [ "$SETUP_CHOSEN" -eq 0 ] && [ "$#" -ge 2 ] || { printf 'ctx: --adapters needs a comma-separated value\n' >&2; exit 2; }; SETUP_MODE=selected; SETUP_CHOSEN=1; SETUP_ADAPTERS=$2; shift ;;
+    --adapters=*) [ "$SETUP_CHOSEN" -eq 0 ] || { printf 'ctx: choose only one adapter selection mode\n' >&2; exit 2; }; SETUP_MODE=selected; SETUP_CHOSEN=1; SETUP_ADAPTERS=${1#--adapters=} ;;
     *) printf 'ctx: unknown installer option: %s\n' "$1" >&2; exit 2 ;;
   esac
   shift
 done
+if [ "$SETUP_MODE" = interactive ] && ! ( : </dev/tty >/dev/tty ) 2>/dev/null; then
+  printf 'ctx: --interactive requires a terminal; use --adapters or --minimal\n' >&2
+  exit 2
+fi
 
 ROOT=
 if [ -z "${CTX_RELEASE_BASE:-}" ] && [ -f "$0" ]; then
@@ -30,14 +36,8 @@ bundle="$temporary/ctx"
 
 if [ -n "$ROOT" ]; then
   command -v go >/dev/null 2>&1 || { printf 'ctx: Go is required when installing from source\n' >&2; exit 1; }
-  mkdir -p "$bundle/bin" "$bundle/adapters"
+  mkdir -p "$bundle/bin"
   (cd "$ROOT" && go build -o "$bundle/bin/ctx" ./cmd/ctx)
-  for adapter in $BUNDLED_ADAPTERS; do cp -R "$ROOT/adapters/$adapter" "$bundle/adapters/$adapter"; done
-  for adapter in firefox chrome chromium safari; do
-    (cd "$ROOT" && go build -o "$bundle/adapters/$adapter/ctx-$adapter-share" "./adapters/$adapter/native")
-    rm -rf "$bundle/adapters/$adapter/native"
-  done
-  rm -rf "$bundle/adapters/chromium/engine"
 else
   command -v curl >/dev/null 2>&1 || { printf 'ctx: curl is required for remote installation\n' >&2; exit 1; }
   os=$(uname -s)
@@ -65,6 +65,28 @@ else
   tar -xzf "$archive" -C "$temporary"
 fi
 
+if [ "$SETUP_MODE" != minimal ]; then
+  if [ -n "$ROOT" ]; then
+    mkdir -p "$bundle/adapters"
+    for adapter in $CATALOG_ADAPTERS; do cp -R "$ROOT/adapters/$adapter" "$bundle/adapters/$adapter"; done
+    for adapter in firefox chrome chromium safari; do
+      (cd "$ROOT" && go build -o "$bundle/adapters/$adapter/ctx-$adapter-share" "./adapters/$adapter/native")
+      rm -rf "$bundle/adapters/$adapter/native"
+    done
+    rm -rf "$bundle/adapters/chromium/engine"
+  else
+    catalog_asset="ctx-adapters-$os-$arch.tar.gz"
+    catalog_archive="$temporary/$catalog_asset"
+    curl -fsSL "$release_base/$catalog_asset" -o "$catalog_archive"
+    expected=$(awk -v asset="$catalog_asset" '$2 == asset || $2 == "*" asset { print $1; exit }' "$temporary/checksums.txt")
+    [ -n "$expected" ] || { printf 'ctx: release checksum is missing for %s\n' "$catalog_asset" >&2; exit 1; }
+    if command -v shasum >/dev/null 2>&1; then actual=$(shasum -a 256 "$catalog_archive" | awk '{print $1}')
+    else actual=$(sha256sum "$catalog_archive" | awk '{print $1}'); fi
+    [ "$actual" = "$expected" ] || { printf 'ctx: release checksum verification failed for %s\n' "$catalog_asset" >&2; exit 1; }
+    tar -xzf "$catalog_archive" -C "$temporary"
+  fi
+fi
+
 [ -x "$bundle/bin/ctx" ] || { printf 'ctx: native bundle is missing ctx\n' >&2; exit 1; }
 target="$DST_BIN/ctx"
 if [ -e "$target" ] || [ -L "$target" ]; then
@@ -80,32 +102,32 @@ for adapter in docker podman nerdctl; do
   fi
 done
 
-mkdir -p "$DST_BIN" "$CONFIG_DIR/adapters" "$CONFIG_DIR/catalog/adapters"
+mkdir -p "$DST_BIN" "$CONFIG_DIR/adapters"
 cp "$bundle/bin/ctx" "$DST_BIN/ctx"
 chmod +x "$DST_BIN/ctx"
-for adapter in $BUNDLED_ADAPTERS; do
-  source_adapter="$bundle/adapters/$adapter"
-  target_adapter="$CONFIG_DIR/catalog/adapters/$adapter"
-  if [ -e "$target_adapter" ]; then rm -rf "$target_adapter"; fi
-  cp -R "$source_adapter" "$target_adapter"
-done
-CTX_HOME="$CONFIG_DIR" CTX_BIN_DIR="$DST_BIN" "$DST_BIN/ctx" adapter refresh >/dev/null
-for adapter in $MIGRATE_ADAPTERS; do
-  rm -f "$DST_BIN/$adapter"
-  CTX_HOME="$CONFIG_DIR" CTX_BIN_DIR="$DST_BIN" "$DST_BIN/ctx" adapter add "$adapter" >/dev/null
-done
+if [ "$SETUP_MODE" != minimal ]; then
+  mkdir -p "$CONFIG_DIR/catalog/adapters"
+  for adapter in $CATALOG_ADAPTERS; do
+    source_adapter="$bundle/adapters/$adapter"
+    target_adapter="$CONFIG_DIR/catalog/adapters/$adapter"
+    if [ -e "$target_adapter" ]; then rm -rf "$target_adapter"; fi
+    cp -R "$source_adapter" "$target_adapter"
+  done
+  CTX_HOME="$CONFIG_DIR" CTX_BIN_DIR="$DST_BIN" "$DST_BIN/ctx" adapter refresh >/dev/null
+  for adapter in $MIGRATE_ADAPTERS; do
+    rm -f "$DST_BIN/$adapter"
+    CTX_HOME="$CONFIG_DIR" CTX_BIN_DIR="$DST_BIN" "$DST_BIN/ctx" adapter add "$adapter" >/dev/null
+  done
+elif [ -n "$MIGRATE_ADAPTERS" ]; then
+  printf 'Legacy shims were preserved; rerun with --adapters to migrate them.\n'
+fi
 
 case "$SETUP_MODE" in
   all) CTX_HOME="$CONFIG_DIR" CTX_BIN_DIR="$DST_BIN" "$DST_BIN/ctx" setup --all ;;
-  minimal) CTX_HOME="$CONFIG_DIR" CTX_BIN_DIR="$DST_BIN" "$DST_BIN/ctx" setup --minimal ;;
+  minimal) : ;;
   selected) CTX_HOME="$CONFIG_DIR" CTX_BIN_DIR="$DST_BIN" "$DST_BIN/ctx" setup --adapters "$SETUP_ADAPTERS" ;;
   interactive)
-    if ( : </dev/tty >/dev/tty ) 2>/dev/null; then
-      CTX_HOME="$CONFIG_DIR" CTX_BIN_DIR="$DST_BIN" "$DST_BIN/ctx" setup </dev/tty >/dev/tty
-    else
-      printf 'No interactive terminal detected; no new adapters were selected.\n'
-      printf 'Run %s/ctx setup when ready.\n' "$DST_BIN"
-    fi
+    CTX_HOME="$CONFIG_DIR" CTX_BIN_DIR="$DST_BIN" "$DST_BIN/ctx" setup </dev/tty >/dev/tty
     ;;
 esac
 
@@ -113,7 +135,11 @@ if [ ! -f "$CONFIG_DIR/config.toml" ]; then
   printf '%s\n' '# ctx configuration' '# docker_default = "desktop-linux"' '# podman_default = "podman-machine-default"' '# nerdctl_default = "default"' > "$CONFIG_DIR/config.toml"
 fi
 
-printf 'Installed ctx and adapter catalog in %s\n' "$DST_BIN"
+if [ "$SETUP_MODE" = minimal ]; then
+  printf 'Installed ctx core in %s (no adapter catalog downloaded).\n' "$DST_BIN"
+else
+  printf 'Installed ctx and the optional adapter catalog in %s\n' "$DST_BIN"
+fi
 printf 'Config: %s/config.toml\n' "$CONFIG_DIR"
 case ":$PATH:" in *":$DST_BIN:"*) ;; *) printf 'Add %s before Docker, Podman, and nerdctl on PATH.\n' "$DST_BIN";; esac
 for rc in "$HOME/.zshrc" "$HOME/.bashrc"; do

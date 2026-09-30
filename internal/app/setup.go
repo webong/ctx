@@ -52,7 +52,7 @@ func setupCommand(args []string, input io.Reader, stdout, stderr io.Writer) int 
 		return reportError(stderr, err)
 	}
 	if len(available) == 0 {
-		fmt.Fprintln(stderr, "ctx: adapter catalog is empty; reinstall ctx or set CTX_CATALOG_HOME")
+		fmt.Fprintln(stderr, "ctx: adapter catalog is empty; rerun the installer with adapter selection or set CTX_CATALOG_HOME")
 		return 1
 	}
 	if mode == "interactive" {
@@ -164,7 +164,7 @@ func installedAdapterNames() map[string]bool {
 func addCatalogAdapter(name string) (*modpkg.Adapter, error) {
 	source, err := catalogStore().Load(name)
 	if err != nil {
-		return nil, fmt.Errorf("adapter %s is not available in the catalog: %w", name, err)
+		return nil, fmt.Errorf("adapter %s is not available in the local catalog; rerun the installer with adapter selection or use ctx adapter install: %w", name, err)
 	}
 	if err := checkShimConflicts(source); err != nil {
 		return nil, err

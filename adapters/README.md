@@ -19,9 +19,9 @@ Docker also implements the versioned `observe` operation for the system graph;
 the other providers continue to use their `list` fallback until they expose
 additional context or resource observations.
 
-The Docker, Podman, and nerdctl directories also contain tiny command shims. The
-installer copies those launcher files into the binary directory under the native
-command names so ordinary commands can be context-aware. The provider
+The Docker, Podman, and nerdctl directories also contain tiny command shims. An
+explicit adapter installation copies those launcher files into the binary
+directory under the native command names so ordinary commands can be context-aware. The provider
 implementations themselves remain installed and trusted under
 `$CTX_HOME/adapters`.
 The `internal/mod` Go package manages these ctx modifications: manifests,
@@ -40,21 +40,22 @@ hard-coding product behavior in ctx core.
 profile discovery, validation, launching, and declared browser share operations.
 `ctx share:browser` bridges resources between trusted adapters using the
 versioned JSON protocol in [the adapter API](../docs/adapter-api.md).
-Release and source installers build a separate share executable from each
-browser adapter's `native` directory. Shared request handling, policy reading,
+The optional release catalog and explicit source-installer selection provide a
+separate share executable built from each browser adapter's `native` directory.
+Shared request handling, policy reading,
 and SQLite access live in `internal/app/browser/adapterkit`; Chrome and other
 Chromium-based adapters can use the engine owned by `adapters/chromium/engine`.
 The executable is part
 of that adapter's trusted checksum; CTX core only routes
 the declared operation and validates the shared envelope.
-The installers update the catalog and refresh active browser adapters with the
-packaged helper. Replacing only the `ctx` binary leaves old browser adapter
-packages in place; install the new bundle before using browser sharing.
+Explicit adapter selection updates the catalog and refreshes active browser
+adapters with the packaged helper. A core-only update leaves installed browser
+adapters in place; refresh the optional catalog when updating their helpers.
 
 `kube`, `aws`, `gcloud`, `postgres`, `mysql`, and `php` are maintained computer-runtime
 adapters. Every adapter has an `adapter.toml` manifest and implements ctx adapter
-API v2.0. Native installers copy maintained packages into
-`$CTX_HOME/catalog/adapters`; `ctx setup` or `ctx adapter add` activates selected
+API v2.0. Only explicit adapter selection downloads or prepares maintained
+packages in `$CTX_HOME/catalog/adapters`; `ctx setup` or `ctx adapter add` activates selected
 packages under `$CTX_HOME/adapters` and records their checksum trust. A package
 can declare `executable_windows` alongside its default executable; the native
 core selects the platform implementation at runtime while keeping one manifest,
@@ -70,8 +71,8 @@ Computer integrations can install command shims and provide native hook and
 plugin operations. ctx manages the small hook entries that call its bridge;
 handlers retain each provider's payload and response contract, and plugin
 commands remain provider-specific. See [the adapter API](../docs/adapter-api.md#computer-side-cli-integrations).
-The first-party `claude_code` and `codex` packages are bundled in the installer
-catalog. Their shims route launches through ctx, hooks forward JSON stdin to
+The maintained `claude_code` and `codex` packages are available in the optional
+installer catalog. Their shims route launches through ctx, hooks forward JSON stdin to
 the project-resolved `computer_hook_command` (or the fallback environment
 variable `CTX_COMPUTER_HOOK_COMMAND`) with the event name, and plugin operations
 delegate to each CLI's native plugin subcommand. `ctx computer hooks install`

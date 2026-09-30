@@ -25,14 +25,17 @@ PowerShell implementations where Windows needs them.
 - Atomic, lock-protected `set`, `clear`, and profile configuration mutations.
 - Registry-backed build caches plus image and named-volume transfers across
   Docker, Podman, nerdctl/containerd, and Apple Container endpoints.
-- Windows-native PowerShell providers for the bundled browser, Kubernetes, cloud,
+- Windows-native PowerShell providers for the optional browser, Kubernetes, cloud,
   PostgreSQL, and MySQL adapters.
-- Checksum-verified macOS, Linux, and Windows release bundles with GitHub build
-  provenance attestations and source installers for each platform.
+- Checksum-verified, core-only macOS, Linux, and Windows release bundles with
+  separate opt-in adapter catalog assets, GitHub build provenance attestations,
+  and source installers for each platform.
 - Explicit `CTX_SHELL`/`--shell` selection and dynamic PowerShell completion for
   commands, adapters, profiles, selectors, and discovered context values.
-- A cross-platform adapter catalog and `ctx setup` selection flow, with
-  non-interactive `--adapters`, `--all`, and `--minimal` installation modes.
+- An optional cross-platform adapter catalog and `ctx setup` selection flow.
+  Installers default to the core alone; `--adapters`, `--all`, or `--interactive`
+  on POSIX and `-Adapters`, `-AllAdapters`, or `-Interactive` on Windows fetch or
+  prepare the catalog explicitly.
 
 Build ctx locally:
 
