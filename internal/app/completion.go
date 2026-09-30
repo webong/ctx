@@ -95,8 +95,10 @@ Register-ArgumentCompleter -Native -CommandName ctx -ScriptBlock {
         }
         'build' { if ($words.Count -le 2) { Emit-CtxCompletion ((Get-CtxManagerProviders) + @(& ctx manager ls 2>$null | ForEach-Object { ($_ -split '\s+')[0] }) + '--cache-ref'); return } }
         'manager' {
-            if ($words.Count -le 2) { Emit-CtxCompletion @('add', 'ls', 'show', 'doctor', 'remove'); return }
-            if ($words[2] -in @('show', 'doctor', 'remove') -and $words.Count -le 3) { Emit-CtxCompletion @(& ctx manager ls 2>$null | ForEach-Object { ($_ -split '\s+')[0] }); return }
+            if ($words.Count -le 2) { Emit-CtxCompletion @('add', 'ls', 'show', 'apps', 'app', 'doctor', 'remove'); return }
+            if ($words[2] -in @('show', 'doctor', 'remove') -and $words.Count -le 3) { Emit-CtxCompletion @((& ctx manager ls 2>$null | ForEach-Object { ($_ -split '\s+')[0] }) + @(& ctx manager apps 2>$null)); return }
+            if ($words[2] -eq 'app' -and $words.Count -le 3) { Emit-CtxCompletion @(& ctx manager apps 2>$null); return }
+            if ($words[2] -eq 'app' -and $words.Count -le 4) { Emit-CtxCompletion @('status', 'start', 'stop', 'doctor'); return }
             if ($words[2] -eq 'add' -and $words.Count -ge 4) { Emit-CtxCompletion @('--virtualizer', '--machine', '--provider', '--selection', '--address', '--command', '--plugin-dir', '--plugin', '--offline'); return }
         }
         'profile' {

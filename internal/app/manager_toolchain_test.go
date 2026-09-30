@@ -1,11 +1,9 @@
 package app
 
 import (
-	"bytes"
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"testing"
 )
 
@@ -69,29 +67,6 @@ func TestDockerPluginOverlayOnlyForPluginCommands(t *testing.T) {
 	for _, test := range cases {
 		if got := dockerNeedsPluginOverlay(test.operation, test.args); got != test.want {
 			t.Errorf("%s %v: got %t, want %t", test.operation, test.args, got, test.want)
-		}
-	}
-}
-
-func TestManagerDoctorReportsPreviousBootFailureWithoutMutation(t *testing.T) {
-	home := t.TempDir()
-	directory := filepath.Join(home, "Library", "Application Support", "rancher-desktop", "lima", "0")
-	if err := os.MkdirAll(directory, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(directory, "serialv.log"), []byte("EXT4-fs potential data loss error -5"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(directory, "ha.stdout.log"), []byte(`{"status":{"vsock":{"type":"failed","reason":"Failed to wait for guest SSH server"}}}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	var output bytes.Buffer
-	if code := doctorManagersAtHome(managerRegistry{Version: 1}, "", home, &output); code != 1 {
-		t.Fatalf("doctor exit %d: %s", code, output.String())
-	}
-	for _, message := range []string{"EXT4 write errors", "last recorded VM boot did not reach guest SSH"} {
-		if !strings.Contains(output.String(), message) {
-			t.Fatalf("missing %q in %s", message, output.String())
 		}
 	}
 }

@@ -244,7 +244,7 @@ func updateManagerRegistry(change func(*managerRegistry) error) error {
 
 func managerCommand(resolver *config.Resolver, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "ctx: manager requires add, ls, show, doctor, or remove")
+		fmt.Fprintln(stderr, "ctx: manager requires add, ls, show, apps, app, doctor, or remove")
 		return 2
 	}
 	registry, err := readManagerRegistry()
@@ -252,6 +252,25 @@ func managerCommand(resolver *config.Resolver, args []string, stdout, stderr io.
 		return reportError(stderr, err)
 	}
 	switch args[0] {
+	case "apps":
+		if len(args) != 1 {
+			fmt.Fprintln(stderr, "ctx: manager apps takes no arguments")
+			return 2
+		}
+		store := adapterStore()
+		installed, err := store.List()
+		if err != nil {
+			return reportError(stderr, err)
+		}
+		for _, candidate := range installed {
+			if !managerAppAdapter(candidate) {
+				continue
+			}
+			if trusted, err := store.IsTrusted(candidate); err == nil && trusted {
+				fmt.Fprintln(stdout, candidate.Manifest.Name)
+			}
+		}
+		return 0
 	case "ls", "list":
 		if len(args) != 1 {
 			fmt.Fprintln(stderr, "ctx: manager ls takes no arguments")
@@ -405,10 +424,19 @@ func managerCommand(resolver *config.Resolver, args []string, stdout, stderr io.
 		if len(args) == 2 {
 			name = strings.TrimPrefix(args[1], "@")
 			if _, ok := findManagerInstance(registry, name); !ok {
-				return reportErrorCode(stderr, fmt.Errorf("unknown manager instance %s", args[1]), 2)
+				candidate, err := adapterStore().Load(name)
+				if err != nil || !managerAppAdapter(candidate) {
+					return reportErrorCode(stderr, fmt.Errorf("unknown manager instance or app %s", args[1]), 2)
+				}
 			}
 		}
-		return doctorManagers(registry, name, stdout, stderr)
+		return doctorManagers(resolver, registry, name, stdout, stderr)
+	case "app":
+		if len(args) != 3 {
+			fmt.Fprintln(stderr, "ctx: manager app needs an adapter and status, start, stop, or doctor")
+			return 2
+		}
+		return managerAppCommand(resolver, args[1], args[2], stdout, stderr)
 	case "remove":
 		if len(args) != 2 {
 			fmt.Fprintln(stderr, "ctx: manager remove needs an instance name")
@@ -432,7 +460,7 @@ func managerCommand(resolver *config.Resolver, args []string, stdout, stderr io.
 		fmt.Fprintf(stdout, "removed @%s\n", name)
 		return 0
 	default:
-		fmt.Fprintln(stderr, "ctx: manager requires add, ls, show, doctor, or remove")
+		fmt.Fprintln(stderr, "ctx: manager requires add, ls, show, apps, app, doctor, or remove")
 		return 2
 	}
 }

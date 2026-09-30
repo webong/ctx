@@ -102,6 +102,47 @@ func TestManifestRuntimeAndSurface(t *testing.T) {
 	}
 }
 
+func TestSelfContainedAdapterOptInPreservesDefaultCommands(t *testing.T) {
+	root := t.TempDir()
+	directory := fixtureAdapter(t, root, "desktop", "manager")
+	path := filepath.Join(directory, "adapter.toml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withoutCommands := strings.Replace(string(data), "commands = \"desktop\"\n", "", 1)
+	if err := os.WriteFile(path, []byte(withoutCommands), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	defaulted, err := LoadDirectory(directory)
+	if err != nil || !defaulted.HasCommand("desktop") {
+		t.Fatalf("implicit command was lost: %v, %v", defaulted, err)
+	}
+	if err := os.WriteFile(path, []byte(withoutCommands+"self_contained = \"true\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	selfContained, err := LoadDirectory(directory)
+	if err != nil || !selfContained.Manifest.SelfContained || len(selfContained.Manifest.Commands) != 0 {
+		t.Fatalf("self-contained adapter did not opt out: %v, %v", selfContained, err)
+	}
+}
+
+func TestBundledManagerAppAdaptersLoadOnUnixAndWindows(t *testing.T) {
+	for _, name := range []string{"rancher_desktop", "orbstack", "docker_desktop"} {
+		directory := filepath.Join("..", "..", "adapters", name)
+		for _, goos := range []string{"darwin", "linux", "windows"} {
+			loaded, err := LoadDirectoryForOS(directory, goos)
+			if err != nil {
+				t.Errorf("%s on %s: %v", name, goos, err)
+				continue
+			}
+			if !loaded.Manifest.SelfContained || !loaded.IsRuntime("manager") || len(loaded.Manifest.Commands) != 0 {
+				t.Errorf("%s on %s has unexpected manifest: %#v", name, goos, loaded.Manifest)
+			}
+		}
+	}
+}
+
 func TestLegacyKindIsTranslated(t *testing.T) {
 	directory := fixtureAdapter(t, t.TempDir(), "engine", "manager")
 	manifestPath := filepath.Join(directory, "adapter.toml")

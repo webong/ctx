@@ -1,0 +1,10 @@
+#!/usr/bin/env sh
+set -eu
+
+[ "${1:-}" = desktop ] || exit 2
+case "${2:-}" in
+  version) printf 'Docker Desktop CLI v1\n' ;;
+  status) printf '%s\n' "${FAKE_DOCKER_DESKTOP_STATUS:-Running}" ;;
+  start|stop) printf 'docker desktop %s\n' "$2" ;;
+  *) exit 2 ;;
+esac

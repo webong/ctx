@@ -1,0 +1,18 @@
+#!/usr/bin/env sh
+set -eu
+
+case "${1:-}" in
+  info)
+    if [ "${FAKE_RDCTL_BROKEN:-}" = 1 ]; then
+      printf 'The Rancher Desktop VM is in state Broken\n' >&2
+      exit 1
+    fi
+    printf 'Rancher Desktop is running\n'
+    ;;
+  list-settings)
+    [ "${FAKE_RDCTL_SETTINGS_FAIL:-}" != 1 ] || exit 1
+    printf '{"containerEngine":{"name":"%s"}}\n' "${FAKE_RDCTL_ENGINE:-containerd}"
+    ;;
+  start|shutdown) printf 'rdctl %s\n' "$1" ;;
+  *) exit 2 ;;
+esac

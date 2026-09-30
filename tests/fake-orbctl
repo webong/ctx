@@ -1,0 +1,9 @@
+#!/usr/bin/env sh
+set -eu
+
+case "${1:-}" in
+  status) printf '%s\n' "${FAKE_ORBSTACK_STATUS:-Running}" ;;
+  doctor) printf 'OrbStack doctor clean\n' ;;
+  start|stop) printf 'orbctl %s\n' "$1" ;;
+  *) exit 2 ;;
+esac

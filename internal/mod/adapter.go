@@ -57,6 +57,7 @@ type Manifest struct {
 	BrowserShare         []string
 	OverrideEnv          []string
 	DefaultProvider      bool
+	SelfContained        bool
 }
 
 type Adapter struct {
@@ -118,6 +119,7 @@ func LoadDirectoryForOS(directory, goos string) (*Adapter, error) {
 		BrowserShare:         splitList(values["browser_share"]),
 		OverrideEnv:          splitList(values["override_env"]),
 		DefaultProvider:      values["default_provider"] == "true",
+		SelfContained:        values["self_contained"] == "true",
 	}
 	if manifest.APIVersion == legacyAPIVersion || manifest.APIVersion == legacyDecimalAPIVersion {
 		if err := normalizeLegacyManifest(&manifest, values["kind"]); err != nil {
@@ -133,7 +135,10 @@ func LoadDirectoryForOS(directory, goos string) (*Adapter, error) {
 			manifest.SelectorKey = manifest.Name
 		}
 	}
-	if len(manifest.Commands) == 0 && manifest.SelectorKey != "" && manifest.Runtime != "browser" {
+	if value := values["self_contained"]; value != "" && value != "true" && value != "false" {
+		return nil, fmt.Errorf("adapter %s has invalid self_contained value %s", manifest.Name, value)
+	}
+	if len(manifest.Commands) == 0 && manifest.SelectorKey != "" && manifest.Runtime != "browser" && !manifest.SelfContained {
 		manifest.Commands = []string{manifest.Name}
 	}
 	if contains(manifest.Capabilities, "share") && len(manifest.ShareSpaces) == 0 {
@@ -505,6 +510,9 @@ func validateManifest(manifest Manifest, directory, goos string) error {
 	}
 	if manifest.DefaultProvider && manifest.Runtime != "manager" {
 		return fmt.Errorf("adapter %s can only be a default provider for the manager runtime", manifest.Name)
+	}
+	if manifest.SelfContained && (len(manifest.Commands) != 0 || len(manifest.ComputerCommands) != 0) {
+		return fmt.Errorf("adapter %s cannot declare native commands when self_contained is true", manifest.Name)
 	}
 	if !hasComputerEndpoint(manifest) && manifest.SelectorKey == "" {
 		return fmt.Errorf("adapter %s must declare a selector key", manifest.Name)

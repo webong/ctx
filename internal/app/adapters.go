@@ -80,6 +80,9 @@ func adapterCommand(resolver *config.Resolver, args []string, stdout, stderr io.
 		fmt.Fprintf(stdout, "state:        %s\n", state)
 		fmt.Fprintf(stdout, "selector:     %s\n", candidate.Manifest.SelectorKey)
 		fmt.Fprintf(stdout, "commands:     %s\n", strings.Join(candidate.Manifest.Commands, ","))
+		if candidate.Manifest.SelfContained {
+			fmt.Fprintln(stdout, "self-contained: true")
+		}
 		if len(candidate.Manifest.ComputerCommands) > 0 {
 			fmt.Fprintf(stdout, "computer commands: %s\n", strings.Join(candidate.Manifest.ComputerCommands, ","))
 		}
@@ -599,15 +602,12 @@ func invokeAdapterIOWithEnv(resolver *config.Resolver, candidate *modpkg.Adapter
 		} else if len(candidate.Manifest.ComputerCommands) > 0 {
 			commandName = candidate.Manifest.ComputerCommands[0]
 		}
-		if commandName == "" {
-			return reportErrorCode(stderr, fmt.Errorf("adapter %s does not declare a native command", candidate.Manifest.Name), 127)
-		}
 		if override := extraEnv["CTX_MANAGER_COMMAND"]; override != "" {
 			if err := validateManagerExecutable(override); err != nil {
 				return reportErrorCode(stderr, err, 127)
 			}
 			realCommand = override
-		} else {
+		} else if commandName != "" {
 			var err error
 			realCommand, err = launch.FindReal(commandName)
 			if err != nil {

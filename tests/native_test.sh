@@ -19,22 +19,28 @@ for tool in docker podman nerdctl container kubectl aws gcloud open shell; do
   cp "$ROOT/tests/fake-$tool" "$TEST_ROOT/fake-bin/$tool"
 done
 cp "$ROOT/tests/fake-docker-manager" "$TEST_ROOT/fake-bin/docker-manager"
+cp "$ROOT/tests/fake-rdctl" "$TEST_ROOT/fake-bin/rdctl"
+cp "$ROOT/tests/fake-orbctl" "$TEST_ROOT/fake-bin/orbctl"
+cp "$ROOT/tests/fake-docker-desktop-cli" "$TEST_ROOT/fake-bin/docker-desktop-cli"
 mv "$TEST_ROOT/fake-bin/shell" "$TEST_ROOT/fake-bin/custom-shell"
 cp "$ROOT/tests/fake-postgres" "$TEST_ROOT/fake-bin/psql"
 cp "$ROOT/tests/fake-mysql" "$TEST_ROOT/fake-bin/mysql"
 chmod +x "$TEST_ROOT/fake-bin"/*
 export PATH="$CTX_BIN_DIR:$TEST_ROOT/fake-bin:$PATH"
+export CTX_RANCHER_RDCTL="$TEST_ROOT/fake-bin/rdctl"
+export CTX_ORBSTACK_CLI="$TEST_ROOT/fake-bin/orbctl"
+export CTX_DOCKER_DESKTOP_CLI="$TEST_ROOT/fake-bin/docker-desktop-cli"
 
 GOCACHE=${GOCACHE:-/tmp/ctx-go-build-cache} GOMODCACHE=${GOMODCACHE:-/tmp/ctx-go-mod-cache} \
   go build -o "$CTX_BIN_DIR/ctx" "$ROOT/cmd/ctx"
 
 mkdir -p "$CTX_HOME/catalog/adapters"
-for adapter in docker podman nerdctl apple firefox chrome kube aws gcloud postgres mysql; do
+for adapter in docker podman nerdctl apple rancher_desktop orbstack docker_desktop firefox chrome kube aws gcloud postgres mysql; do
   cp -R "$ROOT/adapters/$adapter" "$CTX_HOME/catalog/adapters/$adapter"
 done
 ctx adapter available | grep -Eq '^docker[[:space:]]+manager[[:space:]]+available'
-ctx setup --adapters docker,podman,nerdctl,apple,firefox,chrome,kube,aws,gcloud,postgres,mysql >/dev/null
-for adapter in docker podman nerdctl apple firefox chrome kube aws gcloud postgres mysql; do
+ctx setup --adapters docker,podman,nerdctl,apple,rancher_desktop,orbstack,docker_desktop,firefox,chrome,kube,aws,gcloud,postgres,mysql >/dev/null
+for adapter in docker podman nerdctl apple rancher_desktop orbstack docker_desktop firefox chrome kube aws gcloud postgres mysql; do
   ctx adapter ls | grep -Eq "^${adapter}[[:space:]]+trusted"
 done
 for engine in docker podman nerdctl; do test -x "$CTX_BIN_DIR/$engine"; done
@@ -125,6 +131,41 @@ ctx adapter ls manager | grep -Eq '^apple[[:space:]]+trusted'
 ctx adapter ls manager | grep -Eq '^docker[[:space:]]+trusted'
 ctx ls manager | grep -Fq 'docker:alpha'
 ctx ls manager | grep -Fq 'apple:local'
+ctx manager apps | grep -Fxq rancher_desktop
+ctx manager apps | grep -Fxq orbstack
+ctx manager apps | grep -Fxq docker_desktop
+if ctx manager apps | grep -Fxq podman; then
+  printf 'engine provider was listed as a desktop app\n' >&2
+  exit 1
+fi
+test "$(ctx manager app rancher_desktop status)" = 'Rancher Desktop is running'
+ctx manager app rancher_desktop doctor | grep -Fq 'containerd engine'
+test "$(ctx manager app orbstack status)" = 'Running'
+ctx manager app orbstack doctor | grep -Fq 'OrbStack doctor clean'
+test "$(ctx manager app docker_desktop status)" = 'Running'
+ctx manager app docker_desktop doctor | grep -Fq 'Docker Desktop status: Running'
+ctx manager doctor rancher_desktop | grep -Fq 'rancher_desktop:'
+mkdir -p "$HOME/Library/Application Support/rancher-desktop/lima/0"
+printf 'EXT4-fs (vda1): potential data loss error -5\n' > "$HOME/Library/Application Support/rancher-desktop/lima/0/serialv.log"
+printf '{"status":{"vsock":{"type":"failed","reason":"Failed to wait for guest SSH server"}}}\n' > "$HOME/Library/Application Support/rancher-desktop/lima/0/ha.stdout.log"
+mkdir -p "$HOME/Library/Logs/rancher-desktop"
+printf 'Rancher Desktop was unable to start:\nlimactl shell 0 sudo /sbin/rc-service --ifnotstarted k3s start\nSegmentation fault\n * ERROR: k3s failed to start\n' > "$HOME/Library/Logs/rancher-desktop/background.log"
+mkdir -p "$HOME/Library/Preferences/rancher-desktop"
+printf '{"containerEngine":{"name":"containerd"}}\n' > "$HOME/Library/Preferences/rancher-desktop/settings.json"
+if FAKE_RDCTL_BROKEN=1 FAKE_RDCTL_SETTINGS_FAIL=1 ctx manager app rancher_desktop doctor > "$TEST_ROOT/rancher-diagnostic.txt"; then
+  printf 'Rancher Desktop adapter missed a broken VM\n' >&2
+  exit 1
+fi
+grep -Fq 'EXT4 filesystem errors' "$TEST_ROOT/rancher-diagnostic.txt"
+grep -Fq 'did not reach guest SSH' "$TEST_ROOT/rancher-diagnostic.txt"
+grep -Fq 'k3s segfaulted while starting' "$TEST_ROOT/rancher-diagnostic.txt"
+grep -Fq 'containerd engine' "$TEST_ROOT/rancher-diagnostic.txt"
+printf 'Rancher Desktop was unable to start:\nlimactl start failed before guest SSH\n' >> "$HOME/Library/Logs/rancher-desktop/background.log"
+FAKE_RDCTL_BROKEN=1 FAKE_RDCTL_SETTINGS_FAIL=1 ctx manager app rancher_desktop doctor > "$TEST_ROOT/rancher-latest-diagnostic.txt" || :
+if grep -Fq 'k3s segfaulted while starting' "$TEST_ROOT/rancher-latest-diagnostic.txt"; then
+  printf 'Rancher Desktop adapter attributed an earlier k3s crash to a later failure\n' >&2
+  exit 1
+fi
 mkdir -p "$TEST_ROOT/manager-plugins" "$HOME/.docker/cli-plugins"
 cp "$ROOT/tests/fake-docker" "$TEST_ROOT/manager-plugins/docker-buildx"
 cp "$ROOT/tests/fake-docker" "$HOME/.docker/cli-plugins/docker-buildx"

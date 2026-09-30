@@ -190,6 +190,8 @@ usage:
       [--plugin buildx=</absolute/path>] [--plugin compose=</absolute/path>]
       [--offline]
   ctx manager <ls|show|doctor|remove> [name]
+  ctx manager apps
+  ctx manager app <adapter> <status|start|stop|doctor>
   ctx setup [adapters] [--all|--minimal|--adapters <name,...>]
   ctx ls <selector>
   ctx open [URL...]
