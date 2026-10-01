@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -19,6 +20,7 @@ param(
     [Parameter(Position = 1)][string]$Selection,
     [Parameter(Position = 2, ValueFromRemainingArguments = $true)][string[]]$Arguments
 )
+Write-Progress -Activity 'fixture initialization' -Status 'loading'
 ConvertTo-Json -Compress -InputObject (@($Operation, $Selection) + @($Arguments))
 `
 	if err := os.WriteFile(path, []byte(script), 0o600); err != nil {
@@ -55,7 +57,10 @@ func TestPowerShellAdapterExitStatus(t *testing.T) {
 			if err := os.WriteFile(path, []byte(fixture.script), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			_, err := exec.Command(shell, powershellArguments(path, nil)...).CombinedOutput()
+			output, err := exec.Command(shell, powershellArguments(path, nil)...).CombinedOutput()
+			if strings.Contains(string(output), "#< CLIXML") {
+				t.Fatal("PowerShell serialized diagnostics instead of returning text")
+			}
 			code := 0
 			if err != nil {
 				var failure *exec.ExitError

@@ -19,6 +19,7 @@ func powershellArguments(path string, args []string) []string {
 		values[i] = literal(arg)
 	}
 	script := strings.Join([]string{
+		"$ProgressPreference = 'SilentlyContinue'",
 		"[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)",
 		"$OutputEncoding = [Console]::OutputEncoding",
 		"$ctxInvocationArguments = @(" + strings.Join(values, ",") + ")",
@@ -31,5 +32,5 @@ func powershellArguments(path string, args []string) []string {
 	for i, unit := range units {
 		binary.LittleEndian.PutUint16(encoded[i*2:], unit)
 	}
-	return []string{"-NoLogo", "-NoProfile", "-EncodedCommand", base64.StdEncoding.EncodeToString(encoded)}
+	return []string{"-NoLogo", "-NoProfile", "-OutputFormat", "Text", "-EncodedCommand", base64.StdEncoding.EncodeToString(encoded)}
 }
