@@ -31,10 +31,13 @@ const (
 	ModeFirst Mode = "first"
 )
 
-// InlineCookies supplies a local cookie array or {"cookies": [...]} object.
+// InlineCookies supplies local JSON cookies or a Netscape cookie jar.
 // Exactly one field may be set. Options.Inline is tried before adapters;
 // Options.FallbackInline is tried after them.
 type InlineCookies struct {
+	// Data accepts JSON or a Netscape cookie jar. JSON is retained for callers
+	// supplying the original JSON-only API; both are parsed as cookie input.
+	Data   []byte
 	JSON   []byte
 	Base64 string
 	File   string
@@ -96,8 +99,14 @@ func Get(ctx context.Context, options Options) (Result, error) {
 	if ctx == nil {
 		return Result{}, errors.New("browser query needs a context")
 	}
+	if err := ctx.Err(); err != nil {
+		return Result{}, err
+	}
 	if options.Mode != "" && options.Mode != ModeMerge && options.Mode != ModeFirst {
 		return Result{}, fmt.Errorf("unknown browser query mode %q", options.Mode)
+	}
+	if options.Timeout < 0 {
+		return Result{}, errors.New("browser query timeout cannot be negative")
 	}
 	if len(options.Sources) > 0 && len(options.Browsers) > 0 {
 		return Result{}, errors.New("choose Sources or Browsers")
@@ -114,11 +123,15 @@ func Get(ctx context.Context, options Options) (Result, error) {
 		ctx, cancel = context.WithTimeout(ctx, options.Timeout)
 		defer cancel()
 	}
-	result := Result{}
+	result := Result{Cookies: make([]Cookie, 0)}
 	seen := map[string]bool{}
 	inline, err := parseInline(options.Inline)
 	if err != nil {
 		return Result{}, err
+	}
+	fallback, err := parseInline(options.FallbackInline)
+	if err != nil {
+		return Result{}, fmt.Errorf("fallback cookies: %w", err)
 	}
 	appendInlineCookies(&result, seen, inline, sites, options, "inline")
 	if options.Mode == ModeFirst && len(result.Cookies) > 0 {
@@ -126,9 +139,7 @@ func Get(ctx context.Context, options Options) (Result, error) {
 	}
 	if options.InlineOnly {
 		if options.Mode != ModeFirst || len(result.Cookies) == 0 {
-			if err := appendFallbackInline(&result, seen, sites, options); err != nil {
-				return Result{}, err
-			}
+			appendInlineCookies(&result, seen, fallback, sites, options, "inline:fallback")
 		}
 		return result, nil
 	}
@@ -138,6 +149,9 @@ func Get(ctx context.Context, options Options) (Result, error) {
 		return Result{}, err
 	}
 	result.Warnings = append(result.Warnings, warnings...)
+	if err := ctx.Err(); err != nil {
+		return result, err
+	}
 	if len(sites) == 0 {
 		sites = []*url.URL{nil}
 	}
@@ -145,6 +159,9 @@ func Get(ctx context.Context, options Options) (Result, error) {
 		before := len(result.Cookies)
 		for _, site := range sites {
 			cookies, warnings, storePath, err := sourceCookies(ctx, source, site, options)
+			if ctx.Err() != nil {
+				return result, ctx.Err()
+			}
 			for _, cookie := range cookies {
 				if matchesQuery(cookie, sites, options) {
 					appendCookie(&result, seen, Cookie{Cookie: cookie, Source: source.label,
@@ -164,20 +181,9 @@ func Get(ctx context.Context, options Options) (Result, error) {
 		}
 	}
 	if options.Mode != ModeFirst || len(result.Cookies) == 0 {
-		if err := appendFallbackInline(&result, seen, sites, options); err != nil {
-			return Result{}, err
-		}
+		appendInlineCookies(&result, seen, fallback, sites, options, "inline:fallback")
 	}
 	return result, nil
-}
-
-func appendFallbackInline(result *Result, seen map[string]bool, sites []*url.URL, options Options) error {
-	cookies, err := parseInline(options.FallbackInline)
-	if err != nil {
-		return fmt.Errorf("fallback inline cookies: %w", err)
-	}
-	appendInlineCookies(result, seen, cookies, sites, options, "inline:fallback")
-	return nil
 }
 
 func appendInlineCookies(result *Result, seen map[string]bool, cookies []browser.Cookie, sites []*url.URL, options Options, label string) {
@@ -225,15 +231,18 @@ func querySites(options Options) ([]*url.URL, error) {
 
 func parseInline(input InlineCookies) ([]browser.Cookie, error) {
 	count := 0
-	for _, set := range []bool{input.JSON != nil, input.Base64 != "", input.File != ""} {
+	for _, set := range []bool{input.Data != nil, input.JSON != nil, input.Base64 != "", input.File != ""} {
 		if set {
 			count++
 		}
 	}
 	if count > 1 {
-		return nil, errors.New("inline cookies accept exactly one of JSON, Base64, or File")
+		return nil, errors.New("inline cookies accept exactly one of Data, JSON, Base64, or File")
 	}
 	data := input.JSON
+	if input.Data != nil {
+		data = input.Data
+	}
 	if input.Base64 != "" {
 		if len(input.Base64) > base64.StdEncoding.EncodedLen(8<<20) {
 			return nil, errors.New("inline cookies exceed 8 MiB")
@@ -265,17 +274,15 @@ func parseInline(input InlineCookies) ([]browser.Cookie, error) {
 	if len(data) > 8<<20 {
 		return nil, errors.New("inline cookies exceed 8 MiB")
 	}
-	var cookies []browser.Cookie
-	if err := json.Unmarshal(data, &cookies); err == nil {
-		return cookies, nil
+	parsed, err := ParseCookies(data)
+	if err != nil {
+		return nil, err
 	}
-	var object struct {
-		Cookies []browser.Cookie `json:"cookies"`
+	cookies := make([]browser.Cookie, 0, len(parsed))
+	for _, cookie := range parsed {
+		cookies = append(cookies, cookie.Cookie)
 	}
-	if err := json.Unmarshal(data, &object); err != nil || object.Cookies == nil {
-		return nil, errors.New("inline cookies must be a JSON array or an object with cookies")
-	}
-	return object.Cookies, nil
+	return cookies, nil
 }
 
 func matchesQuery(cookie browser.Cookie, sites []*url.URL, options Options) bool {
@@ -390,6 +397,9 @@ func selectSources(ctx context.Context, store *mod.Store, options Options) ([]se
 	var sources []selectedSource
 	var warnings []string
 	for _, adapter := range adapters {
+		if err := ctx.Err(); err != nil {
+			return nil, warnings, err
+		}
 		name := adapter.Manifest.Name
 		if profile := options.Profiles[name]; profile != "" {
 			if strings.ContainsAny(profile, "\r\n") {
@@ -465,11 +475,27 @@ func sourceCookies(ctx context.Context, source selectedSource, site *url.URL, op
 		if err != nil {
 			return nil, nil, "", err
 		}
-		var result browser.CookieQueryResult
-		if err := json.Unmarshal(output, &result); err != nil {
-			return nil, nil, "", fmt.Errorf("invalid cookie query: %w", err)
+		var result struct {
+			Cookies   []json.RawMessage `json:"cookies"`
+			Warnings  []string          `json:"warnings"`
+			StorePath string            `json:"store_path"`
 		}
-		return result.Cookies, result.Warnings, result.StorePath, nil
+		if err := json.Unmarshal(output, &result); err != nil {
+			return nil, nil, "", errors.New("invalid cookie query response")
+		}
+		if result.Cookies == nil {
+			return nil, nil, "", errors.New("cookie query response needs a cookies array")
+		}
+		cookies := make([]browser.Cookie, 0, len(result.Cookies))
+		for index, row := range result.Cookies {
+			cookie, err := parseJSONCookie(row)
+			if err != nil {
+				result.Warnings = append(result.Warnings, fmt.Sprintf("cookie %d: %v", index+1, err))
+				continue
+			}
+			cookies = append(cookies, cookie.Cookie)
+		}
+		return cookies, result.Warnings, result.StorePath, nil
 	}
 	if site == nil || options.IncludeExpired {
 		return nil, nil, "", errors.New("adapter does not support all-host or expired-cookie queries")
@@ -481,9 +507,10 @@ func sourceCookies(ctx context.Context, source selectedSource, site *url.URL, op
 	}
 	var listed []browser.Cookie
 	if err := json.Unmarshal(output, &listed); err != nil {
-		return nil, nil, "", fmt.Errorf("invalid cookie list: %w", err)
+		return nil, nil, "", errors.New("invalid cookie list response")
 	}
 	var cookies []browser.Cookie
+	var warnings []string
 	for _, cookie := range listed {
 		if len(options.Names) > 0 {
 			found := false
@@ -503,15 +530,20 @@ func sourceCookies(ctx context.Context, source selectedSource, site *url.URL, op
 		request, _ := json.Marshal(browser.CookieRequest{Version: browser.Version, Site: site.String(), Cookie: cookie})
 		output, err := invoke(ctx, source.adapter, "share", source.profile, []string{"cookie", "export"}, request)
 		if err != nil {
-			return cookies, nil, "", fmt.Errorf("export %s: %w", cookie.Name, err)
+			if ctx.Err() != nil {
+				return cookies, warnings, "", ctx.Err()
+			}
+			warnings = append(warnings, fmt.Sprintf("export %s: %v", cookie.Name, err))
+			continue
 		}
-		var exported browser.Cookie
-		if err := json.Unmarshal(output, &exported); err != nil || !browser.SameListedCookie(cookie, exported) {
-			return cookies, nil, "", fmt.Errorf("export %s returned a different cookie", cookie.Name)
+		exported, err := parseJSONCookie(output)
+		if err != nil || !browser.SameListedCookie(cookie, exported.Cookie) {
+			warnings = append(warnings, fmt.Sprintf("export %s returned an invalid or different cookie", cookie.Name))
+			continue
 		}
-		cookies = append(cookies, exported)
+		cookies = append(cookies, exported.Cookie)
 	}
-	return cookies, nil, "", nil
+	return cookies, warnings, "", nil
 }
 
 func invoke(ctx context.Context, adapter *mod.Adapter, operation, profile string, args []string, input []byte) ([]byte, error) {
@@ -524,7 +556,11 @@ func invoke(ctx context.Context, adapter *mod.Adapter, operation, profile string
 	stderr := &boundedBuffer{limit: 4 << 10}
 	command.Stdout = stdout
 	command.Stderr = stderr
-	if err := command.Run(); err != nil {
+	err = command.Run()
+	if stdout.exceeded || stderr.exceeded {
+		return nil, errors.New("browser adapter output exceeds limit")
+	}
+	if err != nil {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
@@ -539,11 +575,13 @@ func invoke(ctx context.Context, adapter *mod.Adapter, operation, profile string
 
 type boundedBuffer struct {
 	bytes.Buffer
-	limit int
+	limit    int
+	exceeded bool
 }
 
 func (buffer *boundedBuffer) Write(data []byte) (int, error) {
 	if buffer.Len()+len(data) > buffer.limit {
+		buffer.exceeded = true
 		return 0, errors.New("browser adapter output exceeds limit")
 	}
 	return buffer.Buffer.Write(data)

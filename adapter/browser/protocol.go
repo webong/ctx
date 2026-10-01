@@ -87,6 +87,7 @@ func ManagedPreferenceFiles(domain string) []PolicyFile { return kit.ManagedPref
 
 func ParseSite(raw string) (*url.URL, error)         { return share.ParseSite(raw) }
 func ValidateCookieBundle(bundle CookieBundle) error { return share.ValidateCookieBundle(bundle) }
+func ValidateCookie(cookie Cookie) error             { return share.ValidateCookie(cookie) }
 func ValidateResourceBundle(bundle ResourceBundle, resource string) error {
 	return share.ValidateResourceBundle(bundle, resource)
 }

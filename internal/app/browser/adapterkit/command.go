@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/url"
 	"path/filepath"
+	"unicode/utf8"
 
 	"github.com/webong/ctx/internal/app/browser/share"
 )
@@ -26,7 +27,8 @@ type CookieBackend struct {
 
 func RunCookie(profile, operation string, input io.Reader, stdout, stderr io.Writer, backend CookieBackend) int {
 	var request share.CookieRequest
-	if err := json.NewDecoder(io.LimitReader(input, 8<<20)).Decode(&request); err != nil || request.Version != share.Version {
+	data, err := io.ReadAll(io.LimitReader(input, (8<<20)+1))
+	if err != nil || len(data) > 8<<20 || !utf8.Valid(data) || json.Unmarshal(data, &request) != nil || request.Version != share.Version {
 		fmt.Fprintln(stderr, "ctx: invalid browser share request")
 		return 2
 	}
@@ -56,6 +58,10 @@ func RunCookie(profile, operation string, input io.Reader, stdout, stderr io.Wri
 			result.StorePath = handle
 		}
 		for _, cookie := range cookies {
+			if err := share.ValidateCookie(cookie); err != nil {
+				result.Warnings = append(result.Warnings, "invalid cookie metadata: "+err.Error())
+				continue
+			}
 			if !share.CookieMatchesSiteOptions(site, cookie, request.IncludeExpired) {
 				continue
 			}
@@ -78,6 +84,10 @@ func RunCookie(profile, operation string, input io.Reader, stdout, stderr io.Wri
 					continue
 				}
 				cookie.Value = value
+			}
+			if err := share.ValidateCookie(cookie); err != nil {
+				result.Warnings = append(result.Warnings, "invalid cookie value: "+err.Error())
+				continue
 			}
 			result.Cookies = append(result.Cookies, cookie)
 		}
@@ -104,15 +114,25 @@ func RunCookie(profile, operation string, input io.Reader, stdout, stderr io.Wri
 			return ReportError(stderr, err)
 		}
 		if operation == "list" {
-			return Encode(stdout, cookies)
+			listed := make([]share.Cookie, 0, len(cookies))
+			for _, cookie := range cookies {
+				cookie.Value = ""
+				if share.ValidateCookie(cookie) == nil && share.CookieMatchesSite(site, cookie) {
+					listed = append(listed, cookie)
+				}
+			}
+			return Encode(stdout, listed)
 		}
 		for _, cookie := range cookies {
-			if share.SameListedCookie(cookie, request.Cookie) {
+			if share.SameListedCookie(cookie, request.Cookie) && share.CookieMatchesSite(site, cookie) {
 				value, err := backend.ReadValue(handle, cookie)
 				if err != nil {
 					return ReportError(stderr, err)
 				}
 				cookie.Value = value
+				if err := share.ValidateCookie(cookie); err != nil {
+					return ReportError(stderr, err)
+				}
 				return Encode(stdout, cookie)
 			}
 		}

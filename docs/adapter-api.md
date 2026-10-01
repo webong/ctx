@@ -434,6 +434,12 @@ adapter. `PreferredSource` is an explicit selection and can also select an
 adapter omitted from automatic discovery. Result cookies retain a `source` label and add structured
 `source_info` with adapter, profile, and any adapter-reported store path.
 Inline fallback cookies carry `source_info.fallback = true`.
+The library also exposes `browser.ParseCookies` for portable JSON and Netscape
+exports, and `browser.BundleCookie` for a selected single-cookie import. Cookie
+input validation preserves native scope and rejects fields it cannot interpret.
+Queries retain nonfatal source/row warnings; cancellation and timeout return an
+error. The CLI's `--strict` and `--require-match` flags withhold output on warnings
+or empty results respectively. See [cookie inputs](browser-cookies.md).
 
 For example, `cookie.list` receives `{"version":2,"site":"https://example.com"}`
 and can respond with:

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 type sqliteColumn struct {
@@ -153,12 +154,19 @@ func RunSQLite(database string, readonly bool, query string) ([]byte, error) {
 	if readonly {
 		args = append(args, "-readonly")
 	}
-	args = append(args, database, query)
+	args = append(args, database)
 	command := exec.CommandContext(ctx, "sqlite3", args...)
+	// Imports can contain plaintext cookie values. Keep SQL off the process
+	// command line and use a private stdin pipe instead.
+	command.Stdin = strings.NewReader(query + "\n;\n")
 	output, err := command.Output()
 	if err != nil {
 		if ctx.Err() != nil {
-			return nil, errors.New("sqlite3 timed out while reading browser cookies")
+			return nil, errors.New("sqlite3 timed out while accessing browser cookies")
+		}
+		if !readonly {
+			// SQLite parse diagnostics can repeat the statement, including values.
+			return nil, fmt.Errorf("sqlite3 update failed: %w", err)
 		}
 		if failure, ok := err.(*exec.ExitError); ok {
 			message := strings.TrimSpace(string(failure.Stderr))
@@ -167,6 +175,9 @@ func RunSQLite(database string, readonly bool, query string) ([]byte, error) {
 			}
 		}
 		return nil, fmt.Errorf("sqlite3 failed: %w", err)
+	}
+	if !utf8.Valid(output) {
+		return nil, errors.New("sqlite3 returned invalid UTF-8 browser data")
 	}
 	return output, nil
 }

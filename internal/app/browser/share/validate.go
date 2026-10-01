@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"maps"
+	"net"
 	"net/url"
 	"strings"
 	"time"
@@ -71,24 +72,64 @@ func ValidateCookieBundle(bundle CookieBundle) error {
 		return err
 	}
 	cookie := bundle.Cookie
-	if cookie.Name == "" || cookie.Domain == "" || !strings.HasPrefix(cookie.Path, "/") ||
-		!CookieMatchesSite(site, cookie) {
+	if err := ValidateCookie(cookie); err != nil {
+		return err
+	}
+	if !CookieMatchesSite(site, cookie) {
 		return errors.New("cookie bundle has an invalid or expired site scope")
+	}
+	switch cookie.SameSitePolicy {
+	case "", "unspecified", "none", "lax", "strict":
+	default:
+		return errors.New("cookie bundle has an unsupported SameSite policy")
+	}
+	return nil
+}
+
+// ValidateCookie checks portable fields without requiring an unexpired cookie
+// or a particular site. Errors never contain the cookie's secret value.
+func ValidateCookie(cookie Cookie) error {
+	if cookie.Name == "" || strings.ContainsAny(cookie.Name, "()<>@,;:\\\"/[]?={} \t") || hasControl(cookie.Name) {
+		return errors.New("cookie has an invalid name")
+	}
+	host := strings.TrimPrefix(cookie.Domain, ".")
+	if host == "" || strings.ContainsAny(host, " /\\?#@\t\r\n") || hasControl(host) ||
+		(strings.Contains(host, ":") && net.ParseIP(host) == nil) || strings.HasPrefix(host, ".") {
+		return errors.New("cookie has an invalid domain")
+	}
+	if !strings.HasPrefix(cookie.Path, "/") || hasControl(cookie.Path) || hasControl(cookie.Value) {
+		return errors.New("cookie has an invalid path or value")
 	}
 	if (strings.HasPrefix(cookie.Name, "__Secure-") && !cookie.Secure) ||
 		(strings.HasPrefix(cookie.Name, "__Host-") && (!cookie.Secure || strings.HasPrefix(cookie.Domain, ".") || cookie.Path != "/")) ||
 		(cookie.SameSitePolicy == "none" && !cookie.Secure) {
-		return errors.New("cookie bundle violates secure prefix or SameSite requirements")
+		return errors.New("cookie violates secure prefix or SameSite requirements")
+	}
+	// This upper bound also keeps native microsecond expiry conversions safe.
+	if cookie.Expiry > 253402300799 {
+		return errors.New("cookie expiry exceeds the portable range")
+	}
+	if hasControl(cookie.PartitionKey) || (cookie.CrossSiteAncestor && cookie.PartitionKey == "") {
+		return errors.New("cookie has an invalid partition scope")
 	}
 	if len(cookie.Attributes) > 32 {
-		return errors.New("cookie bundle has too many adapter attributes")
+		return errors.New("cookie has too many adapter attributes")
 	}
 	for key, value := range cookie.Attributes {
 		if !strings.Contains(key, ".") || len(key) > 128 || len(value) > 1024 || strings.ContainsAny(key, " \t\r\n") {
-			return errors.New("cookie bundle has an invalid adapter attribute")
+			return errors.New("cookie has an invalid adapter attribute")
 		}
 	}
 	return nil
+}
+
+func hasControl(value string) bool {
+	for _, character := range value {
+		if character < 0x20 || character == 0x7f {
+			return true
+		}
+	}
+	return false
 }
 
 func ValidateResourceBundle(bundle ResourceBundle, resource string) error {

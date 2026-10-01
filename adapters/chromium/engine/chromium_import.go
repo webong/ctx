@@ -17,9 +17,17 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/webong/ctx/internal/app/browser/share"
 )
 
 func importChromiumCookie(provider Config, profile string, cookie browserCookie, replace bool) error {
+	if err := share.ValidateCookie(cookie); err != nil {
+		return err
+	}
+	if !cookieActive(cookie) {
+		return errors.New("cannot import an expired Chromium cookie")
+	}
 	if runtime.GOOS == "windows" {
 		return errors.New("Chrome/Chromium profile import is unavailable on Windows because target encryption is browser-bound")
 	}
@@ -193,6 +201,8 @@ func chromiumTargetEncryption(provider Config, database string) (string, string,
 func ensureChromiumProfileClosed(database string) error {
 	if _, err := os.Lstat(filepath.Join(chromiumUserDataRootFromDatabase(database), "SingletonLock")); err == nil {
 		return errors.New("Chromium user data directory has a SingletonLock; close the browser before importing cookies")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("cannot check Chromium SingletonLock: %w", err)
 	}
 	if _, err := exec.LookPath("lsof"); err != nil {
 		return errors.New("lsof is required to check Chromium profile locks before importing")

@@ -474,6 +474,7 @@ ctx share:browser cookie query --from firefox:personal --site https://example.co
 ctx share:browser cookie query --browser firefox --browser chrome --site https://example.com --mode first --stdout | consumer
 ctx share:browser cookie query --from chrome:Default --all-hosts --include-expired --to-file ./all-cookies.json
 ctx share:browser cookie query --from chrome:Default --site https://example.com --fallback-file ./authorized-export.json --to-file ./site-cookies.json
+ctx share:browser cookie query --from firefox:personal --site https://example.com --strict --require-match --to-file ./complete-cookies.json
 ctx share:browser cookie copy --from firefox:personal --site https://example.com --name session --to-profile firefox:work
 ctx share:browser cookie copy --from firefox:personal --site https://example.com --name session --to-file ./session-cookie.json
 ctx share:browser cookie copy --from firefox:personal --site https://example.com --name session --stdout | consumer
@@ -484,6 +485,8 @@ ctx share:browser cookie list --from edge:Default --site https://example.com/acc
 ctx share:browser cookie copy --from brave:Default --site https://example.com/account --name session --to-file ./brave-cookie.json
 ctx share:browser cookie copy --from firefox:personal --site https://example.com --name session --to-profile chromium:Default
 ctx share:browser cookie import --from-file ./session-cookie.json --to-profile chrome:Profile\ 1
+ctx share:browser cookie import --from-file ./site-cookies.json --site https://example.com --name session --to-profile chrome:Profile\ 1
+ctx share:browser cookie import --from-file ./cookies.txt --site https://example.com --name session --to-profile chromium:Default
 ctx share:browser cookie list --from safari:default --site https://example.com
 ctx share:browser cookie copy --from safari:default --site https://example.com --name session --to-file ./safari-cookie.json
 ctx share:browser policy export --from chrome:Default --to-file ./chrome-policies.json
@@ -515,7 +518,7 @@ to select multiple sites, names, or ordered profiles. Without `--from` or
 `--browser`, ctx discovers profiles from installed, trusted browser adapters.
 `--mode merge` combines the sources and keeps the first cookie with each scope;
 `--mode first` stops at the first source with a match. `--inline-file` or
-`--inline-stdin` adds JSON cookies ahead of the adapters; `--inline-only` uses
+`--inline-stdin` adds JSON or Netscape cookies ahead of the adapters; `--inline-only` uses
 only inline inputs. `--fallback-file` or `--fallback-stdin` supplies cookies after
 browser adapters, filling scopes those adapters could not return. Only one
 stdin input can be used in a command. In `--mode first`, fallback is used only
@@ -525,6 +528,12 @@ and `--include-expired` includes expired rows. The public
 other Go services. Browser adapters retain ownership of profile paths and
 credential access. Older adapters with only list/export can answer site
 queries; all-host and expired queries require `cookie.query`.
+An empty result is `{"cookies":[]}`. Ordinary queries retain partial success
+with warnings. `--strict` refuses to write output when any source reports a
+warning; `--require-match` refuses empty output. `--timeout` bounds the overall
+adapter query (default two minutes). Cancellation or timeout fails the command
+without writing a result. In `--mode first`, fallback input is used only when
+earlier sources returned no cookies. See [cookie formats and validation](docs/browser-cookies.md).
 Automatic CLI queries try the browser selected by `ctx set` first, then installed,
 trusted adapters in the order declared by their manifests. Helium is omitted
 from automatic discovery; select it with `ctx set`, `--browser helium`, or
@@ -567,7 +576,11 @@ For Safari cookies unavailable from a readable on-disk store, supply an export
 authorized by the browser as `--fallback-file` or `--fallback-stdin` input.
 
 Firefox profile import requires `sqlite3` and `lsof`, a closed target profile,
-and an unpartitioned cookie. It refuses to overwrite an existing target cookie
+and an unpartitioned, persistent cookie. Session cookies cannot be represented
+by Firefox's persistent SQLite store and are rejected. Firefox adapters convert
+schema 16 and 17 millisecond expiry values to portable seconds on read, and
+back on import; schemas through 15 use seconds. The partitioned attribute and
+origin attributes remain adapter-owned cookie scope. It refuses to overwrite an existing target cookie
 unless `--replace` is given. The read-only
 list and file/pipe forms need `sqlite3`; they can read committed cookies while
 the browser is open, though recent in-memory changes may not yet appear. When a

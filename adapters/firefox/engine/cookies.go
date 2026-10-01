@@ -20,16 +20,17 @@ import (
 )
 
 type firefoxCookieRow struct {
-	ID               int64  `json:"id"`
-	Name             string `json:"name"`
-	Value            string `json:"value"`
-	Host             string `json:"host"`
-	Path             string `json:"path"`
-	Expiry           int64  `json:"expiry"`
-	IsSecure         int    `json:"isSecure"`
-	IsHTTPOnly       int    `json:"isHttpOnly"`
-	SameSite         int    `json:"sameSite"`
-	OriginAttributes string `json:"originAttributes"`
+	ID                   int64  `json:"id"`
+	Name                 string `json:"name"`
+	Value                string `json:"value"`
+	Host                 string `json:"host"`
+	Path                 string `json:"path"`
+	Expiry               int64  `json:"expiry"`
+	IsSecure             int    `json:"isSecure"`
+	IsHTTPOnly           int    `json:"isHttpOnly"`
+	SameSite             int    `json:"sameSite"`
+	OriginAttributes     string `json:"originAttributes"`
+	PartitionedAttribute int    `json:"partitionedAttribute"`
 }
 
 func readFirefoxSiteCookies(config Config, profile string, site *url.URL, name string) ([]browserCookie, string, error) {
@@ -51,7 +52,15 @@ func queryFirefoxCookies(config Config, profile string, site *url.URL, name stri
 			return nil, "", fmt.Errorf("Firefox cookie database lacks %s; this profile schema is not supported", required)
 		}
 	}
-	statement := "SELECT id,name,host,path,expiry,isSecure,isHttpOnly,sameSite,originAttributes FROM moz_cookies WHERE 1=1"
+	scale, err := firefoxExpiryScale(readableDB)
+	if err != nil {
+		return nil, "", err
+	}
+	partitioned := "0"
+	if hasSQLiteColumn(columns, "isPartitionedAttributeSet") {
+		partitioned = "isPartitionedAttributeSet"
+	}
+	statement := "SELECT id,name,host,path,expiry,isSecure,isHttpOnly,sameSite,originAttributes," + partitioned + " AS partitionedAttribute FROM moz_cookies WHERE 1=1"
 	if site != nil {
 		host := strings.TrimSuffix(strings.ToLower(site.Hostname()), ".")
 		if host == "" {
@@ -75,9 +84,13 @@ func queryFirefoxCookies(config Config, profile string, site *url.URL, name stri
 	containerNames := firefoxContainerNames(filepath.Dir(database))
 	cookies := make([]browserCookie, 0, len(rows))
 	for _, row := range rows {
+		expiry := row.Expiry / scale
+		if expiry <= 0 {
+			expiry = -1 // persistent SQLite rows are never session cookies
+		}
 		cookie := browserCookie{
 			ID: row.ID, Name: row.Name, Domain: row.Host, Path: row.Path,
-			Expiry: row.Expiry, Secure: row.IsSecure != 0, HTTPOnly: row.IsHTTPOnly != 0,
+			Expiry: expiry, Secure: row.IsSecure != 0, HTTPOnly: row.IsHTTPOnly != 0,
 			SameSitePolicy: firefoxSameSitePolicy(row.SameSite),
 		}
 		if row.OriginAttributes != "" {
@@ -88,6 +101,12 @@ func queryFirefoxCookies(config Config, profile string, site *url.URL, name stri
 					cookie.Attributes["firefox.container_name"] = label
 				}
 			}
+		}
+		if row.PartitionedAttribute != 0 {
+			if cookie.Attributes == nil {
+				cookie.Attributes = map[string]string{}
+			}
+			cookie.Attributes["firefox.partitioned_attribute"] = "true"
 		}
 		if browsershare.CookieMatchesSiteOptions(site, cookie, includeExpired) {
 			cookies = append(cookies, cookie)
@@ -304,7 +323,16 @@ func snapshotFirefoxCookieDatabase(database string) (string, func(), error) {
 }
 
 func importFirefoxCookie(config Config, profile string, cookie browserCookie, replace bool) error {
-	if len(cookie.Attributes) != 0 || cookie.PartitionKey != "" {
+	if err := browsershare.ValidateCookie(cookie); err != nil {
+		return err
+	}
+	if !cookieActive(cookie) {
+		return errors.New("cannot import an expired Firefox cookie")
+	}
+	if cookie.Expiry == 0 {
+		return errors.New("Firefox session cookies cannot be imported into its persistent SQLite store; use a browser-authorized live session")
+	}
+	if len(cookie.Attributes) != 0 || cookie.PartitionKey != "" || cookie.CrossSiteAncestor {
 		return errors.New("Firefox profile import cannot map a container or partitioned cookie")
 	}
 	database, err := firefoxCookieDatabase(config, profile)
@@ -327,6 +355,10 @@ func importFirefoxCookie(config Config, profile string, cookie browserCookie, re
 	if err != nil {
 		return err
 	}
+	scale, err := firefoxExpiryScale(database)
+	if err != nil {
+		return err
+	}
 	identity := "name=" + sqlString(cookie.Name) + " AND host=" + sqlString(cookie.Domain) + " AND path=" + sqlString(cookie.Path) + " AND originAttributes=''"
 	if !replace {
 		output, err := runSQLite(database, true, "SELECT count(*) AS existing FROM moz_cookies WHERE "+identity)
@@ -346,11 +378,12 @@ func importFirefoxCookie(config Config, profile string, cookie browserCookie, re
 	values := map[string]string{
 		"name": sqlString(cookie.Name), "value": sqlString(cookie.Value),
 		"host": sqlString(cookie.Domain), "path": sqlString(cookie.Path),
-		"expiry": strconv.FormatInt(cookie.Expiry, 10), "isSecure": sqlBool(cookie.Secure),
+		"expiry": strconv.FormatInt(cookie.Expiry*scale, 10), "isSecure": sqlBool(cookie.Secure),
 		"isHttpOnly": sqlBool(cookie.HTTPOnly), "sameSite": strconv.Itoa(sameSite),
 		"originAttributes": "''",
 		"creationTime":     strconv.FormatInt(time.Now().UnixMicro(), 10),
 		"lastAccessed":     strconv.FormatInt(time.Now().UnixMicro(), 10),
+		"updateTime":       strconv.FormatInt(time.Now().UnixMicro(), 10),
 	}
 	var names, expressions []string
 	for _, column := range columns {
@@ -366,6 +399,25 @@ func importFirefoxCookie(config Config, profile string, cookie browserCookie, re
 	statement += "INSERT INTO moz_cookies (" + strings.Join(names, ",") + ") VALUES (" + strings.Join(expressions, ",") + "); COMMIT;"
 	_, err = runSQLite(database, false, statement)
 	return err
+}
+
+// Firefox schema 16 migrated expiry from seconds to milliseconds. Keep the
+// portable contract in seconds, and avoid guessing about future migrations.
+func firefoxExpiryScale(database string) (int64, error) {
+	output, err := runSQLite(database, true, "PRAGMA user_version")
+	if err != nil {
+		return 0, err
+	}
+	var versions []struct {
+		Version int `json:"user_version"`
+	}
+	if json.Unmarshal(output, &versions) != nil || len(versions) != 1 || versions[0].Version < 0 || versions[0].Version > 17 {
+		return 0, errors.New("unsupported Firefox cookie schema version")
+	}
+	if versions[0].Version >= 16 {
+		return 1000, nil
+	}
+	return 1, nil
 }
 
 func firefoxImportedSameSite(cookie browserCookie) (int, error) {

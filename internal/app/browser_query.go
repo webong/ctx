@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"time"
 
 	"github.com/webong/ctx/browser"
@@ -36,13 +37,16 @@ func shareBrowserCookieQuery(resolver *config.Resolver, args []string, stdout, s
 	mode := flags.String("mode", string(browser.ModeMerge), "merge or first")
 	toFile := flags.String("to-file", "", "new protected JSON result file")
 	toStdout := flags.Bool("stdout", false, "write JSON result to a pipe")
-	inlineFile := flags.String("inline-file", "", "inline cookie JSON file")
-	inlineStdin := flags.Bool("inline-stdin", false, "read inline cookie JSON from a pipe")
-	fallbackFile := flags.String("fallback-file", "", "cookie JSON file used after browser sources")
-	fallbackStdin := flags.Bool("fallback-stdin", false, "read fallback cookie JSON from a pipe")
+	inlineFile := flags.String("inline-file", "", "JSON or Netscape cookie file used first")
+	inlineStdin := flags.Bool("inline-stdin", false, "read JSON or Netscape cookies from a pipe")
+	fallbackFile := flags.String("fallback-file", "", "JSON or Netscape cookie file used after browsers")
+	fallbackStdin := flags.Bool("fallback-stdin", false, "read fallback cookies from a pipe")
 	inlineOnly := flags.Bool("inline-only", false, "query inline cookies without browser adapters")
 	includeExpired := flags.Bool("include-expired", false, "include expired cookies")
 	allHosts := flags.Bool("all-hosts", false, "allow queries without a site URL")
+	strict := flags.Bool("strict", false, "fail without output when a source reports a warning")
+	requireMatch := flags.Bool("require-match", false, "fail without output when no cookies match")
+	timeout := flags.Duration("timeout", 2*time.Minute, "overall adapter query timeout")
 	if err := flags.Parse(args); err != nil || len(flags.Args()) != 0 {
 		return 2
 	}
@@ -62,7 +66,7 @@ func shareBrowserCookieQuery(resolver *config.Resolver, args []string, stdout, s
 		Sources: append([]string(nil), sources...), Browsers: append([]string(nil), browsers...),
 		Names: append([]string(nil), names...), Mode: browser.Mode(*mode),
 		InlineOnly: *inlineOnly, IncludeExpired: *includeExpired, AllowAllHosts: *allHosts,
-		Timeout: 2 * time.Minute,
+		Timeout: *timeout,
 	}
 	if len(sites) > 0 {
 		options.URL = sites[0]
@@ -101,17 +105,25 @@ func shareBrowserCookieQuery(resolver *config.Resolver, args []string, stdout, s
 			return reportErrorCode(stderr, errors.New("inline cookie input exceeds 8 MiB or cannot be read"), 2)
 		}
 		if *inlineStdin {
-			options.Inline.JSON = data
+			options.Inline.Data = data
 		} else {
-			options.FallbackInline.JSON = data
+			options.FallbackInline.Data = data
 		}
 	}
-	result, err := browser.Get(context.Background(), options)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	result, err := browser.Get(ctx, options)
 	if err != nil {
 		return reportErrorCode(stderr, err, 2)
 	}
 	for _, warning := range result.Warnings {
 		fmt.Fprintf(stderr, "ctx: warning: %s\n", warning)
+	}
+	if *strict && len(result.Warnings) > 0 {
+		return reportError(stderr, errors.New("cookie query was incomplete; no output written (--strict)"))
+	}
+	if *requireMatch && len(result.Cookies) == 0 {
+		return reportError(stderr, errors.New("no cookies matched; no output written (--require-match)"))
 	}
 	if *toStdout {
 		if err := json.NewEncoder(stdout).Encode(result); err != nil {
