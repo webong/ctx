@@ -23,9 +23,12 @@ func powershellArguments(path string, args []string) []string {
 		"[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)",
 		"$OutputEncoding = [Console]::OutputEncoding",
 		"$ctxInvocationArguments = @(" + strings.Join(values, ",") + ")",
-		"& " + literal(path) + " @ctxInvocationArguments",
-		"if (-not $?) { if ($LASTEXITCODE) { exit $LASTEXITCODE }; exit 1 }",
-		"exit $LASTEXITCODE",
+		// Windows PowerShell serializes uncaught errors as CLIXML for an
+		// encoded command, even with OutputFormat Text. Emit caught failures
+		// directly so adapter diagnostics remain readable.
+		"try { & " + literal(path) + " @ctxInvocationArguments; " +
+			"if (-not $?) { if ($LASTEXITCODE) { exit $LASTEXITCODE }; exit 1 }; exit $LASTEXITCODE " +
+			"} catch { [Console]::Error.WriteLine($_.ToString()); exit 1 }",
 	}, "; ")
 	units := utf16.Encode([]rune(script))
 	encoded := make([]byte, 2*len(units))
