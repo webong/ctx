@@ -21,7 +21,7 @@ func adapterCommand(path string, args []string) *exec.Cmd {
 		}
 		return exec.Command(shell, append([]string{"/d", "/s", "/c", path}, args...)...)
 	case ".ps1":
-		return exec.Command("powershell.exe", append([]string{"-NoLogo", "-NoProfile", "-File", path}, args...)...)
+		return exec.Command("powershell.exe", powershellArguments(path, args)...)
 	default:
 		return exec.Command(path, args...)
 	}
@@ -40,7 +40,7 @@ func adapterCommandContext(ctx context.Context, path string, args []string) *exe
 		}
 		command = exec.CommandContext(ctx, shell, append([]string{"/d", "/s", "/c", path}, args...)...)
 	case ".ps1":
-		command = exec.CommandContext(ctx, "powershell.exe", append([]string{"-NoLogo", "-NoProfile", "-File", path}, args...)...)
+		command = exec.CommandContext(ctx, "powershell.exe", powershellArguments(path, args)...)
 	default:
 		command = exec.CommandContext(ctx, path, args...)
 	}
