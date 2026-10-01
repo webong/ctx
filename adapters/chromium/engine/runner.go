@@ -12,6 +12,9 @@ import (
 // Run serves the versioned cookie protocol for a Chromium-family adapter.
 // Each adapter supplies its own storage paths and credential identity.
 func Run(config Config, args []string, input io.Reader, stdout, stderr io.Writer) int {
+	if len(args) == 4 && args[1] == "management" {
+		return RunManagement(config, args[0], input, stdout, stderr)
+	}
 	if len(args) != 3 {
 		fmt.Fprintln(stderr, "ctx: browser sharing needs profile resource operation")
 		return 2

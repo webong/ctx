@@ -21,6 +21,7 @@ type Config struct {
 	SecretApplication string
 	WalletFolder      string
 	WalletKey         string
+	Extensions        ExtensionManagementConfig
 }
 
 // Cookie is the portable cookie type returned by the Chromium engine. It is

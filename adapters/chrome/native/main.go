@@ -8,6 +8,7 @@ import (
 	"runtime"
 
 	chromiumengine "github.com/webong/ctx/adapters/chromium/engine"
+	"github.com/webong/ctx/browser/extension"
 	kit "github.com/webong/ctx/internal/app/browser/adapterkit"
 	"github.com/webong/ctx/internal/app/browser/share"
 )
@@ -17,12 +18,34 @@ func chromeConfig() chromiumengine.Config {
 		Name: "chrome", MacUserData: "Google/Chrome", WindowsUserData: `Google\Chrome\User Data`, LinuxUserData: "google-chrome",
 		KeychainService: "Chrome Safe Storage", KeychainAccount: "Chrome", SecretApplication: "chrome",
 		WalletFolder: "Chrome Keys", WalletKey: "Chrome Safe Storage",
+		Extensions: chromiumengine.ExtensionManagementConfig{
+			Executables: extension.ExecutableLocations{
+				Darwin:  []string{"Google Chrome.app/Contents/MacOS/Google Chrome", "Chrome.app/Contents/MacOS/Google Chrome"},
+				Linux:   []string{"google-chrome", "google-chrome-stable"},
+				Windows: []string{"Google/Chrome/Application/chrome.exe"},
+			},
+			ExtensionPage: "chrome://extensions/", DebuggingRequiresCustomProfile: true,
+			LinuxConfigHomeEnv:   "CHROME_CONFIG_HOME",
+			LinuxPolicyPath:      "/etc/opt/chrome/policies/managed/ctx-extensions.json",
+			ManagedPolicyDrivers: map[string]string{"windows": "powershell-registry", "linux": "managed-json"},
+			Store: &chromiumengine.StoreConfig{
+				DefaultStore: "chrome", UpdateURLs: map[string]string{"chrome": "https://clients2.google.com/service/update2/crx"},
+				WindowsVendor:              `Google\Chrome`,
+				MacUserDirectory:           "Library/Application Support/Google/Chrome/External Extensions",
+				MacSystemDirectory:         "/Library/Application Support/Google/Chrome/External Extensions",
+				LinuxDirectory:             "/opt/google/chrome/extensions",
+				LinuxAdditionalDirectories: []string{"/usr/share/google-chrome/extensions"},
+			},
+		},
 	}
 }
 
 func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) }
 
 func run(args []string, input io.Reader, stdout, stderr io.Writer) int {
+	if len(args) == 4 && args[1] == "management" {
+		return chromiumengine.RunManagement(chromeConfig(), args[0], input, stdout, stderr)
+	}
 	if len(args) != 3 {
 		fmt.Fprintln(stderr, "ctx: Chrome sharing needs profile resource operation")
 		return 2

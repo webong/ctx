@@ -35,8 +35,9 @@ type Response struct {
 
 // Operation names are stable public API names for CTX browser adapters.
 var operations = map[string]map[string]bool{
-	"extension":   {"targets": true, "capabilities": true, "prepare": true, "package": true, "sign": true, "stage": true, "install": true, "activate": true, "store_install": true, "store_remove": true},
+	"extension":   {"targets": true, "capabilities": true, "prepare": true, "package": true, "sign": true, "stage": true, "install": true, "activate": true, "store_install": true, "store_remove": true, "convert": true, "policy": true},
 	"userscript":  {"prepare": true, "install": true, "update": true, "list": true, "describe": true, "enable": true, "disable": true, "uninstall": true, "activate": true},
+	"session":     {"targets": true, "connect": true, "navigate": true, "inject": true, "replay": true},
 	"bookmarklet": {"encode": true, "decode": true, "install_page": true},
 }
 

@@ -14,6 +14,9 @@ import (
 func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) }
 
 func run(args []string, input io.Reader, stdout, stderr io.Writer) int {
+	if len(args) == 4 && args[1] == "management" && runtime.GOOS == "darwin" {
+		return kit.RunLocalManagement(nil, "safari", args[0], input, stdout, stderr, safariExtensionBackend{})
+	}
 	if len(args) != 3 || runtime.GOOS != "darwin" {
 		fmt.Fprintln(stderr, "ctx: Safari sharing requires macOS")
 		return 2

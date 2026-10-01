@@ -8,6 +8,7 @@ import (
 	"runtime"
 
 	chromiumengine "github.com/webong/ctx/adapters/chromium/engine"
+	"github.com/webong/ctx/browser/extension"
 	kit "github.com/webong/ctx/internal/app/browser/adapterkit"
 	"github.com/webong/ctx/internal/app/browser/share"
 )
@@ -17,12 +18,23 @@ func chromiumConfig() chromiumengine.Config {
 		Name: "chromium", MacUserData: "Chromium", WindowsUserData: `Chromium\User Data`, LinuxUserData: "chromium",
 		KeychainService: "Chromium Safe Storage", KeychainAccount: "Chromium", SecretApplication: "chromium",
 		WalletFolder: "Chromium Keys", WalletKey: "Chromium Safe Storage",
+		Extensions: chromiumengine.ExtensionManagementConfig{
+			Executables: extension.ExecutableLocations{
+				Darwin:  []string{"Chromium.app/Contents/MacOS/Chromium"},
+				Linux:   []string{"chromium", "chromium-browser"},
+				Windows: []string{"Chromium/Application/chrome.exe"},
+			},
+			ExtensionPage: "chrome://extensions/",
+		},
 	}
 }
 
 func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) }
 
 func run(args []string, input io.Reader, stdout, stderr io.Writer) int {
+	if len(args) == 4 && args[1] == "management" {
+		return chromiumengine.RunManagement(chromiumConfig(), args[0], input, stdout, stderr)
+	}
 	if len(args) != 3 {
 		fmt.Fprintln(stderr, "ctx: Chromium sharing needs profile resource operation")
 		return 2

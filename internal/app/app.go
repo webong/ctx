@@ -197,7 +197,7 @@ usage:
   ctx setup [adapters] [--all|--minimal|--adapters <name,...>]
   ctx ls <selector>
   ctx open [URL...]
-  ctx browser manage <extension|userscript|bookmarklet> <action> [--target <browser:profile>] [--input <json>]
+  ctx browser manage <extension|userscript|bookmarklet|session> <action> [--target <browser:profile>] [--input <json>]
   ctx doctor
   ctx build [provider|@instance] --cache-ref <registry-ref> [--] <build arguments>
   ctx share:manager image <sync|copy> <source> <target> <image>...

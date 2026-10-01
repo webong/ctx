@@ -38,6 +38,8 @@ type UserscriptRegistration = management.UserscriptRegistration
 type ReplayResult = management.ReplayResult
 type PageSessionRuntime = management.PageSessionRuntime
 type PageSession = management.PageSession
+type PageSessionState = management.PageSessionState
+type PageSessionBackend = kit.PageSessionBackend
 
 const ManagementVersion = management.Version
 

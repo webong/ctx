@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 
+	"github.com/webong/ctx/browser/extension"
 	kit "github.com/webong/ctx/internal/app/browser/adapterkit"
 	browsershare "github.com/webong/ctx/internal/app/browser/share"
 )
@@ -21,9 +22,14 @@ type Config struct {
 	WindowsProfileRoot       string
 	LinuxProfileRoot         string
 	LinuxFallbackProfileRoot string
+	ExtensionExecutables     extension.ExecutableLocations
+	NativeExtensions         bool
 }
 
 func Run(config Config, args []string, input io.Reader, stdout, stderr io.Writer) int {
+	if len(args) == 4 && args[1] == "management" {
+		return kit.RunLocalManagement(nil, config.Name, args[0], input, stdout, stderr, extensionBackend{config: config})
+	}
 	if len(args) != 3 {
 		fmt.Fprintln(stderr, "ctx: Firefox sharing needs profile resource operation")
 		return 2

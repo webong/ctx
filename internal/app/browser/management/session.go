@@ -9,6 +9,8 @@ type SessionTarget struct {
 	ID       string `json:"id,omitempty"`
 	Protocol string `json:"protocol"` // cdp or bidi
 	Endpoint string `json:"endpoint"`
+	URL      string `json:"url,omitempty"`
+	Title    string `json:"title,omitempty"`
 }
 
 // InjectionOptions describe when and in which JavaScript world code runs.
@@ -50,4 +52,12 @@ type PageSession interface {
 	Inject(context.Context, string, InjectionOptions) error
 	ReplayUserscripts(context.Context, []UserscriptRegistration) (ReplayResult, error)
 	Close(context.Context) error
+}
+
+// PageSessionState is optionally implemented by a native session so a workflow
+// can stop promptly when the attachment ends. Implementations with automatic
+// recovery keep Done open during a recoverable transport outage.
+type PageSessionState interface {
+	Done() <-chan struct{}
+	Err() error
 }

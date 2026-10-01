@@ -6,6 +6,21 @@ for the current operating system. It can be distributed as a platform-specific
 ctx installs adapters under `$CTX_HOME/adapters`; it never discovers or sources
 code from the current directory or arbitrary `PATH` entries.
 
+## Architecture and ownership
+
+Anything specific to a product, provider, browser, or native tool belongs in its
+adapter package. The adapter owns native protocols, installation and activation,
+discovery conventions, storage formats, signing tools, store URLs, settings
+paths, and diagnostics. CTX core owns generic contracts, validation, trust,
+selection, and dispatch through declared capabilities.
+
+Shared libraries provide portable workflows and utilities without choosing
+native behavior by adapter name or supplying a product-specific fallback.
+Related adapters may import an engine from the adapter that owns a common native
+mechanism. Product paths, identities, and supported routes are supplied by each
+product's adapter configuration. Adding an adapter should not require a new
+provider switch in core code.
+
 ## Manifest
 
 ~~~toml
@@ -380,10 +395,16 @@ External Go adapters import its stable public facade at
 `github.com/webong/ctx/adapter/browser`. A Go browser adapter can handle
 `share <profile> -- <resource> <operation>` in its main executable and use
 `browser.RunCookie` or `browser.RunPolicyExport`; it does not need a separate
-helper executable. The bare Chromium adapter owns the reusable storage engine at
+helper executable. The bare Chromium adapter owns the reusable native engine at
 `github.com/webong/ctx/adapters/chromium/engine`; Chrome and other
 Chromium-based Go adapters can configure and import it through its exported
-`Config`, `Cookie`, `List`, `Query`, `ReadValue`, `Import`, and `Probe` API. The versioned JSON
+`Config`, `Cookie`, `List`, `Query`, `ReadValue`, `Import`, `Probe`, and
+`RunManagement` API. The same engine owns CDP installation and activation, CRX
+packing, configured external store registration, and userscript session execution.
+Chrome and Edge supply their own executable paths, store URLs, and registration
+locations. The Firefox engine owns WebDriver BiDi installation and activation,
+profile discovery, and Mozilla signing. Safari owns app inspection, building,
+and its native installation handoff. The versioned JSON
 contract remains the interface for external adapters.
 
 Other Go services can import `github.com/webong/ctx/browser` and call
@@ -542,3 +563,31 @@ a privilege or manifest property.
 Direct `ctx adapter install ./directory` installation does not imply trust. Trust
 records a checksum over every file in the adapter directory. Any subsequent
 change makes the adapter untrusted until the user reviews and trusts it again.
+
+### Native browser page backends
+
+Adapters implementing the shared local manager can supply `PageSessionBackend`
+with `PageRuntime(ctx, profile, input)`. It returns the native
+`PageSessionRuntime`; endpoint discovery and connection behavior stay in the
+adapter. CTX handles the generic `session.targets|connect|navigate|inject|replay`
+workflow and userscript store reconciliation. `PageSessionState` exposes an
+optional terminal channel and error for long-running consumers. Native engines
+keep that channel open during automatic transport recovery, bounded to 30 seconds.
+Recovery keeps the selected page ID and restores userscripts and document-start
+injections; native adapters own the protocol and preload cleanup.
+
+The Chromium engine exports `NewPageSessionRuntime(config, endpoint)` for CDP,
+and the Firefox engine exports the corresponding BiDi factory. Chrome and Edge
+supply product conventions through their own configs. The shared WebSocket
+command transport lives under the Chromium adapter engine and contains no
+product discovery or page behavior. Native reconnect coordination is also under
+that adapter engine; each native backend supplies its own attachment and
+ownership recovery. Firefox accepts explicit provider-owned session URLs for
+resumable attachments and preserves those sessions on close. Core executables do not import either
+native engine.
+
+New extension operation names are `extension.convert` (Safari project
+conversion) and `extension.policy` (adapter-owned force/unforce/block/unblock
+policy routes). An adapter must declare each route it implements. See
+[browser management](browser-management.md) for input schemas, custom profile
+selection, lifecycle, and platform limits.

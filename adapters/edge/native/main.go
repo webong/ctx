@@ -8,6 +8,7 @@ import (
 	"runtime"
 
 	chromiumengine "github.com/webong/ctx/adapters/chromium/engine"
+	"github.com/webong/ctx/browser/extension"
 	kit "github.com/webong/ctx/internal/app/browser/adapterkit"
 	"github.com/webong/ctx/internal/app/browser/share"
 )
@@ -17,12 +18,35 @@ func edgeConfig() chromiumengine.Config {
 		Name: "edge", MacUserData: "Microsoft Edge", WindowsUserData: `Microsoft\Edge\User Data`, LinuxUserData: "microsoft-edge",
 		KeychainService: "Microsoft Edge Safe Storage", KeychainAccount: "Microsoft Edge", SecretApplication: "microsoft-edge",
 		WalletFolder: "Microsoft Edge Keys", WalletKey: "Microsoft Edge Safe Storage",
+		Extensions: chromiumengine.ExtensionManagementConfig{
+			Executables: extension.ExecutableLocations{
+				Darwin:  []string{"Microsoft Edge.app/Contents/MacOS/Microsoft Edge"},
+				Linux:   []string{"microsoft-edge", "microsoft-edge-stable"},
+				Windows: []string{"Microsoft/Edge/Application/msedge.exe"},
+			},
+			ExtensionPage:        "edge://extensions/",
+			ManagedPolicyDrivers: map[string]string{"windows": "powershell-registry"},
+			Store: &chromiumengine.StoreConfig{
+				DefaultStore: "edge", UpdateURLs: map[string]string{
+					"edge":   "https://edge.microsoft.com/extensionwebstorebase/v1/crx",
+					"chrome": "https://clients2.google.com/service/update2/crx",
+				},
+				WindowsVendor:      `Microsoft\Edge`,
+				MacUserDirectory:   "Library/Application Support/Microsoft Edge/External Extensions",
+				MacSystemDirectory: "/Library/Application Support/Microsoft/Edge/External Extensions",
+				LinuxDirectory:     ".config/microsoft-edge/External Extensions", LinuxDirectoryInHome: true,
+				LinuxAdditionalDirectories: []string{"/usr/share/microsoft-edge/extensions"},
+			},
+		},
 	}
 }
 
 func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) }
 
 func run(args []string, input io.Reader, stdout, stderr io.Writer) int {
+	if len(args) == 4 && args[1] == "management" {
+		return chromiumengine.RunManagement(edgeConfig(), args[0], input, stdout, stderr)
+	}
 	if len(args) != 3 {
 		fmt.Fprintln(stderr, "ctx: Edge sharing needs profile resource operation")
 		return 2

@@ -15,7 +15,7 @@ import (
 
 func browserCommand(resolver *config.Resolver, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 || args[0] != "manage" {
-		fmt.Fprintln(stderr, "ctx: browser requires manage <extension|userscript|bookmarklet> <action>")
+		fmt.Fprintln(stderr, "ctx: browser requires manage <extension|userscript|bookmarklet|session> <action>")
 		return 2
 	}
 	if len(args) < 3 {
@@ -75,8 +75,8 @@ func browserCommand(resolver *config.Resolver, args []string, stdout, stderr io.
 		return reportError(stderr, err)
 	}
 	var output strings.Builder
-	code := invokeAdapterIO(resolver, endpoint.Adapter, "manage", endpoint.Profile,
-		[]string{kind, action}, "", strings.NewReader(string(encoded)), &output, stderr)
+	code := invokeAdapterIO(resolver, endpoint.Adapter, "share", endpoint.Profile,
+		[]string{"management", kind, action}, "", strings.NewReader(string(encoded)), &output, stderr)
 	if code != 0 {
 		return code
 	}
