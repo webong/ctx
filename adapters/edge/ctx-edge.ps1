@@ -6,7 +6,7 @@ param(
 )
 
 function Find-Edge {
-    $command = Get-Command msedge -CommandType Application -ErrorAction SilentlyContinue
+    $command = Get-Command msedge -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($command) { return $command.Source }
     $candidates = @()
     if ($env:LOCALAPPDATA) { $candidates += (Join-Path $env:LOCALAPPDATA 'Microsoft\Edge\Application\msedge.exe') }

@@ -1,6 +1,7 @@
 package adapterkit
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -178,6 +179,11 @@ func RunSQLite(database string, readonly bool, query string) ([]byte, error) {
 	}
 	if !utf8.Valid(output) {
 		return nil, errors.New("sqlite3 returned invalid UTF-8 browser data")
+	}
+	// SQLite's JSON mode emits nothing for a query with no rows on some
+	// versions. Readers must receive the same empty array on every platform.
+	if readonly && len(bytes.TrimSpace(output)) == 0 {
+		return []byte("[]"), nil
 	}
 	return output, nil
 }

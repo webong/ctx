@@ -88,6 +88,8 @@ if "%1 %2"=="context inspect" exit /b 0
 echo %*
 '@ | Set-Content -Encoding ASCII (Join-Path $fakeBin 'docker.cmd')
 
+    # Keep duplicate application names on PATH. Adapters must choose the first
+    # executable, rather than combining all discovered paths into one command.
     foreach ($command in @('aws', 'gcloud', 'kubectl', 'psql', 'mysql', 'firefox')) {
         Copy-Item (Join-Path $bin 'ctx.exe') (Join-Path $fallbackBin "$command.exe")
     }
@@ -97,6 +99,13 @@ echo %*
     $env:APPDATA = Join-Path $testRoot 'AppData\Roaming'
     $env:LOCALAPPDATA = Join-Path $testRoot 'AppData\Local'
     $env:PATH = "$bin;$fakeBin;$fallbackBin;$env:PATH"
+    foreach ($command in @('aws', 'gcloud', 'kubectl', 'psql', 'mysql', 'firefox')) {
+        $applications = @(Get-Command $command -CommandType Application -ErrorAction Stop)
+        if ($applications.Count -lt 2) { throw "duplicate PATH fixture missing for $command" }
+        if ($applications[0].Source -ne (Join-Path $fakeBin "$command.cmd")) {
+            throw "first PATH candidate for $command is not the test executable"
+        }
+    }
     $profilesDirectory = Join-Path $env:APPDATA 'Mozilla\Firefox'
     New-Item -ItemType Directory -Force -Path $profilesDirectory | Out-Null
     "[Profile0]`r`nName=client-a`r`n" | Set-Content -Encoding ASCII (Join-Path $profilesDirectory 'profiles.ini')

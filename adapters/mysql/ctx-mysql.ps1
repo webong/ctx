@@ -5,7 +5,7 @@ param(
     [Parameter(Position = 2, ValueFromRemainingArguments = $true)][string[]]$Arguments
 )
 
-$mysql = Get-Command mysql -CommandType Application -ErrorAction SilentlyContinue
+$mysql = Get-Command mysql -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
 if (-not $mysql) { [Console]::Error.WriteLine('mysql: mysql client is not installed'); exit 127 }
 
 switch ($Operation) {
@@ -13,7 +13,7 @@ switch ($Operation) {
     'run' {
         if ($Arguments.Count -gt 0 -and $Arguments[0] -eq '--') { $Arguments = @($Arguments | Select-Object -Skip 1) }
         $commandName = if ($env:CTX_ADAPTER_COMMAND) { $env:CTX_ADAPTER_COMMAND } else { 'mysql' }
-        $client = Get-Command $commandName -CommandType Application -ErrorAction SilentlyContinue
+        $client = Get-Command $commandName -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
         if (-not $client) { [Console]::Error.WriteLine("mysql: $commandName is not installed"); exit 127 }
         $hasLoginPath = $false
         foreach ($argument in $Arguments) { if ($argument -eq '--login-path' -or $argument -like '--login-path=*') { $hasLoginPath = $true } }

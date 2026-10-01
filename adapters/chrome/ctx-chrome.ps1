@@ -6,7 +6,7 @@ param(
 )
 
 function Find-Chrome {
-    $command = Get-Command chrome -CommandType Application -ErrorAction SilentlyContinue
+    $command = Get-Command chrome -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($command) { return $command.Source }
     $candidates = @()
     if ($env:LOCALAPPDATA) { $candidates += (Join-Path $env:LOCALAPPDATA 'Google\Chrome\Application\chrome.exe') }

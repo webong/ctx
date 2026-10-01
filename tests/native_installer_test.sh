@@ -5,6 +5,12 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$TEST_ROOT"' EXIT HUP INT TERM
 
+# Preserve the caller's Go caches before isolating installation state. Module
+# downloads are read-only and cannot be removed by the temporary-home cleanup.
+GOCACHE=$(go env GOCACHE)
+GOMODCACHE=$(go env GOMODCACHE)
+export GOCACHE GOMODCACHE
+
 export HOME="$TEST_ROOT/home"
 export CTX_HOME="$TEST_ROOT/config"
 export CTX_BIN_DIR="$TEST_ROOT/bin"

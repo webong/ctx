@@ -19,10 +19,6 @@ func TestFirefoxCookieSharingDestinations(t *testing.T) {
 		t.Skip("sqlite3 is not installed")
 	}
 	root := t.TempDir()
-	t.Setenv("HOME", filepath.Join(root, "home"))
-	t.Setenv("CTX_HOME", filepath.Join(root, "state"))
-	t.Setenv("CTX_ADAPTER_HOME", filepath.Join(root, "state", "adapters"))
-	t.Setenv("APPDATA", filepath.Join(root, "home", "AppData", "Roaming"))
 	adapterSource := filepath.Join(root, "firefox-adapter")
 	if err := os.Mkdir(adapterSource, 0o700); err != nil {
 		t.Fatal(err)
@@ -56,6 +52,12 @@ func TestFirefoxCookieSharingDestinations(t *testing.T) {
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("build browser adapter helper: %v %s", err, output)
 	}
+	// Build with the caller's Go environment before isolating browser state.
+	// Module downloads under a fake HOME are read-only and break TempDir cleanup.
+	t.Setenv("HOME", filepath.Join(root, "home"))
+	t.Setenv("CTX_HOME", filepath.Join(root, "state"))
+	t.Setenv("CTX_ADAPTER_HOME", filepath.Join(root, "state", "adapters"))
+	t.Setenv("APPDATA", filepath.Join(root, "home", "AppData", "Roaming"))
 	profilesRoot := filepath.Join(root, "home", ".mozilla", "firefox")
 	if runtime.GOOS == "darwin" {
 		profilesRoot = filepath.Join(root, "home", "Library", "Application Support", "Firefox")

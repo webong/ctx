@@ -6,7 +6,7 @@ param(
 )
 
 function Find-Brave {
-    $command = Get-Command brave -CommandType Application -ErrorAction SilentlyContinue
+    $command = Get-Command brave -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($command) { return $command.Source }
     $candidates = @()
     if ($env:LOCALAPPDATA) { $candidates += (Join-Path $env:LOCALAPPDATA 'BraveSoftware\Brave-Browser\Application\brave.exe') }
