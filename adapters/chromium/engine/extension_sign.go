@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -71,15 +70,12 @@ func SignChromiumCRX(ctx context.Context, browser, executable, source, output, r
 		return extension.BuildResult{}, fmt.Errorf("browser CRX packaging failed: %w: %s", err, strings.TrimSpace(string(outputText)))
 	}
 	crx := staged + ".crx"
-	file, err := os.Open(crx)
+	artifact, err := InspectCRX(crx)
 	if err != nil {
-		return extension.BuildResult{}, errors.New("browser did not produce a CRX")
+		return extension.BuildResult{}, fmt.Errorf("browser did not produce a valid signed CRX3: %w", err)
 	}
-	var magic [4]byte
-	_, readErr := io.ReadFull(file, magic[:])
-	_ = file.Close()
-	if readErr != nil || string(magic[:]) != "Cr24" {
-		return extension.BuildResult{}, errors.New("browser output is not a CRX")
+	if artifact.Version != description.Version {
+		return extension.BuildResult{}, errors.New("packaged CRX version differs from reviewed source")
 	}
 	if current, err := extension.Inspect(source); err != nil || current.Revision != revision {
 		return extension.BuildResult{}, errors.New("extension changed during CRX packaging")
@@ -96,10 +92,14 @@ func SignChromiumCRX(ctx context.Context, browser, executable, source, output, r
 		return extension.BuildResult{}, err
 	}
 	artifactRevision, err := extension.FileSHA256(output)
-	if err != nil {
-		return extension.BuildResult{}, err
+	if err != nil || artifactRevision != artifact.Revision {
+		_ = os.Remove(output)
+		if generatedKey {
+			_ = os.Remove(keyPath)
+		}
+		return extension.BuildResult{}, errors.New("CRX artifact changed while publishing the build output")
 	}
 	return extension.BuildResult{Status: "signed", Browser: browser, Source: output, SourceRevision: description.Revision,
-		ArtifactRevision: artifactRevision, KeyPath: keyPath,
-		NextAction: "Keep the private key for updates. The selected browser's installation rules still apply; use the original source with extension install or run for local loading."}, nil
+		ArtifactRevision: artifactRevision, KeyPath: keyPath, ID: artifact.ID, Version: artifact.Version,
+		NextAction: "Keep the private key private and reuse it for updates. Generate an update manifest for hosting, or register the CRX on a supported platform. Use the original source or ZIP with install for manual Load unpacked."}, nil
 }

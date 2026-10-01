@@ -42,7 +42,7 @@ the separation between extension installation and session activation. Use
 
 The operation catalog lists `extension` actions `targets`, `capabilities`,
 `prepare`, `package`, `sign`, `stage`, `install`, `activate`,
-`store_install`, `store_remove`, `convert`, and `policy`.
+`store_install`, `store_remove`, `update_manifest`, `convert`, and `policy`.
 Preparation inspects the package and produces a revision for review. Packaging
 and signing produce artifacts. Staging copies files for a later browser action.
 Installation uses the selected browser's native or guided install route.
@@ -137,9 +137,19 @@ world at document start; the host page can inspect or interfere with them.
 Store request input uses an extension `id`, optional `store` (`chrome` or
 `edge`), and optional `externalDirectory`. It registers a browser-native
 request; it does not claim that the browser fetched or enabled the extension.
+Named-store requests use preferences JSON on macOS/Linux and the machine's
+32-bit registry view on Windows. macOS can select its documented all-users
+`externalDirectory`; system ownership/permission checks remain adapter-owned.
 Extension signing requires the caller's browser executable, web-ext
 credentials, or Xcode project and signing identity, depending on the selected
 browser.
+
+Chromium-family adapters also inspect signed CRX3 artifacts through `prepare`
+and generate publishing XML through `update_manifest`. Chrome's Linux adapter
+accepts custom `updateURL` or a reviewed local CRX `source` in `store_install`;
+macOS/Windows retain named-store registration and manual Load unpacked rules.
+See [extension distribution](extension-distribution.md) for build, hosting,
+web install interfaces, request removal, and capability discovery.
 
 ## Shared workflow libraries
 

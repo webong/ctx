@@ -20,6 +20,8 @@ type BuildResult struct {
 	SourceRevision   string `json:"sourceRevision"`
 	ArtifactRevision string `json:"artifactRevision"`
 	KeyPath          string `json:"keyPath,omitempty"`
+	ID               string `json:"id,omitempty"`
+	Version          string `json:"version,omitempty"`
 	NextAction       string `json:"nextAction,omitempty"`
 }
 

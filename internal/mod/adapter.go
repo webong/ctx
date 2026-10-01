@@ -31,7 +31,7 @@ var knownBrowserManagementOperations = map[string]bool{
 	"extension.targets": true, "extension.capabilities": true, "extension.prepare": true,
 	"extension.package": true, "extension.sign": true, "extension.stage": true,
 	"extension.install": true, "extension.activate": true, "extension.store_install": true,
-	"extension.convert": true, "extension.policy": true, "extension.store_remove": true, "userscript.prepare": true, "userscript.install": true,
+	"extension.convert": true, "extension.policy": true, "extension.store_remove": true, "extension.update_manifest": true, "userscript.prepare": true, "userscript.install": true,
 	"userscript.update": true, "userscript.list": true, "userscript.describe": true,
 	"userscript.enable": true, "userscript.disable": true, "userscript.uninstall": true,
 	"userscript.activate": true, "bookmarklet.encode": true, "bookmarklet.decode": true,

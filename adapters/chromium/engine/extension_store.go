@@ -1,6 +1,7 @@
 package chromium
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -9,8 +10,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strings"
+	"time"
 	"unicode/utf16"
 
 	"github.com/webong/ctx/browser/extension"
@@ -29,6 +30,8 @@ type StoreConfig struct {
 	LinuxDirectory             string
 	LinuxDirectoryInHome       bool
 	LinuxAdditionalDirectories []string
+	LinuxLocalCRX              bool
+	LinuxUpdateURL             bool
 }
 
 func changeStoreInstall(goos, browser string, config StoreConfig, store, id, directory string, remove bool) (extension.InstallResult, error) {
@@ -136,6 +139,10 @@ func checkExternalPath(directory string) error {
 }
 
 func changeUnixExternal(goos, browser string, config StoreConfig, id, url, directory string, remove bool) (string, error) {
+	return changeUnixExternalProperties(goos, browser, config, id, map[string]string{"external_update_url": url}, directory, remove)
+}
+
+func changeUnixExternalProperties(goos, browser string, config StoreConfig, id string, properties map[string]string, directory string, remove bool) (string, error) {
 	if directory == "" {
 		var err error
 		directory, err = defaultExternalDirectory(goos, config)
@@ -150,72 +157,117 @@ func changeUnixExternal(goos, browser string, config StoreConfig, id, url, direc
 	if err := checkExternalPath(directory); err != nil {
 		return "", err
 	}
+	macSystem := goos == "darwin" && config.MacSystemDirectory != "" && directory == filepath.Clean(config.MacSystemDirectory)
+	if macSystem {
+		if err := checkMacSystemExternalPath(directory); err != nil {
+			return "", err
+		}
+	}
 	filePath := filepath.Join(directory, id+".json")
 	if remove {
+		if err := checkExternalPreferenceFile(filePath, macSystem); err != nil {
+			return "", err
+		}
 		content, err := os.ReadFile(filePath)
 		if err != nil {
 			return "", err
 		}
-		var preference map[string]string
-		if err := json.Unmarshal(content, &preference); err != nil {
+		if err := decodeExternalProperties(content, properties); err != nil {
 			return "", err
-		}
-		if preference["external_update_url"] != url || len(preference) != 1 {
-			return "", errors.New("external request differs from the generated store request; refusing to remove it")
 		}
 		return filePath, os.Remove(filePath)
 	}
-	if err := os.MkdirAll(directory, 0755); err != nil {
+	if err := makeExternalDirectories(directory); err != nil {
 		return "", err
+	}
+	if macSystem {
+		if err := checkMacSystemExternalPath(directory); err != nil {
+			return "", err
+		}
 	}
 	file, err := os.OpenFile(filePath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
 	if err != nil {
 		return "", err
 	}
-	content, _ := json.Marshal(map[string]string{"external_update_url": url})
+	// Chrome's machine preferences must remain readable with a restrictive
+	// umask. Only this newly created file is changed.
+	if err := file.Chmod(0644); err != nil {
+		file.Close()
+		os.Remove(filePath)
+		return "", err
+	}
+	content, _ := json.Marshal(properties)
 	_, writeErr := file.Write(append(content, '\n'))
 	closeErr := file.Close()
 	if writeErr != nil || closeErr != nil {
 		os.Remove(filePath)
 		return "", errors.Join(writeErr, closeErr)
 	}
+	if err := checkExternalPreferenceFile(filePath, macSystem); err != nil {
+		os.Remove(filePath)
+		return "", err
+	}
 	return filePath, nil
 }
 
 func changeWindowsExternal(config StoreConfig, id, url string, remove bool) (string, error) {
-	path, script := windowsExternalScript(config, id, url, remove)
+	script := windowsExternalScript(config, id, url, remove)
 	encoded := encodePowerShell(script)
-	output, err := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded).CombinedOutput()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	output, err := exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded).CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("Windows external extension registry update failed (run with administrator rights): %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	path := strings.TrimSpace(string(output))
+	if !strings.HasPrefix(path, `Registry::HKEY_LOCAL_MACHINE\Software\`) || !strings.HasSuffix(path, config.WindowsVendor+`\Extensions\`+id) {
+		return "", errors.New("Windows external registration returned an invalid registry location")
 	}
 	return path, nil
 }
 
-func windowsExternalScript(config StoreConfig, id, url string, remove bool) (string, string) {
-	vendor := config.WindowsVendor
-	// Registry provider paths make the intended hive explicit. The documented
-	// 64-bit location is Wow6432Node; 32-bit Windows uses the plain path.
-	base := `Registry::HKEY_LOCAL_MACHINE\Software\`
-	if strings.Contains(runtime.GOARCH, "64") {
-		base += `Wow6432Node\`
-	}
-	path := base + vendor + `\Extensions\` + id
-	script := "$ErrorActionPreference = 'Stop'\n$path = '" + path + "'\n$url = '" + url + "'\n"
+func windowsExternalScript(config StoreConfig, id, url string, remove bool) string {
+	// Registry32 selects Wow6432Node on a 64-bit OS and the plain Software key
+	// on a 32-bit OS, independently of the CTX or PowerShell process bitness.
+	quote := func(value string) string { return "'" + strings.ReplaceAll(value, "'", "''") + "'" }
+	subkey := `Software\` + config.WindowsVendor + `\Extensions\` + id
+	script := "$ErrorActionPreference = 'Stop'\n$subkey = " + quote(subkey) + "\n$url = " + quote(url) + `
+$hive = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::LocalMachine, [Microsoft.Win32.RegistryView]::Registry32)
+$key = $null
+try {
+    $key = $hive.OpenSubKey($subkey, $true)
+`
 	if remove {
-		script += "if (-not (Test-Path -LiteralPath $path)) { throw 'External request does not exist' }\n" +
-			"$item = Get-ItemProperty -LiteralPath $path\n" +
-			"$actual = $item.update_url\n" +
-			"if ($actual -ne $url) { throw 'External request has a different update URL' }\n" +
-			"$extra = @($item.PSObject.Properties | Where-Object { $_.Name -notlike 'PS*' -and $_.Name -ne 'update_url' })\n" +
-			"if ($extra.Count -gt 0) { throw 'External request has additional metadata; refusing to remove it' }\n" +
-			"Remove-Item -LiteralPath $path -Force\n"
+		script += `    if ($null -eq $key) { throw 'External request does not exist' }
+    $names = @($key.GetValueNames())
+    if ($names.Count -ne 1 -or $names[0] -cne 'update_url' -or $key.SubKeyCount -ne 0) { throw 'External request has additional metadata; refusing to remove it' }
+    if ($key.GetValueKind('update_url') -ne [Microsoft.Win32.RegistryValueKind]::String -or $key.GetValue('update_url') -cne $url) { throw 'External request has a different update URL or registry value type' }
+    $key.Dispose()
+    $key = $null
+    $hive.DeleteSubKey($subkey, $true)
+`
 	} else {
-		script += "if (Test-Path -LiteralPath $path) { throw 'External request already exists' }\n" +
-			"New-Item -Path $path -Force | Out-Null\n" +
-			"New-ItemProperty -LiteralPath $path -Name update_url -Value $url -PropertyType String -Force | Out-Null\n"
+		script += `    if ($null -ne $key) { throw 'External request already exists' }
+    $key = $hive.CreateSubKey($subkey)
+    try { $key.SetValue('update_url', $url, [Microsoft.Win32.RegistryValueKind]::String) }
+    catch {
+        if ($key.ValueCount -eq 0 -and $key.SubKeyCount -eq 0) {
+            $key.Dispose()
+            $key = $null
+            $hive.DeleteSubKey($subkey, $false)
+        }
+        throw
+    }
+`
 	}
-	return path, script
+	script += `} finally {
+    if ($null -ne $key) { $key.Dispose() }
+    $hive.Dispose()
+}
+$base = 'Registry::HKEY_LOCAL_MACHINE\Software\'
+if ([Environment]::Is64BitOperatingSystem) { $base += 'Wow6432Node\' }
+[Console]::Out.Write($base + ` + quote(config.WindowsVendor+`\Extensions\`+id) + ")\n"
+	return script
 }
 
 func encodePowerShell(script string) string {

@@ -6,6 +6,10 @@ type InstallCapability struct {
 	Browser                string   `json:"browser"`
 	ExternalStoreRequest   bool     `json:"externalStoreRequest"`
 	ExternalStoreDriver    string   `json:"externalStoreDriver,omitempty"`
+	ExternalLocalPackage   bool     `json:"externalLocalPackage"`
+	ExternalUpdateURL      bool     `json:"externalUpdateURL"`
+	ExternalInstallScope   string   `json:"externalInstallScope,omitempty"`
+	UpdateManifest         bool     `json:"updateManifest"`
 	SupportedStores        []string `json:"supportedStores,omitempty"`
 	ManagedPolicy          bool     `json:"managedPolicy"`
 	ManagedPolicyDriver    string   `json:"managedPolicyDriver,omitempty"`

@@ -626,8 +626,12 @@ ownership recovery. Firefox accepts explicit provider-owned session URLs for
 resumable attachments and preserves those sessions on close. Core executables do not import either
 native engine.
 
-New extension operation names are `extension.convert` (Safari project
-conversion) and `extension.policy` (adapter-owned force/unforce/block/unblock
-policy routes). An adapter must declare each route it implements. See
+Native extension operation names include `extension.convert` (Safari project
+conversion), `extension.policy` (adapter-owned force/unforce/block/unblock
+policy routes), and `extension.update_manifest` (publishing metadata generation).
+An adapter must declare each route it implements. See
 [browser management](browser-management.md) for input schemas, custom profile
 selection, lifecycle, and platform limits.
+The [extension distribution guide](extension-distribution.md) describes CRX
+inspection, hosting metadata, browser/platform capabilities, and local/server
+registration. Native formats remain inside adapter packages.

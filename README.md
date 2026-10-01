@@ -55,7 +55,7 @@ their runtime. `supports` describes resource kinds the native tool can manage;
 | Project contexts | Select native tool contexts in `.ctx`, group selections in profiles, inspect resolution, and apply profile environment values to a command or child shell. |
 | Computer tools | Route Kubernetes, AWS, gcloud, PostgreSQL, and MySQL commands through their selected contexts. Claude Code and Codex adapters provide CLI shims, project hooks, and native plugin delegation. |
 | Managers | Route Docker, Podman, nerdctl, and Apple Container commands. Register named engine connections, use supported registry build caches, and transfer images or named volumes between engines. |
-| Browsers | Open URLs in a selected Firefox, Chrome, Chromium, Edge, Brave, or Safari profile. Trusted adapters can expose profile-scoped extension, userscript, bookmarklet, and native page-session workflows through the [browser management API](docs/browser-management.md). |
+| Browsers | Open URLs in a selected Firefox, Chrome, Chromium, Edge, Brave, or Safari profile. Trusted adapters expose extension, userscript, bookmarklet, and native page-session workflows through the [browser management API](docs/browser-management.md), including [CRX publishing and supported local/server installation](docs/extension-distribution.md). |
 | System graph | Scan trusted adapters for available contexts and capabilities, resolve usable providers, and inspect or export the local inventory. Other services can import the graph and supervisor Go packages. |
 | Extensions | Install maintained or third-party adapters on demand. A prebuilt, platform-specific adapter archive works with a bare ctx binary; building an adapter from Go source requires Go. |
 

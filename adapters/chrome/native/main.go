@@ -34,6 +34,8 @@ func chromeConfig() chromiumengine.Config {
 				MacSystemDirectory:         "/Library/Application Support/Google/Chrome/External Extensions",
 				LinuxDirectory:             "/opt/google/chrome/extensions",
 				LinuxAdditionalDirectories: []string{"/usr/share/google-chrome/extensions"},
+				LinuxLocalCRX:              true,
+				LinuxUpdateURL:             true,
 			},
 		},
 	}

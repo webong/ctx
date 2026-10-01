@@ -46,6 +46,9 @@ type extensionInput struct {
 	TargetID          string `json:"targetId"`
 	ID                string `json:"id"`
 	Store             string `json:"store"`
+	UpdateURL         string `json:"updateURL"`
+	CodebaseURL       string `json:"codebaseURL"`
+	Version           string `json:"version"`
 	ExternalDirectory string `json:"externalDirectory"`
 	PolicyAction      string `json:"policyAction"`
 	ProfilePath       string `json:"profilePath"`
@@ -83,6 +86,9 @@ func (backend extensionBackend) ManageExtension(ctx context.Context, profile, ac
 	case "sign":
 		result, err := SignChromiumCRX(ctx, backend.config.Name, input.Executable, input.Source, input.Output, input.Revision, input.KeyPath)
 		return result, "signed", err
+	case "update_manifest":
+		result, err := CRXUpdateManifest(input.Source, input.Revision, input.CodebaseURL, input.Output)
+		return result, result.Status, err
 	case "policy":
 		result, err := ManageExtensionPolicy(ctx, backend.config, input.Store, input.ID, input.PolicyAction)
 		return result, result.Status, err
@@ -90,9 +96,12 @@ func (backend extensionBackend) ManageExtension(ctx context.Context, profile, ac
 		if backend.config.Extensions.Store == nil {
 			return nil, "", fmt.Errorf("adapter %s has no external store request route", backend.config.Name)
 		}
-		result, err := changeStoreInstall(runtime.GOOS, backend.config.Name, *backend.config.Extensions.Store, input.Store, input.ID, input.ExternalDirectory, action == "store_remove")
+		result, err := changeDistributionInstall(runtime.GOOS, backend.config.Name, *backend.config.Extensions.Store, input, action == "store_remove")
 		return result, result.Status, err
 	case "install", "activate":
+		if strings.EqualFold(filepath.Ext(input.Source), ".crx") {
+			return nil, "", fmt.Errorf("CRX registration uses store_install on supported platforms; install and activate require source directories or ZIPs for Load unpacked")
+		}
 		capability := extensionCapability(backend.config)
 		if (action == "install" && !capability.PersistentLocalInstall) || (action == "activate" && !capability.SessionLoad) {
 			return nil, "", fmt.Errorf("%s", capability.Reason)
@@ -212,9 +221,15 @@ func (backend extensionBackend) resolveTargetInput(profile string, input extensi
 }
 
 func extensionCapability(config Config) extension.InstallCapability {
-	result := extension.InstallCapability{Browser: config.Name}
+	result := extension.InstallCapability{Browser: config.Name, UpdateManifest: true}
 	if store := config.Extensions.Store; store != nil {
 		result.ExternalStoreRequest = runtime.GOOS == "darwin" || runtime.GOOS == "linux" || runtime.GOOS == "windows"
+		result.ExternalLocalPackage = runtime.GOOS == "linux" && store.LinuxLocalCRX
+		result.ExternalUpdateURL = runtime.GOOS == "linux" && store.LinuxUpdateURL
+		result.ExternalInstallScope = "machine"
+		if runtime.GOOS == "darwin" || runtime.GOOS == "linux" && store.LinuxDirectoryInHome {
+			result.ExternalInstallScope = "browser-user"
+		}
 		for name := range store.UpdateURLs {
 			result.SupportedStores = append(result.SupportedStores, name)
 		}
