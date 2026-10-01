@@ -146,7 +146,18 @@ echo %*
         & $ctx set docker alpha | Out-Null; Assert-Success 'Docker selection restore'
         if (@(& $ctx ls manager) -notcontains 'docker:alpha') { throw 'manager provider listing did not include docker:alpha' }
         Assert-Success 'manager provider listing'
-        & $ctx doctor | Out-Null; Assert-Success 'ctx doctor'
+
+        # AllAdapters also activates tools the synthetic fixture does not
+        # provide. Keep the full installation check, then diagnose only the
+        # adapters backed by fake executables rather than the runner's tools.
+        $fixtureAdapters = @('aws', 'gcloud', 'kube', 'postgres', 'mysql', 'firefox', 'docker')
+        Get-ChildItem (Join-Path $config 'adapters') -Directory | ForEach-Object {
+            if ($fixtureAdapters -notcontains $_.Name) {
+                & $ctx adapter remove $_.Name | Out-Null
+                Assert-Success "remove unexercised adapter $($_.Name)"
+            }
+        }
+        & $ctx doctor; Assert-Success 'ctx doctor'
     }
     finally {
         Pop-Location
