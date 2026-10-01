@@ -67,6 +67,8 @@ type Manifest struct {
 	ComputerHookTemplate string
 	ShareSpaces          []string
 	BrowserShare         []string
+	BrowserQueryPriority int
+	BrowserQueryAuto     bool
 	OverrideEnv          []string
 	DefaultProvider      bool
 	SelfContained        bool
@@ -130,9 +132,21 @@ func LoadDirectoryForOS(directory, goos string) (*Adapter, error) {
 		ComputerHookTemplate: values["computer_hook_template"],
 		ShareSpaces:          splitList(values["share_spaces"]),
 		BrowserShare:         splitList(values["browser_share"]),
+		BrowserQueryPriority: 1000,
+		BrowserQueryAuto:     values["browser_query_auto"] != "false",
 		OverrideEnv:          splitList(values["override_env"]),
 		DefaultProvider:      values["default_provider"] == "true",
 		SelfContained:        values["self_contained"] == "true",
+	}
+	if raw := values["browser_query_priority"]; raw != "" {
+		priority, err := strconv.Atoi(raw)
+		if err != nil || priority < 0 || priority > 1000 {
+			return nil, fmt.Errorf("adapter %s has invalid browser_query_priority %q (expected 0..1000)", manifest.Name, raw)
+		}
+		manifest.BrowserQueryPriority = priority
+	}
+	if raw := values["browser_query_auto"]; raw != "" && raw != "true" && raw != "false" {
+		return nil, fmt.Errorf("adapter %s has invalid browser_query_auto %q", manifest.Name, raw)
 	}
 	if manifest.APIVersion == legacyAPIVersion || manifest.APIVersion == legacyDecimalAPIVersion {
 		if err := normalizeLegacyManifest(&manifest, values["kind"]); err != nil {
@@ -140,6 +154,9 @@ func LoadDirectoryForOS(directory, goos string) (*Adapter, error) {
 		}
 	} else if values["kind"] != "" {
 		return nil, fmt.Errorf("adapter %s uses removed manifest field kind; declare runtime and surfaces", manifest.Name)
+	}
+	if manifest.Runtime != "browser" && (values["browser_query_priority"] != "" || values["browser_query_auto"] != "") {
+		return nil, fmt.Errorf("adapter %s browser query preferences require the browser runtime", manifest.Name)
 	}
 	if manifest.SelectorKey == "" && !hasComputerEndpoint(manifest) {
 		if manifest.Runtime == "browser" {

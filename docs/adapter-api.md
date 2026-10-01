@@ -122,6 +122,10 @@ runtime = "browser"
 capabilities = "list,validate,open,doctor,share"
 share_spaces = "browser"
 browser_share = "cookie.list,cookie.export,cookie.query,cookie.import,policy.export,certificate.list,certificate.export,certificate.import"
+# Optional automatic query order (lower is earlier; default 1000).
+browser_query_priority = "80"
+# Optional. False requires callers to name this adapter explicitly.
+browser_query_auto = "true"
 ~~~
 
 Browser adapters can also expose profile-management workflows with the
@@ -346,9 +350,12 @@ receives `site` and a listed `cookie`, then returns that cookie with its value.
 `cookie.import` receives `bundle` and `replace`, and returns no body.
 `cookie.query` receives `site` and optional `names`, `include_expired`, and
 `allow_all_hosts`. The site can be omitted only when `allow_all_hosts` is true.
-It returns `{"cookies":[...],"warnings":[...]}`; cookies include their values,
+It returns `{"cookies":[...],"warnings":[...],"store_path":"..."}`; cookies include their values,
 while warnings describe individual reads that failed. Do not put cookie values
-in warnings. Query results must obey the requested site, name, and expiry
+in warnings. `store_path` is optional and identifies the original on-disk
+cookie store when one path represents the query. Go adapters using `CookieBackend`
+set `QueryHandleIsStorePath` only when their query handle is that store path;
+otherwise the handle stays opaque and no path is inferred. Query results must obey the requested site, name, and expiry
 filters. An adapter that cannot query all hosts or include expired rows should
 omit `cookie.query` or reject those options explicitly.
 `policy.export` receives only `version` and returns a policy bundle with
@@ -368,6 +375,8 @@ policy, and generic resource envelope types. External adapters implement the
 documented JSON contract directly. Cookie fields
 shared across browsers are portable; optional browser-specific fields go in
 `attributes` with namespaced keys such as `firefox.origin_attributes`.
+CTX treats these attributes as opaque and compares the complete map when
+merging cookies, so adapters can preserve their native cookie scopes.
 Firefox adapters may also expose `firefox.container_id` and
 `firefox.container_name` for explicit cookie selection; container IDs are
 profile-local and must not be silently copied to another profile.
@@ -412,9 +421,19 @@ Other Go services can import `github.com/webong/ctx/browser` and call
 The library invokes installed, trusted browser
 adapters, combines scoped cookies, and returns source warnings. Its options
 also support ordered merge/first results, browser/profile discovery, inline
-JSON/Base64/file cookies, timeout, all-host reads, and expired cookies. A
+JSON/Base64/file cookies, fallback inline cookies after adapter reads, timeout,
+all-host reads, and expired cookies. A
 trusted adapter with only list/export can serve ordinary site queries; the
 all-host and expired modes require `cookie.query`.
+`Options.PreferredSource` moves one `browser:profile` endpoint ahead of
+automatic discovery. The CLI fills it from the selected ctx browser. During
+automatic discovery, ctx sorts trusted adapters by `browser_query_priority`
+and name, and omits those with `browser_query_auto = "false"`. Explicit
+`Sources` and `Browsers` always retain caller order and can select an omitted
+adapter. `PreferredSource` is an explicit selection and can also select an
+adapter omitted from automatic discovery. Result cookies retain a `source` label and add structured
+`source_info` with adapter, profile, and any adapter-reported store path.
+Inline fallback cookies carry `source_info.fallback = true`.
 
 For example, `cookie.list` receives `{"version":2,"site":"https://example.com"}`
 and can respond with:

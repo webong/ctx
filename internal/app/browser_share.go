@@ -91,7 +91,7 @@ func cookieMatchesAttributes(cookie browserCookie, filter cookieAttributeFilter)
 
 func shareBrowserCommand(resolver *config.Resolver, args []string, stdout, stderr io.Writer) int {
 	if len(args) > 1 && args[0] == "cookie" && args[1] == "query" {
-		return shareBrowserCookieQuery(args[2:], stdout, stderr)
+		return shareBrowserCookieQuery(resolver, args[2:], stdout, stderr)
 	}
 	if len(args) > 0 && args[0] == "capabilities" {
 		flags := flag.NewFlagSet("share:browser capabilities", flag.ContinueOnError)

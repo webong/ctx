@@ -32,7 +32,8 @@ const (
 )
 
 // InlineCookies supplies a local cookie array or {"cookies": [...]} object.
-// Exactly one field may be set. It is tried before installed adapters.
+// Exactly one field may be set. Options.Inline is tried before adapters;
+// Options.FallbackInline is tried after them.
 type InlineCookies struct {
 	JSON   []byte
 	Base64 string
@@ -42,18 +43,23 @@ type InlineCookies struct {
 // Options selects sites, adapters, and profiles. Sources contains explicit
 // browser:profile endpoints in priority order. Browsers may contain adapter
 // names and uses Profiles to select one profile per adapter; otherwise all
-// discoverable profiles are used. With neither field, all trusted installed
-// browser adapters are discovered. A URL or Origins entry is required unless
+// discoverable profiles are used. With neither field, trusted installed browser
+// adapters that permit automatic queries are discovered. A URL or Origins entry is required unless
 // AllowAllHosts is explicitly set.
 type Options struct {
-	URL            string
-	Origins        []string
-	Names          []string
-	Sources        []string
-	Browsers       []string
-	Profiles       map[string]string
-	Mode           Mode
-	Inline         InlineCookies
+	URL      string
+	Origins  []string
+	Names    []string
+	Sources  []string
+	Browsers []string
+	Profiles map[string]string
+	// PreferredSource is a browser:profile endpoint tried first during automatic discovery.
+	PreferredSource string
+	Mode            Mode
+	Inline          InlineCookies
+	// FallbackInline is read after adapters and fills scopes they could not read.
+	// In ModeFirst it is used only when earlier sources returned no matching cookies.
+	FallbackInline InlineCookies
 	InlineOnly     bool
 	IncludeExpired bool
 	AllowAllHosts  bool
@@ -64,7 +70,18 @@ type Options struct {
 // Cookie includes its portable browser fields and the endpoint that supplied it.
 type Cookie struct {
 	browser.Cookie
-	Source string `json:"source"`
+	Source     string     `json:"source"`
+	SourceInfo SourceInfo `json:"source_info"`
+}
+
+// SourceInfo describes the adapter and profile that supplied a cookie.
+// StorePath is available when an adapter reports its on-disk cookie store.
+type SourceInfo struct {
+	Adapter   string `json:"adapter,omitempty"`
+	Profile   string `json:"profile,omitempty"`
+	StorePath string `json:"store_path,omitempty"`
+	Inline    bool   `json:"inline,omitempty"`
+	Fallback  bool   `json:"fallback,omitempty"`
 }
 
 // Result retains partial success when an unavailable source reports a warning.
@@ -103,15 +120,16 @@ func Get(ctx context.Context, options Options) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	for _, cookie := range inline {
-		if matchesQuery(cookie, sites, options) {
-			appendCookie(&result, seen, Cookie{Cookie: cookie, Source: "inline"})
-		}
-	}
+	appendInlineCookies(&result, seen, inline, sites, options, "inline")
 	if options.Mode == ModeFirst && len(result.Cookies) > 0 {
 		return result, nil
 	}
 	if options.InlineOnly {
+		if options.Mode != ModeFirst || len(result.Cookies) == 0 {
+			if err := appendFallbackInline(&result, seen, sites, options); err != nil {
+				return Result{}, err
+			}
+		}
 		return result, nil
 	}
 	store := mod.NewStore(adapterHome(options.AdapterHome))
@@ -126,10 +144,11 @@ func Get(ctx context.Context, options Options) (Result, error) {
 	for _, source := range sources {
 		before := len(result.Cookies)
 		for _, site := range sites {
-			cookies, warnings, err := sourceCookies(ctx, source, site, options)
+			cookies, warnings, storePath, err := sourceCookies(ctx, source, site, options)
 			for _, cookie := range cookies {
 				if matchesQuery(cookie, sites, options) {
-					appendCookie(&result, seen, Cookie{Cookie: cookie, Source: source.label})
+					appendCookie(&result, seen, Cookie{Cookie: cookie, Source: source.label,
+						SourceInfo: SourceInfo{Adapter: source.adapter.Manifest.Name, Profile: source.profile, StorePath: storePath}})
 				}
 			}
 			for _, warning := range warnings {
@@ -144,7 +163,30 @@ func Get(ctx context.Context, options Options) (Result, error) {
 			break
 		}
 	}
+	if options.Mode != ModeFirst || len(result.Cookies) == 0 {
+		if err := appendFallbackInline(&result, seen, sites, options); err != nil {
+			return Result{}, err
+		}
+	}
 	return result, nil
+}
+
+func appendFallbackInline(result *Result, seen map[string]bool, sites []*url.URL, options Options) error {
+	cookies, err := parseInline(options.FallbackInline)
+	if err != nil {
+		return fmt.Errorf("fallback inline cookies: %w", err)
+	}
+	appendInlineCookies(result, seen, cookies, sites, options, "inline:fallback")
+	return nil
+}
+
+func appendInlineCookies(result *Result, seen map[string]bool, cookies []browser.Cookie, sites []*url.URL, options Options, label string) {
+	for _, cookie := range cookies {
+		if matchesQuery(cookie, sites, options) {
+			appendCookie(result, seen, Cookie{Cookie: cookie, Source: label,
+				SourceInfo: SourceInfo{Inline: true, Fallback: label == "inline:fallback"}})
+		}
+	}
 }
 
 func adapterHome(override string) string {
@@ -272,8 +314,15 @@ func matchesQuery(cookie browser.Cookie, sites []*url.URL, options Options) bool
 }
 
 func appendCookie(result *Result, seen map[string]bool, cookie Cookie) {
-	container := cookie.Attributes["firefox.origin_attributes"]
-	key := strings.Join([]string{cookie.Name, cookie.Domain, cookie.Path, cookie.PartitionKey, fmt.Sprint(cookie.CrossSiteAncestor), container}, "\x00")
+	// Adapter attributes are opaque. Their complete, canonical map contributes
+	// to identity so any adapter can preserve native cookie scopes.
+	attributes := ""
+	if len(cookie.Attributes) > 0 {
+		encoded, _ := json.Marshal(cookie.Attributes) // map[string]string cannot fail to encode
+		attributes = string(encoded)
+	}
+	encoded, _ := json.Marshal([]any{cookie.Name, cookie.Domain, cookie.Path, cookie.PartitionKey, cookie.CrossSiteAncestor, attributes})
+	key := string(encoded)
 	if seen[key] {
 		return
 	}
@@ -324,13 +373,19 @@ func selectSources(ctx context.Context, store *mod.Store, options Options) ([]se
 			return nil, nil, err
 		}
 		for _, adapter := range installed {
-			if supportsCookieQuery(adapter) {
+			if adapter.Manifest.BrowserQueryAuto && supportsCookieQuery(adapter) {
 				if trusted, _ := store.IsTrusted(adapter); trusted {
 					adapters = append(adapters, adapter)
 				}
 			}
 		}
-		sort.Slice(adapters, func(i, j int) bool { return adapters[i].Manifest.Name < adapters[j].Manifest.Name })
+		sort.Slice(adapters, func(i, j int) bool {
+			left, right := adapters[i].Manifest, adapters[j].Manifest
+			if left.BrowserQueryPriority != right.BrowserQueryPriority {
+				return left.BrowserQueryPriority < right.BrowserQueryPriority
+			}
+			return left.Name < right.Name
+		})
 	}
 	var sources []selectedSource
 	var warnings []string
@@ -359,6 +414,30 @@ func selectSources(ctx context.Context, store *mod.Store, options Options) ([]se
 			}
 		}
 	}
+	if len(options.Browsers) == 0 && options.PreferredSource != "" {
+		preferred, profile, ok := strings.Cut(options.PreferredSource, ":")
+		if !ok || preferred == "" || profile == "" || strings.ContainsAny(profile, "\r\n") {
+			return nil, nil, fmt.Errorf("invalid preferred browser endpoint %q", options.PreferredSource)
+		}
+		for index, source := range sources {
+			if source.label == options.PreferredSource {
+				ordered := make([]selectedSource, 0, len(sources))
+				ordered = append(ordered, source)
+				ordered = append(ordered, sources[:index]...)
+				ordered = append(ordered, sources[index+1:]...)
+				return ordered, warnings, nil
+			}
+		}
+		adapter, err := store.Load(preferred)
+		if err == nil {
+			err = checkSource(store, adapter)
+		}
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("preferred browser %s: %v", preferred, err))
+		} else {
+			sources = append([]selectedSource{{adapter: adapter, profile: profile, label: options.PreferredSource}}, sources...)
+		}
+	}
 	return sources, warnings, nil
 }
 
@@ -374,7 +453,7 @@ func supportsCookieQuery(adapter *mod.Adapter) bool {
 		(adapter.HasBrowserShare("cookie.list") && adapter.HasBrowserShare("cookie.export")))
 }
 
-func sourceCookies(ctx context.Context, source selectedSource, site *url.URL, options Options) ([]browser.Cookie, []string, error) {
+func sourceCookies(ctx context.Context, source selectedSource, site *url.URL, options Options) ([]browser.Cookie, []string, string, error) {
 	if source.adapter.HasBrowserShare("cookie.query") {
 		request := browser.CookieRequest{Version: browser.Version, Names: options.Names,
 			IncludeExpired: options.IncludeExpired, AllowAllHosts: site == nil}
@@ -384,25 +463,25 @@ func sourceCookies(ctx context.Context, source selectedSource, site *url.URL, op
 		payload, _ := json.Marshal(request)
 		output, err := invoke(ctx, source.adapter, "share", source.profile, []string{"cookie", "query"}, payload)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, "", err
 		}
 		var result browser.CookieQueryResult
 		if err := json.Unmarshal(output, &result); err != nil {
-			return nil, nil, fmt.Errorf("invalid cookie query: %w", err)
+			return nil, nil, "", fmt.Errorf("invalid cookie query: %w", err)
 		}
-		return result.Cookies, result.Warnings, nil
+		return result.Cookies, result.Warnings, result.StorePath, nil
 	}
 	if site == nil || options.IncludeExpired {
-		return nil, nil, errors.New("adapter does not support all-host or expired-cookie queries")
+		return nil, nil, "", errors.New("adapter does not support all-host or expired-cookie queries")
 	}
 	request, _ := json.Marshal(browser.CookieRequest{Version: browser.Version, Site: site.String()})
 	output, err := invoke(ctx, source.adapter, "share", source.profile, []string{"cookie", "list"}, request)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, "", err
 	}
 	var listed []browser.Cookie
 	if err := json.Unmarshal(output, &listed); err != nil {
-		return nil, nil, fmt.Errorf("invalid cookie list: %w", err)
+		return nil, nil, "", fmt.Errorf("invalid cookie list: %w", err)
 	}
 	var cookies []browser.Cookie
 	for _, cookie := range listed {
@@ -424,15 +503,15 @@ func sourceCookies(ctx context.Context, source selectedSource, site *url.URL, op
 		request, _ := json.Marshal(browser.CookieRequest{Version: browser.Version, Site: site.String(), Cookie: cookie})
 		output, err := invoke(ctx, source.adapter, "share", source.profile, []string{"cookie", "export"}, request)
 		if err != nil {
-			return cookies, nil, fmt.Errorf("export %s: %w", cookie.Name, err)
+			return cookies, nil, "", fmt.Errorf("export %s: %w", cookie.Name, err)
 		}
 		var exported browser.Cookie
 		if err := json.Unmarshal(output, &exported); err != nil || !browser.SameListedCookie(cookie, exported) {
-			return cookies, nil, fmt.Errorf("export %s returned a different cookie", cookie.Name)
+			return cookies, nil, "", fmt.Errorf("export %s returned a different cookie", cookie.Name)
 		}
 		cookies = append(cookies, exported)
 	}
-	return cookies, nil, nil
+	return cookies, nil, "", nil
 }
 
 func invoke(ctx context.Context, adapter *mod.Adapter, operation, profile string, args []string, input []byte) ([]byte, error) {

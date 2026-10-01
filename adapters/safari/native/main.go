@@ -29,7 +29,8 @@ func run(args []string, input io.Reader, stdout, stderr io.Writer) int {
 	case "cookie":
 		if args[2] == "list" || args[2] == "export" || args[2] == "query" {
 			return kit.RunCookie(args[0], args[2], input, stdout, stderr, kit.CookieBackend{
-				List: readSafariSiteCookies, ReadValue: readSafariCookieValue, QueryValues: true,
+				QueryHandleIsStorePath: true,
+				List:                   readSafariSiteCookies, ReadValue: readSafariCookieValue, QueryValues: true,
 				Query: func(profile string, site *url.URL, includeExpired bool) ([]browsershare.Cookie, string, error) {
 					return querySafariCookies(profile, site, "", includeExpired, true)
 				},

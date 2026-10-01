@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"path/filepath"
 
 	"github.com/webong/ctx/internal/app/browser/share"
 )
@@ -14,6 +15,9 @@ import (
 type CookieBackend struct {
 	List  func(profile string, site *url.URL, name string) ([]share.Cookie, string, error)
 	Query func(profile string, site *url.URL, includeExpired bool) ([]share.Cookie, string, error)
+	// QueryHandleIsStorePath lets the adapter declare that its otherwise opaque
+	// Query handle is the original on-disk store path suitable for provenance.
+	QueryHandleIsStorePath bool
 	// QueryValues means Query already populated each cookie's value.
 	QueryValues bool
 	ReadValue   func(handle string, cookie share.Cookie) (string, error)
@@ -48,6 +52,9 @@ func RunCookie(profile, operation string, input io.Reader, stdout, stderr io.Wri
 			return ReportError(stderr, err)
 		}
 		result := share.CookieQueryResult{Cookies: make([]share.Cookie, 0, len(cookies))}
+		if backend.QueryHandleIsStorePath && filepath.IsAbs(handle) {
+			result.StorePath = handle
+		}
 		for _, cookie := range cookies {
 			if !share.CookieMatchesSiteOptions(site, cookie, request.IncludeExpired) {
 				continue

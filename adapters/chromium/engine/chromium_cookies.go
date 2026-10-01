@@ -328,7 +328,7 @@ func decryptChromiumCookie(provider Config, database string, ciphertext []byte) 
 
 func decryptChromiumWindowsCookie(database string, ciphertext []byte) (string, error) {
 	if bytes.HasPrefix(ciphertext, []byte("v20")) {
-		return "", errors.New("Chrome cookie uses App-Bound Encryption; standalone profile export is unavailable")
+		return "", errors.New("Chromium cookie uses Windows App-Bound Encryption; standalone profile export is unavailable; supply an authorized browser export as inline cookie input")
 	}
 	if !bytes.HasPrefix(ciphertext, []byte("v10")) && !bytes.HasPrefix(ciphertext, []byte("v11")) {
 		plaintext, err := windowsDPAPIUnprotect(ciphertext)
@@ -425,6 +425,9 @@ func chromiumPBKDF2Key(password []byte, iterations int) []byte {
 }
 
 func chromiumMacKeychainPassword(provider Config) (string, error) {
+	if password, set, err := configuredSafeStoragePassword(provider); set || err != nil {
+		return password, err
+	}
 	service, account := provider.KeychainService, provider.KeychainAccount
 	if _, err := exec.LookPath("security"); err != nil {
 		return "", errors.New("macOS security command is required to unlock Chromium cookies")
@@ -439,6 +442,9 @@ func chromiumMacKeychainPassword(provider Config) (string, error) {
 }
 
 func chromiumLinuxSecret(provider Config) (string, error) {
+	if password, set, err := configuredSafeStoragePassword(provider); set || err != nil {
+		return password, err
+	}
 	if strings.Contains(strings.ToUpper(os.Getenv("XDG_CURRENT_DESKTOP")), "KDE") {
 		if secret, err := chromiumKWalletSecret(provider); err == nil {
 			return secret, nil

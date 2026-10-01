@@ -473,6 +473,7 @@ ctx share:browser cookie list --from firefox:personal --site https://example.com
 ctx share:browser cookie query --from firefox:personal --site https://example.com --name session --to-file ./site-cookies.json
 ctx share:browser cookie query --browser firefox --browser chrome --site https://example.com --mode first --stdout | consumer
 ctx share:browser cookie query --from chrome:Default --all-hosts --include-expired --to-file ./all-cookies.json
+ctx share:browser cookie query --from chrome:Default --site https://example.com --fallback-file ./authorized-export.json --to-file ./site-cookies.json
 ctx share:browser cookie copy --from firefox:personal --site https://example.com --name session --to-profile firefox:work
 ctx share:browser cookie copy --from firefox:personal --site https://example.com --name session --to-file ./session-cookie.json
 ctx share:browser cookie copy --from firefox:personal --site https://example.com --name session --stdout | consumer
@@ -515,12 +516,23 @@ to select multiple sites, names, or ordered profiles. Without `--from` or
 `--mode merge` combines the sources and keeps the first cookie with each scope;
 `--mode first` stops at the first source with a match. `--inline-file` or
 `--inline-stdin` adds JSON cookies ahead of the adapters; `--inline-only` uses
-only that input. `--all-hosts` explicitly permits a query without `--site`,
+only inline inputs. `--fallback-file` or `--fallback-stdin` supplies cookies after
+browser adapters, filling scopes those adapters could not return. Only one
+stdin input can be used in a command. In `--mode first`, fallback is used only
+when earlier sources returned no matching cookies. `--all-hosts` explicitly permits a query without `--site`,
 and `--include-expired` includes expired rows. The public
 `github.com/webong/ctx/browser` package exposes the same query as `Get` for
 other Go services. Browser adapters retain ownership of profile paths and
 credential access. Older adapters with only list/export can answer site
 queries; all-host and expired queries require `cookie.query`.
+Automatic CLI queries try the browser selected by `ctx set` first, then installed,
+trusted adapters in the order declared by their manifests. Helium is omitted
+from automatic discovery; select it with `ctx set`, `--browser helium`, or
+`--from helium:<profile>`. An explicit `--from`
+or `--browser` list always keeps the caller's order. Each result includes the
+existing `source` label plus `source_info` with adapter, profile, and a store
+path when the adapter reports one. Inline fallback cookies carry
+`source_info.fallback = true`.
 
 Chromium-family export reads the profile's committed SQLite cookies. On
 macOS, encrypted cookies require access to the browser's Safe Storage item in
@@ -531,6 +543,12 @@ Service through `secret-tool` or KWallet through `kwallet-query` (set
 AES-GCM cookies can be exported for the current user. Chrome App-Bound (`v20`)
 cookies cannot be exported by a standalone ctx process. Unsupported encryption
 versions and unavailable OS keys fail without writing a partial bundle.
+For a macOS Keychain or Linux keyring value already known to the user, a
+Chromium-family adapter also accepts a private password file through
+`CTX_BROWSER_<ADAPTER>_SAFE_STORAGE_PASSWORD_FILE` (for example,
+`CTX_BROWSER_CHROME_SAFE_STORAGE_PASSWORD_FILE`). The file must be absolute,
+regular, at most 4096 bytes, and mode 0600 or 0400; the adapter reads it in place of
+the OS helper. This does not decrypt Windows App-Bound cookies.
 
 Chromium-family profile import encrypts the selected cookie for the target
 profile on macOS or Linux. The browser must be closed; `lsof` is required, and
@@ -545,6 +563,8 @@ process has file access. The adapter checks the container and legacy locations;
 `CTX_SAFARI_COOKIE_FILE` can name an absolute path to another readable store.
 Recent in-memory cookies may not yet be present there. Safari cookie import is
 not supported, and a macOS access denial is reported by the adapter.
+For Safari cookies unavailable from a readable on-disk store, supply an export
+authorized by the browser as `--fallback-file` or `--fallback-stdin` input.
 
 Firefox profile import requires `sqlite3` and `lsof`, a closed target profile,
 and an unpartitioned cookie. It refuses to overwrite an existing target cookie

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/webong/ctx/browser"
+	"github.com/webong/ctx/internal/config"
 )
 
 type browserQueryList []string
@@ -24,7 +25,7 @@ func (values *browserQueryList) Set(value string) error {
 	return nil
 }
 
-func shareBrowserCookieQuery(args []string, stdout, stderr io.Writer) int {
+func shareBrowserCookieQuery(resolver *config.Resolver, args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("share:browser cookie query", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	var sites, sources, browsers, names browserQueryList
@@ -37,14 +38,17 @@ func shareBrowserCookieQuery(args []string, stdout, stderr io.Writer) int {
 	toStdout := flags.Bool("stdout", false, "write JSON result to a pipe")
 	inlineFile := flags.String("inline-file", "", "inline cookie JSON file")
 	inlineStdin := flags.Bool("inline-stdin", false, "read inline cookie JSON from a pipe")
+	fallbackFile := flags.String("fallback-file", "", "cookie JSON file used after browser sources")
+	fallbackStdin := flags.Bool("fallback-stdin", false, "read fallback cookie JSON from a pipe")
 	inlineOnly := flags.Bool("inline-only", false, "query inline cookies without browser adapters")
 	includeExpired := flags.Bool("include-expired", false, "include expired cookies")
 	allHosts := flags.Bool("all-hosts", false, "allow queries without a site URL")
 	if err := flags.Parse(args); err != nil || len(flags.Args()) != 0 {
 		return 2
 	}
-	if (*toFile == "") == !*toStdout || (*inlineFile != "" && *inlineStdin) {
-		fmt.Fprintln(stderr, "ctx: query needs --to-file or --stdout and at most one inline input")
+	if (*toFile == "") == !*toStdout || (*inlineFile != "" && *inlineStdin) ||
+		(*fallbackFile != "" && *fallbackStdin) || (*inlineStdin && *fallbackStdin) {
+		fmt.Fprintln(stderr, "ctx: query needs --to-file or --stdout, one source per inline input, and only one stdin source")
 		return 2
 	}
 	if *toStdout {
@@ -64,22 +68,43 @@ func shareBrowserCookieQuery(args []string, stdout, stderr io.Writer) int {
 		options.URL = sites[0]
 		options.Origins = append([]string(nil), sites[1:]...)
 	}
+	if len(sources) == 0 && len(browsers) == 0 && !*inlineOnly {
+		options.PreferredSource = os.Getenv("CTX_BROWSER")
+		if options.PreferredSource == "" {
+			if resolver != nil {
+				if selected, err := resolver.Resolve("browser"); err == nil {
+					options.PreferredSource = selected.Value
+				}
+			}
+		}
+	}
 	if *inlineFile != "" {
 		options.Inline.File = *inlineFile
 	}
-	if *inlineStdin {
+	if *fallbackFile != "" {
+		options.FallbackInline.File = *fallbackFile
+	}
+	if *inlineStdin || *fallbackStdin {
 		file, err := os.Stdin.Stat()
 		if err != nil {
 			return reportErrorCode(stderr, err, 2)
 		}
 		if file.Mode()&os.ModeNamedPipe == 0 {
-			return reportErrorCode(stderr, errors.New("--inline-stdin requires a pipe"), 2)
+			inputFlag := "--inline-stdin"
+			if *fallbackStdin {
+				inputFlag = "--fallback-stdin"
+			}
+			return reportErrorCode(stderr, fmt.Errorf("%s requires a pipe", inputFlag), 2)
 		}
 		data, err := io.ReadAll(io.LimitReader(os.Stdin, (8<<20)+1))
 		if err != nil || len(data) > 8<<20 {
 			return reportErrorCode(stderr, errors.New("inline cookie input exceeds 8 MiB or cannot be read"), 2)
 		}
-		options.Inline.JSON = data
+		if *inlineStdin {
+			options.Inline.JSON = data
+		} else {
+			options.FallbackInline.JSON = data
+		}
 	}
 	result, err := browser.Get(context.Background(), options)
 	if err != nil {

@@ -54,8 +54,9 @@ type CookieRequest struct {
 
 // CookieQueryResult contains values and non-fatal per-cookie read warnings.
 type CookieQueryResult struct {
-	Cookies  []Cookie `json:"cookies"`
-	Warnings []string `json:"warnings,omitempty"`
+	Cookies   []Cookie `json:"cookies"`
+	Warnings  []string `json:"warnings,omitempty"`
+	StorePath string   `json:"store_path,omitempty"`
 }
 
 type ResourceBundle struct {

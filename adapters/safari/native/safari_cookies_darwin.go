@@ -48,7 +48,8 @@ func safariShareStatus(profile string) map[string]string {
 }
 
 func readSafariSiteCookies(profile string, site *url.URL, name string) ([]browsershare.Cookie, string, error) {
-	return querySafariCookies(profile, site, name, false, false)
+	cookies, _, err := querySafariCookies(profile, site, name, false, false)
+	return cookies, profile, err
 }
 
 func querySafariCookies(profile string, site *url.URL, name string, includeExpired, withValue bool) ([]browsershare.Cookie, string, error) {
@@ -71,6 +72,9 @@ func querySafariCookies(profile string, site *url.URL, name string, includeExpir
 				cookies = append(cookies, cookie)
 			}
 		}
+	}
+	if len(paths) == 1 {
+		return cookies, paths[0], nil
 	}
 	return cookies, "", nil
 }
@@ -130,7 +134,7 @@ func safariCookieStorePaths(profile string) ([]string, error) {
 		}
 	}
 	if len(paths) == 0 {
-		return nil, errors.New("Safari Cookies.binarycookies was not found; this Safari installation may not expose a readable cookie store")
+		return nil, errors.New("Safari Cookies.binarycookies was not found at the known profile locations; supply an authorized browser export as inline cookie input")
 	}
 	return paths, nil
 }

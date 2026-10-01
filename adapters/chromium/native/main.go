@@ -48,6 +48,7 @@ func run(args []string, input io.Reader, stdout, stderr io.Writer) int {
 		}
 	case "cookie":
 		return kit.RunCookie(profile, operation, input, stdout, stderr, kit.CookieBackend{
+			QueryHandleIsStorePath: true,
 			Query: func(profile string, site *url.URL, includeExpired bool) ([]share.Cookie, string, error) {
 				return chromiumengine.Query(chromium, profile, site, includeExpired)
 			},
