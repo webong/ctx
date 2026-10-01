@@ -29,7 +29,7 @@ type safariCookieRecord struct {
 }
 
 func safariShareStatus(profile string) map[string]string {
-	operations := map[string]string{"policy.export": "ready", "cookie.list": "blocked", "cookie.export": "blocked", "cookie.query": "blocked"}
+	operations := map[string]string{"cookie.normalize": "ready", "policy.export": "ready", "cookie.list": "blocked", "cookie.export": "blocked", "cookie.query": "blocked"}
 	paths, err := safariCookieStorePaths(profile)
 	if err != nil {
 		return operations

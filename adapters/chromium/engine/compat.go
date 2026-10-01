@@ -11,13 +11,16 @@ import (
 
 // Config contains browser identity and storage conventions supplied by its adapter.
 type Config struct {
-	Name              string
-	MacUserData       string
-	WindowsUserData   string
-	WindowsRoaming    bool
-	LinuxUserData     string
-	KeychainService   string
-	KeychainAccount   string
+	Name            string
+	MacUserData     string
+	WindowsUserData string
+	WindowsRoaming  bool
+	LinuxUserData   string
+	KeychainService string
+	KeychainAccount string
+	// KeychainPath optionally selects an isolated macOS keychain. Empty uses
+	// the user's configured search list; no search-list changes are made.
+	KeychainPath      string
 	SecretApplication string
 	WalletFolder      string
 	WalletKey         string
@@ -64,6 +67,7 @@ func Import(config Config, profile string, cookie Cookie, replace bool) error {
 // an OS credential helper. Export and import remain unknown until attempted.
 func Probe(config Config, profile string) map[string]string {
 	result := map[string]string{
+		"cookie.normalize": "ready",
 		"cookie.list": "blocked", "cookie.export": "blocked", "cookie.query": "blocked", "cookie.import": "blocked",
 		"policy.export": "ready",
 	}

@@ -1,12 +1,14 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/url"
 	"os"
 	"runtime"
 
+	"github.com/webong/ctx/adapters/chromium/engine/webextension"
 	kit "github.com/webong/ctx/internal/app/browser/adapterkit"
 	browsershare "github.com/webong/ctx/internal/app/browser/share"
 )
@@ -27,8 +29,11 @@ func run(args []string, input io.Reader, stdout, stderr io.Writer) int {
 			return kit.Encode(stdout, browsershare.AvailabilityReport{Version: browsershare.AvailabilityVersion, Operations: safariShareStatus(args[0])})
 		}
 	case "cookie":
-		if args[2] == "list" || args[2] == "export" || args[2] == "query" {
+		if args[2] == "list" || args[2] == "export" || args[2] == "query" || args[2] == "normalize" {
 			return kit.RunCookie(args[0], args[2], input, stdout, stderr, kit.CookieBackend{
+				Normalize: func(profile, storeID string, payload json.RawMessage) (browsershare.CookieQueryResult, error) {
+					return webextension.Normalize(webextension.Policy{Browser: "safari", Namespace: "safari"}, profile, storeID, payload)
+				},
 				QueryHandleIsStorePath: true,
 				List:                   readSafariSiteCookies, ReadValue: readSafariCookieValue, QueryValues: true,
 				Query: func(profile string, site *url.URL, includeExpired bool) ([]browsershare.Cookie, string, error) {

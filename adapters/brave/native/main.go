@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"io"
-	"net/url"
 	"os"
 	"runtime"
 
@@ -35,21 +34,7 @@ func run(args []string, input io.Reader, stdout, stderr io.Writer) int {
 			return kit.Encode(stdout, share.AvailabilityReport{Version: share.AvailabilityVersion, Operations: chromiumengine.Probe(brave, profile)})
 		}
 	case "cookie":
-		return kit.RunCookie(profile, operation, input, stdout, stderr, kit.CookieBackend{
-			QueryHandleIsStorePath: true,
-			Query: func(profile string, site *url.URL, includeExpired bool) ([]share.Cookie, string, error) {
-				return chromiumengine.Query(brave, profile, site, includeExpired)
-			},
-			List: func(profile string, site *url.URL, name string) ([]share.Cookie, string, error) {
-				return chromiumengine.List(brave, profile, site, name)
-			},
-			ReadValue: func(database string, cookie share.Cookie) (string, error) {
-				return chromiumengine.ReadValue(brave, database, cookie)
-			},
-			Import: func(profile string, cookie share.Cookie, replace bool) error {
-				return chromiumengine.Import(brave, profile, cookie, replace)
-			},
-		})
+		return kit.RunCookie(profile, operation, input, stdout, stderr, chromiumengine.NewCookieBackend(brave))
 	case "policy":
 		if operation == "export" {
 			return kit.RunPolicyExport(input, stdout, stderr, bravePolicies())

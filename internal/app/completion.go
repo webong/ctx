@@ -90,10 +90,14 @@ Register-ArgumentCompleter -Native -CommandName ctx -ScriptBlock {
         }
         'share:browser' {
             if ($words.Count -le 2) { Emit-CtxCompletion @('cookie', 'policy', 'certificate', 'capabilities'); return }
-            if ($words[2] -eq 'cookie' -and $words.Count -le 3) { Emit-CtxCompletion @('list', 'query', 'copy', 'import'); return }
+            if ($words[2] -eq 'cookie' -and $words.Count -le 3) { Emit-CtxCompletion @('list', 'query', 'normalize', 'copy', 'import'); return }
+            if ($words[2] -eq 'cookie' -and $words[3] -eq 'normalize') { Emit-CtxCompletion @('--from', '--store-id', '--from-file', '--stdin', '--to-file', '--stdout', '--timeout'); return }
             if ($words[3] -eq 'list') { Emit-CtxCompletion @('--from', '--site'); return }
             if ($words[3] -eq 'copy') { Emit-CtxCompletion @('--from', '--site', '--name', '--domain', '--path', '--id', '--ref', '--attribute', '--to-profile', '--to-file', '--stdout', '--replace'); return }
-            if ($words[2] -eq 'cookie' -and $words[3] -eq 'query') { Emit-CtxCompletion @('--from', '--browser', '--site', '--name', '--mode', '--inline-file', '--inline-stdin', '--fallback-file', '--fallback-stdin', '--inline-only', '--all-hosts', '--include-expired', '--to-file', '--stdout', '--strict', '--require-match', '--timeout'); return }
+            if ($words[2] -eq 'cookie' -and $words[3] -eq 'query') {
+                if ($words[-2] -eq '--format') { Emit-CtxCompletion @('json', 'header', 'netscape'); return }
+                Emit-CtxCompletion @('--from', '--browser', '--site', '--name', '--mode', '--format', '--inline-file', '--inline-stdin', '--fallback-file', '--fallback-stdin', '--inline-only', '--all-hosts', '--include-expired', '--to-file', '--stdout', '--strict', '--require-match', '--timeout'); return
+            }
             if ($words[2] -eq 'cookie' -and $words[3] -eq 'import') { Emit-CtxCompletion @('--from-file', '--stdin', '--to-profile', '--site', '--name', '--domain', '--path', '--attribute', '--replace'); return }
         }
         'build' { if ($words.Count -le 2) { Emit-CtxCompletion ((Get-CtxManagerProviders) + @(& ctx manager ls 2>$null | ForEach-Object { ($_ -split '\s+')[0] }) + '--cache-ref'); return } }

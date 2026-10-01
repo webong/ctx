@@ -23,6 +23,7 @@ type CookieBackend struct {
 	QueryValues bool
 	ReadValue   func(handle string, cookie share.Cookie) (string, error)
 	Import      func(profile string, cookie share.Cookie, replace bool) error
+	Normalize   func(profile, storeID string, payload json.RawMessage) (share.CookieQueryResult, error)
 }
 
 func RunCookie(profile, operation string, input io.Reader, stdout, stderr io.Writer, backend CookieBackend) int {
@@ -33,6 +34,25 @@ func RunCookie(profile, operation string, input io.Reader, stdout, stderr io.Wri
 		return 2
 	}
 	switch operation {
+	case "normalize":
+		if backend.Normalize == nil || request.StoreID == "" || len(request.NativeExport) == 0 {
+			fmt.Fprintln(stderr, "ctx: cookie normalization needs an adapter backend, store_id, and native_export")
+			return 2
+		}
+		result, err := backend.Normalize(profile, request.StoreID, request.NativeExport)
+		if err != nil {
+			return ReportErrorCode(stderr, err, 2)
+		}
+		if result.Cookies == nil || result.StoreID != request.StoreID {
+			fmt.Fprintln(stderr, "ctx: adapter returned an invalid normalized export")
+			return 1
+		}
+		for _, cookie := range result.Cookies {
+			if err := share.ValidateCookie(cookie); err != nil {
+				return ReportError(stderr, err)
+			}
+		}
+		return Encode(stdout, result)
 	case "query":
 		if backend.Query == nil || (!backend.QueryValues && backend.ReadValue == nil) {
 			fmt.Fprintln(stderr, "ctx: cookie query is unavailable")

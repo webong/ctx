@@ -82,6 +82,7 @@ type Cookie struct {
 type SourceInfo struct {
 	Adapter   string `json:"adapter,omitempty"`
 	Profile   string `json:"profile,omitempty"`
+	StoreID   string `json:"store_id,omitempty"`
 	StorePath string `json:"store_path,omitempty"`
 	Inline    bool   `json:"inline,omitempty"`
 	Fallback  bool   `json:"fallback,omitempty"`

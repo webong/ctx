@@ -342,7 +342,7 @@ registry-backed build cache where the chosen adapter supports `build`.
 `ctx share:browser` bridges browser resources between trusted
 adapters. Browser adapters declare `share` and `share_spaces = "browser"`, then
 list operations in `browser_share`, for example
-`cookie.list,cookie.export,cookie.query,cookie.import,policy.export`. ctx invokes an
+`cookie.list,cookie.export,cookie.query,cookie.normalize,cookie.import,policy.export`. ctx invokes an
 operation as `share PROFILE -- RESOURCE OPERATION`. The adapter receives one
 JSON request on stdin with `version = 2`. `cookie.list` receives `site` and
 returns a JSON array of cookie metadata without values. `cookie.export`
@@ -358,6 +358,21 @@ set `QueryHandleIsStorePath` only when their query handle is that store path;
 otherwise the handle stays opaque and no path is inferred. Query results must obey the requested site, name, and expiry
 filters. An adapter that cannot query all hosts or include expired rows should
 omit `cookie.query` or reject those options explicitly.
+`cookie.normalize` receives `store_id` and opaque `native_export` in the
+version-2 request. The owning adapter validates the export's browser/profile/store
+binding and native scope, returning `{"cookies":[...],"store_id":"..."}` with
+canonical cookies. The store must match the request. The generic host requires
+an explicit endpoint and trusted adapter; it does not interpret native fields.
+Go adapters supply `CookieBackend.Normalize(profile, storeID, payload)`.
+Maintained browser-API envelope rules and scope-preservation limits are documented
+in [cookie normalization](browser-cookies.md#normalize-an-authorized-browser-export).
+Chromium-family Go adapters can use the owning engine's
+`chromium.NewCookieBackend(config)` to retain keys and credential lookup
+failures for one request. Construct a fresh backend for each request; the
+backend is not concurrency safe and credentials must not be cached globally.
+Host-side query output supports JSON, a single-site HTTP Cookie header, and
+Netscape jars; text formats reject partitioned or adapter-scoped records.
+See [cookie workflows and validation](browser-cookies.md).
 `policy.export` receives only `version` and returns a policy bundle with
 `version` and `entries`. A nonzero exit code reports failure on stderr.
 Cookie `id` is a source row ID where available; adapters without row IDs can

@@ -10,6 +10,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/webong/ctx/browser"
 )
 
 func TestFirefoxCookieSharingDestinations(t *testing.T) {
@@ -94,6 +96,42 @@ func TestFirefoxCookieSharingDestinations(t *testing.T) {
 		var stdout, stderr bytes.Buffer
 		code := Run(args, &stdout, &stderr)
 		return code, stdout.String(), stderr.String()
+	}
+	// Normalization is independent of disk profile discovery and credentials.
+	// Run the real adapter against a synthetic, explicitly bound API export.
+	export := filepath.Join(root, "native-export.json")
+	native := `{"selection":{"browser":"firefox","profile":"export-only","storeId":"firefox-container-7"},"sites":["https://example.test"],"names":["session"],"partition":"unpartitioned","firstPartyDomain":"example.test","cookies":[{"name":"session","value":"synthetic-export-secret","domain":".example.test","path":"/","secure":true,"httpOnly":true,"hostOnly":false,"session":true,"sameSite":"lax","storeId":"firefox-container-7","firstPartyDomain":"example.test"}]}`
+	if err := os.WriteFile(export, []byte(native), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	normalized := filepath.Join(root, "normalized.json")
+	normalizeArgs := []string{"share:browser", "cookie", "normalize", "--from", "firefox:export-only", "--store-id", "firefox-container-7", "--from-file", export, "--to-file", normalized}
+	if code, output, diagnostics := run(normalizeArgs...); code != 0 || strings.Contains(output+diagnostics, "synthetic-export-secret") {
+		t.Fatalf("native normalization failed: code=%d diagnostics=%s", code, diagnostics)
+	}
+	data, err := os.ReadFile(normalized)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookies, err := browser.ParseCookies(data)
+	if err != nil || len(cookies) != 1 || cookies[0].SourceInfo.StoreID != "firefox-container-7" || cookies[0].Attributes["firefox.webextension_first_party_domain"] != "example.test" {
+		t.Fatal("native normalization lost scope")
+	}
+	if info, err := os.Stat(normalized); err != nil || runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
+		t.Fatal("normalized output is not private")
+	}
+	if code, _, _ := run(normalizeArgs...); code == 0 {
+		t.Fatal("normalization overwrote an existing file")
+	}
+	invalidOutput := filepath.Join(root, "invalid-normalized.json")
+	invalidArgs := append([]string{}, normalizeArgs...)
+	invalidArgs[4] = "firefox:wrong-profile"
+	invalidArgs[len(invalidArgs)-1] = invalidOutput
+	if code, _, diagnostics := run(invalidArgs...); code == 0 || strings.Contains(diagnostics, "synthetic-export-secret") {
+		t.Fatal("mismatched profile accepted or secret disclosed")
+	}
+	if _, err := os.Stat(invalidOutput); !os.IsNotExist(err) {
+		t.Fatal("failed normalization created output")
 	}
 	base := []string{"share:browser", "cookie", "copy", "--from", "firefox:source", "--site", "https://example.test", "--name", "session"}
 	if code, output, diagnostics := run("share:browser", "cookie", "list", "--from", "firefox:source", "--site", "https://example.test"); code != 0 || !strings.Contains(output, "session\t.example.test") || strings.Contains(output, "fixture-secret") {

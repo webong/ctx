@@ -74,11 +74,17 @@ func shareBrowserPolicyCommand(resolver *config.Resolver, args []string, stdout,
 }
 
 func writePrivateJSON(path string, value any) error {
+	return writePrivateOutput(path, func(output io.Writer) error {
+		return json.NewEncoder(output).Encode(value)
+	})
+}
+
+func writePrivateOutput(path string, write func(io.Writer) error) error {
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return err
 	}
-	if err := json.NewEncoder(file).Encode(value); err != nil {
+	if err := write(file); err != nil {
 		_ = file.Close()
 		_ = os.Remove(path)
 		return err

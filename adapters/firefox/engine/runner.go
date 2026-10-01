@@ -1,6 +1,7 @@
 package firefox
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/url"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 
+	"github.com/webong/ctx/adapters/chromium/engine/webextension"
 	"github.com/webong/ctx/browser/extension"
 	kit "github.com/webong/ctx/internal/app/browser/adapterkit"
 	browsershare "github.com/webong/ctx/internal/app/browser/share"
@@ -42,6 +44,9 @@ func Run(config Config, args []string, input io.Reader, stdout, stderr io.Writer
 		}
 	case "cookie":
 		return kit.RunCookie(profile, operation, input, stdout, stderr, kit.CookieBackend{
+			Normalize: func(profile, storeID string, payload json.RawMessage) (browsershare.CookieQueryResult, error) {
+				return webextension.Normalize(webextension.Policy{Browser: config.Name, Namespace: "firefox", Partition: true, FirstPartyDomain: true}, profile, storeID, payload)
+			},
 			QueryHandleIsStorePath: true,
 			Query: func(profile string, site *url.URL, includeExpired bool) ([]browsershare.Cookie, string, error) {
 				return queryFirefoxCookies(config, profile, site, "", includeExpired)
@@ -69,7 +74,7 @@ func Run(config Config, args []string, input io.Reader, stdout, stderr io.Writer
 }
 
 func firefoxShareStatus(config Config, profile string) browsershare.AvailabilityReport {
-	operations := map[string]string{}
+	operations := map[string]string{"cookie.normalize": "ready"}
 	if config.Name == "firefox" {
 		operations["policy.export"] = "ready"
 	}

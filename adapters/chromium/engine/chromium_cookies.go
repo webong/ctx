@@ -199,6 +199,10 @@ func chromiumCookieDatabaseInProfile(name, profileDir string) (string, error) {
 }
 
 func readChromiumCookieValue(provider Config, database string, cookie browserCookie) (string, error) {
+	return readChromiumCookieValueWithDecryptor(database, cookie, newChromiumCookieDecryptor(provider).decrypt)
+}
+
+func readChromiumCookieValueWithDecryptor(database string, cookie browserCookie, decrypt func(string, []byte) (string, error)) (string, error) {
 	readable, cleanup, columns, err := readableCookieDatabase(database, "cookies")
 	if err != nil {
 		return "", err
@@ -237,7 +241,7 @@ func readChromiumCookieValue(provider Config, database string, cookie browserCoo
 	if err != nil {
 		return "", errors.New("Chromium cookie ciphertext is malformed")
 	}
-	plaintext, err := decryptChromiumCookie(provider, database, ciphertext)
+	plaintext, err := decrypt(database, ciphertext)
 	if err != nil {
 		return "", err
 	}
@@ -267,47 +271,88 @@ func readChromiumCookieValue(provider Config, database string, cookie browserCoo
 }
 
 func decryptChromiumCookie(provider Config, database string, ciphertext []byte) (string, error) {
+	return newChromiumCookieDecryptor(provider).decrypt(database, ciphertext)
+}
+
+// Keys and credential failures are cached for one adapter invocation only.
+// A query must not prompt once per cookie or repeatedly retry denied access.
+type chromiumCookieDecryptor struct {
+	provider Config
+	keys     map[string]chromiumCookieKey
+}
+
+type chromiumCookieKey struct {
+	key []byte
+	err error
+}
+
+func newChromiumCookieDecryptor(provider Config) *chromiumCookieDecryptor {
+	return &chromiumCookieDecryptor{provider: provider, keys: make(map[string]chromiumCookieKey)}
+}
+
+func (decryptor *chromiumCookieDecryptor) key(identity string, load func() ([]byte, error)) ([]byte, error) {
+	if result, ok := decryptor.keys[identity]; ok {
+		return result.key, result.err
+	}
+	key, err := load()
+	decryptor.keys[identity] = chromiumCookieKey{key: key, err: err}
+	return key, err
+}
+
+func (decryptor *chromiumCookieDecryptor) decrypt(database string, ciphertext []byte) (string, error) {
 	if len(ciphertext) < 3 {
 		return "", errors.New("Chromium cookie uses an unsupported encryption format")
 	}
 	version := string(ciphertext[:3])
 	if runtime.GOOS == "windows" {
-		return decryptChromiumWindowsCookie(database, ciphertext)
+		return decryptor.windows(database, ciphertext)
 	}
-	var password string
-	var iterations int
+	if len(ciphertext)-3 == 0 || (len(ciphertext)-3)%aes.BlockSize != 0 {
+		return "", errors.New("Chromium cookie ciphertext has an invalid length")
+	}
+	var key []byte
+	var err error
 	switch runtime.GOOS {
 	case "darwin":
 		if version != "v10" {
 			return "", errors.New("Chromium cookie encryption format is not supported on macOS")
 		}
-		secret, err := chromiumMacKeychainPassword(provider)
-		if err != nil {
-			return "", err
-		}
-		password, iterations = secret, 1003
+		key, err = decryptor.key("macos", func() ([]byte, error) {
+			secret, err := chromiumMacKeychainPassword(decryptor.provider)
+			if err != nil {
+				return nil, err
+			}
+			return chromiumPBKDF2Key([]byte(secret), 1003), nil
+		})
 	case "linux":
 		switch version {
 		case "v10":
-			password, iterations = "peanuts", 1
+			key = chromiumPBKDF2Key([]byte("peanuts"), 1)
 		case "v11":
-			secret, err := chromiumLinuxSecret(provider)
-			if err != nil {
-				return "", err
-			}
-			password, iterations = secret, 1
+			key, err = decryptor.key("linux", func() ([]byte, error) {
+				secret, err := chromiumLinuxSecret(decryptor.provider)
+				if err != nil {
+					return nil, err
+				}
+				return chromiumPBKDF2Key([]byte(secret), 1), nil
+			})
 		default:
 			return "", errors.New("Chromium cookie encryption format is not supported on Linux")
 		}
 	default:
 		return "", fmt.Errorf("encrypted Chromium cookie export is not supported on %s", runtime.GOOS)
 	}
-	key := chromiumPBKDF2Key([]byte(password), iterations)
+	if err != nil {
+		return "", err
+	}
+	return decryptChromiumCBC(key, ciphertext[3:])
+}
+
+func decryptChromiumCBC(key, data []byte) (string, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return "", errors.New("cannot initialize Chromium cookie decryptor")
 	}
-	data := ciphertext[3:]
 	if len(data) == 0 || len(data)%aes.BlockSize != 0 {
 		return "", errors.New("Chromium cookie ciphertext has an invalid length")
 	}
@@ -327,6 +372,10 @@ func decryptChromiumCookie(provider Config, database string, ciphertext []byte) 
 }
 
 func decryptChromiumWindowsCookie(database string, ciphertext []byte) (string, error) {
+	return newChromiumCookieDecryptor(Config{}).windows(database, ciphertext)
+}
+
+func (decryptor *chromiumCookieDecryptor) windows(database string, ciphertext []byte) (string, error) {
 	if bytes.HasPrefix(ciphertext, []byte("v20")) {
 		return "", errors.New("Chromium cookie uses Windows App-Bound Encryption; standalone profile export is unavailable; supply an authorized browser export as inline cookie input")
 	}
@@ -334,13 +383,15 @@ func decryptChromiumWindowsCookie(database string, ciphertext []byte) (string, e
 		plaintext, err := windowsDPAPIUnprotect(ciphertext)
 		return string(plaintext), err
 	}
-	key, err := chromiumWindowsLegacyKey(database)
-	if err != nil {
-		return "", err
-	}
 	data := ciphertext[3:]
 	if len(data) < 12+16 {
 		return "", errors.New("Chromium cookie ciphertext is too short")
+	}
+	key, err := decryptor.key(chromiumUserDataRootFromDatabase(database), func() ([]byte, error) {
+		return chromiumWindowsLegacyKey(database)
+	})
+	if err != nil {
+		return "", err
 	}
 	block, err := aes.NewCipher(key)
 	if err != nil {
@@ -434,7 +485,14 @@ func chromiumMacKeychainPassword(provider Config) (string, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	output, err := exec.CommandContext(ctx, "security", "find-generic-password", "-w", "-s", service, "-a", account).Output()
+	args := []string{"find-generic-password", "-w", "-s", service, "-a", account}
+	if provider.KeychainPath != "" {
+		if !filepath.IsAbs(provider.KeychainPath) {
+			return "", errors.New("macOS keychain path must be absolute")
+		}
+		args = append(args, provider.KeychainPath)
+	}
+	output, err := exec.CommandContext(ctx, "security", args...).Output()
 	if err != nil || len(output) == 0 {
 		return "", fmt.Errorf("cannot read %s from macOS Keychain; unlock it for ctx and retry", service)
 	}
@@ -466,10 +524,18 @@ func chromiumLinuxSecret(provider Config) (string, error) {
 func chromiumSecretServiceSecret(provider Config) (string, error) {
 	if _, err := exec.LookPath("secret-tool"); err == nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
 		output, lookupErr := exec.CommandContext(ctx, "secret-tool", "lookup", "application", provider.SecretApplication).Output()
-		cancel()
-		if lookupErr == nil && len(output) > 0 {
+		if lookupErr == nil && len(bytes.TrimRight(output, "\r\n")) > 0 {
 			return strings.TrimRight(string(output), "\r\n"), nil
+		}
+		// Some stores use service/account attributes rather than Chromium's
+		// application attribute. Both identities are owned by this adapter.
+		if provider.KeychainService != "" && provider.KeychainAccount != "" {
+			output, lookupErr = exec.CommandContext(ctx, "secret-tool", "lookup", "service", provider.KeychainService, "account", provider.KeychainAccount).Output()
+			if lookupErr == nil && len(bytes.TrimRight(output, "\r\n")) > 0 {
+				return strings.TrimRight(string(output), "\r\n"), nil
+			}
 		}
 	}
 	return "", errors.New("Secret Service key unavailable")
@@ -480,14 +546,40 @@ func chromiumKWalletSecret(provider Config) (string, error) {
 		folder, key := provider.WalletFolder, provider.WalletKey
 		wallet := os.Getenv("CTX_KWALLET_NAME")
 		if wallet == "" {
-			wallet = "kdewallet"
+			wallet = chromiumNetworkWallet()
+		}
+		if strings.ContainsAny(wallet, "\r\n\x00") || strings.HasPrefix(wallet, "-") {
+			return "", errors.New("invalid KWallet name")
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		output, lookupErr := exec.CommandContext(ctx, "kwallet-query", "-f", folder, "-r", key, wallet).Output()
 		cancel()
-		if lookupErr == nil && len(output) > 0 {
-			return strings.TrimRight(string(output), "\r\n"), nil
+		value := strings.TrimRight(string(output), "\r\n")
+		if lookupErr == nil && value != "" && !strings.HasPrefix(strings.ToLower(value), "failed to read") {
+			return value, nil
 		}
 	}
 	return "", errors.New("KWallet key unavailable")
+}
+
+func chromiumNetworkWallet() string {
+	if _, err := exec.LookPath("dbus-send"); err != nil {
+		return "kdewallet"
+	}
+	versions := []string{"6", "5", ""}
+	if version := os.Getenv("KDE_SESSION_VERSION"); version == "5" {
+		versions = []string{"5", "6", ""}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	for _, version := range versions {
+		output, err := exec.CommandContext(ctx, "dbus-send", "--session", "--print-reply=literal", "--reply-timeout=1000",
+			"--dest=org.kde.kwalletd"+version, "/modules/kwalletd"+version,
+			"org.kde.KWallet.networkWallet").Output()
+		wallet := strings.TrimSpace(string(output))
+		if err == nil && wallet != "" && !strings.ContainsAny(wallet, "\r\n\x00\"") && !strings.HasPrefix(wallet, "-") {
+			return wallet
+		}
+	}
+	return "kdewallet"
 }

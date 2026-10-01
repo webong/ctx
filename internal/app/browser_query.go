@@ -35,8 +35,9 @@ func shareBrowserCookieQuery(resolver *config.Resolver, args []string, stdout, s
 	flags.Var(&browsers, "browser", "browser adapter to discover (repeatable, ordered)")
 	flags.Var(&names, "name", "cookie name (repeatable)")
 	mode := flags.String("mode", string(browser.ModeMerge), "merge or first")
-	toFile := flags.String("to-file", "", "new protected JSON result file")
-	toStdout := flags.Bool("stdout", false, "write JSON result to a pipe")
+	format := flags.String("format", "json", "json, header, or netscape")
+	toFile := flags.String("to-file", "", "new protected result file")
+	toStdout := flags.Bool("stdout", false, "write result to a pipe")
 	inlineFile := flags.String("inline-file", "", "JSON or Netscape cookie file used first")
 	inlineStdin := flags.Bool("inline-stdin", false, "read JSON or Netscape cookies from a pipe")
 	fallbackFile := flags.String("fallback-file", "", "JSON or Netscape cookie file used after browsers")
@@ -49,6 +50,12 @@ func shareBrowserCookieQuery(resolver *config.Resolver, args []string, stdout, s
 	timeout := flags.Duration("timeout", 2*time.Minute, "overall adapter query timeout")
 	if err := flags.Parse(args); err != nil || len(flags.Args()) != 0 {
 		return 2
+	}
+	if *format != "json" && *format != "header" && *format != "netscape" {
+		return reportErrorCode(stderr, errors.New("cookie query format must be json, header, or netscape"), 2)
+	}
+	if *format == "header" && (len(sites) != 1 || *allHosts || *includeExpired) {
+		return reportErrorCode(stderr, errors.New("header output needs exactly one --site and active cookies"), 2)
 	}
 	if (*toFile == "") == !*toStdout || (*inlineFile != "" && *inlineStdin) ||
 		(*fallbackFile != "" && *fallbackStdin) || (*inlineStdin && *fallbackStdin) {
@@ -125,14 +132,40 @@ func shareBrowserCookieQuery(resolver *config.Resolver, args []string, stdout, s
 	if *requireMatch && len(result.Cookies) == 0 {
 		return reportError(stderr, errors.New("no cookies matched; no output written (--require-match)"))
 	}
-	if *toStdout {
-		if err := json.NewEncoder(stdout).Encode(result); err != nil {
-			return reportError(stderr, err)
+	var encoded []byte
+	switch *format {
+	case "json":
+		encoded, err = json.Marshal(result)
+	case "header":
+		var header string
+		header, err = browser.CookieHeader(result.Cookies, sites[0])
+		if header != "" {
+			encoded = []byte("Cookie: " + header)
 		}
-		return 0
+	case "netscape":
+		var jar string
+		jar, err = browser.NetscapeCookies(result.Cookies)
+		encoded = []byte(jar)
 	}
-	if err := writePrivateJSON(*toFile, result); err != nil {
+	if err != nil {
 		return reportError(stderr, err)
+	}
+	if *format != "netscape" {
+		encoded = append(encoded, '\n')
+	}
+	if *toStdout {
+		_, err = stdout.Write(encoded)
+	} else {
+		err = writePrivateOutput(*toFile, func(output io.Writer) error {
+			_, err := output.Write(encoded)
+			return err
+		})
+	}
+	if err != nil {
+		return reportError(stderr, err)
+	}
+	if *toStdout {
+		return 0
 	}
 	fmt.Fprintf(stdout, "wrote %d cookies to %s (mode 0600)\n", len(result.Cookies), *toFile)
 	return 0

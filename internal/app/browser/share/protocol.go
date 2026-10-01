@@ -50,6 +50,9 @@ type CookieRequest struct {
 	Cookie         Cookie        `json:"cookie,omitempty"`
 	Bundle         *CookieBundle `json:"bundle,omitempty"`
 	Replace        bool          `json:"replace,omitempty"`
+	// NativeExport is interpreted only by the owning adapter's normalize route.
+	NativeExport json.RawMessage `json:"native_export,omitempty"`
+	StoreID      string          `json:"store_id,omitempty"`
 }
 
 // CookieQueryResult contains values and non-fatal per-cookie read warnings.
@@ -57,6 +60,7 @@ type CookieQueryResult struct {
 	Cookies   []Cookie `json:"cookies"`
 	Warnings  []string `json:"warnings,omitempty"`
 	StorePath string   `json:"store_path,omitempty"`
+	StoreID   string   `json:"store_id,omitempty"`
 }
 
 type ResourceBundle struct {

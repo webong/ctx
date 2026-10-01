@@ -475,6 +475,9 @@ ctx share:browser cookie query --browser firefox --browser chrome --site https:/
 ctx share:browser cookie query --from chrome:Default --all-hosts --include-expired --to-file ./all-cookies.json
 ctx share:browser cookie query --from chrome:Default --site https://example.com --fallback-file ./authorized-export.json --to-file ./site-cookies.json
 ctx share:browser cookie query --from firefox:personal --site https://example.com --strict --require-match --to-file ./complete-cookies.json
+ctx share:browser cookie query --from chrome:Default --site https://example.com/account --format header --strict --require-match --to-file ./cookie-header.txt
+ctx share:browser cookie query --from firefox:personal --site https://example.com --format netscape --to-file ./cookies.txt
+ctx share:browser cookie normalize --from chrome:Default --store-id 0 --from-file ./native-export.json --to-file ./normalized-cookies.json
 ctx share:browser cookie copy --from firefox:personal --site https://example.com --name session --to-profile firefox:work
 ctx share:browser cookie copy --from firefox:personal --site https://example.com --name session --to-file ./session-cookie.json
 ctx share:browser cookie copy --from firefox:personal --site https://example.com --name session --stdout | consumer
@@ -543,12 +546,21 @@ existing `source` label plus `source_info` with adapter, profile, and a store
 path when the adapter reports one. Inline fallback cookies carry
 `source_info.fallback = true`.
 
+`cookie normalize` and the public `browser.Normalize` API route authorized
+browser-API exports through the owning trusted adapter. They require an explicit
+browser/profile and native store ID, retain partition/container metadata, and
+return canonical JSON for inline/fallback input. Export permissions and runtime
+binding remain the exporting application's responsibility. See
+[native export normalization](docs/browser-cookies.md#normalize-an-authorized-browser-export).
+
 Chromium-family export reads the profile's committed SQLite cookies. On
 macOS, encrypted cookies require access to the browser's Safe Storage item in
 Keychain; the source adapter requests it only after a cookie is selected and the output is
 valid. On Linux, v10 cookies can be decoded locally; v11 cookies use Secret
-Service through `secret-tool` or KWallet through `kwallet-query` (set
-`CTX_KWALLET_NAME` for a non-default wallet). On Windows, legacy DPAPI and
+Service through `secret-tool` or KWallet through `kwallet-query`. KWallet can
+discover the network wallet through `dbus-send`; `CTX_KWALLET_NAME` overrides
+discovery. Credential lookups and failures are cached within one operation.
+On Windows, legacy DPAPI and
 AES-GCM cookies can be exported for the current user. Chrome App-Bound (`v20`)
 cookies cannot be exported by a standalone ctx process. Unsupported encryption
 versions and unavailable OS keys fail without writing a partial bundle.
@@ -712,7 +724,7 @@ See [Adapters](adapters/README.md) for maintained packages and
 | `ctx build [provider|@instance] --cache-ref <ref> -- <args>` | Build with a registry-backed cache on a capable manager |
 | `ctx share:manager image <sync|copy> ...` | Transfer images through installed manager providers |
 | `ctx share:manager volume <export|import|copy> ...` | Transfer named volumes through installed manager providers |
-| `ctx share:browser cookie <list|query|copy|import> ...` | List, query, export, or import cookies through browser adapters |
+| `ctx share:browser cookie <list|query|normalize|copy|import> ...` | List, query, normalize, export, or import cookies through browser adapters |
 | `ctx share:browser policy export ...` | Export browser policy sources to a protected bundle or pipe |
 | `ctx share:browser certificate <list|export|copy|import> ...` | Share an exportable certificate through a capable browser adapter |
 | `ctx share:browser capabilities ...` | Show declared browser share operations and live prerequisite states |

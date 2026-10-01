@@ -1,10 +1,12 @@
 package chromium
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/url"
 
+	"github.com/webong/ctx/adapters/chromium/engine/webextension"
 	kit "github.com/webong/ctx/internal/app/browser/adapterkit"
 	"github.com/webong/ctx/internal/app/browser/share"
 )
@@ -28,22 +30,32 @@ func Run(config Config, args []string, input io.Reader, stdout, stderr io.Writer
 			return kit.Encode(stdout, share.AvailabilityReport{Version: share.AvailabilityVersion, Operations: operations})
 		}
 	case "cookie":
-		return kit.RunCookie(profile, operation, input, stdout, stderr, kit.CookieBackend{
-			QueryHandleIsStorePath: true,
-			Query: func(profile string, site *url.URL, includeExpired bool) ([]share.Cookie, string, error) {
-				return Query(config, profile, site, includeExpired)
-			},
-			List: func(profile string, site *url.URL, name string) ([]share.Cookie, string, error) {
-				return List(config, profile, site, name)
-			},
-			ReadValue: func(database string, cookie share.Cookie) (string, error) {
-				return ReadValue(config, database, cookie)
-			},
-			Import: func(profile string, cookie share.Cookie, replace bool) error {
-				return Import(config, profile, cookie, replace)
-			},
-		})
+		return kit.RunCookie(profile, operation, input, stdout, stderr, NewCookieBackend(config))
 	}
 	fmt.Fprintln(stderr, "ctx: unsupported browser share resource or operation")
 	return 2
+}
+
+// NewCookieBackend keeps credential lookup and derived keys within one cookie
+// operation. Construct a new backend for each request; it is not concurrency safe.
+func NewCookieBackend(config Config) kit.CookieBackend {
+	decryptor := newChromiumCookieDecryptor(config)
+	return kit.CookieBackend{
+		Normalize: func(profile, storeID string, payload json.RawMessage) (share.CookieQueryResult, error) {
+			return webextension.Normalize(webextension.Policy{Browser: config.Name, Namespace: "chromium", Partition: true}, profile, storeID, payload)
+		},
+		QueryHandleIsStorePath: true,
+		Query: func(profile string, site *url.URL, includeExpired bool) ([]share.Cookie, string, error) {
+			return Query(config, profile, site, includeExpired)
+		},
+		List: func(profile string, site *url.URL, name string) ([]share.Cookie, string, error) {
+			return List(config, profile, site, name)
+		},
+		ReadValue: func(database string, cookie share.Cookie) (string, error) {
+			return readChromiumCookieValueWithDecryptor(database, cookie, decryptor.decrypt)
+		},
+		Import: func(profile string, cookie share.Cookie, replace bool) error {
+			return Import(config, profile, cookie, replace)
+		},
+	}
 }
