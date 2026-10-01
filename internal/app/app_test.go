@@ -52,7 +52,14 @@ browser_management = "extension.prepare"
 	if runtime.GOOS == "windows" {
 		t.Skip("shell adapter fixture requires a Unix host")
 	}
-	executable := "#!/bin/sh\n[ \"$1\" = manage ] || exit 2\ncat >/dev/null\nprintf '%s\\n' '{\"version\":\"1.0\",\"kind\":\"extension\",\"action\":\"prepare\",\"status\":\"prepared\"}'\n"
+	executable := `#!/bin/sh
+if [ "$#" -ne 6 ] || [ "$1" != share ] || [ "$2" != Default ] || [ "$3" != -- ] || [ "$4" != management ] || [ "$5" != extension ] || [ "$6" != prepare ]; then
+    printf 'unexpected management invocation: %s\n' "$*" >&2
+    exit 2
+fi
+cat >/dev/null
+printf '%s\n' '{"version":"1.0","kind":"extension","action":"prepare","status":"prepared"}'
+`
 	if err := os.WriteFile(filepath.Join(adapterDir, "ctx-fixture"), []byte(executable), 0o700); err != nil {
 		t.Fatal(err)
 	}
