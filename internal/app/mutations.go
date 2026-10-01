@@ -114,27 +114,36 @@ func configureAdapterSelection(resolver *config.Resolver, candidate *modpkg.Adap
 	if code := invokeAdapter(resolver, candidate, "configure", selection, options, candidate.Manifest.Name, &output, stderr); code != 0 {
 		return nil, code
 	}
+	values, err := parseAdapterConfigurationValues(candidate, output.String())
+	if err != nil {
+		return nil, reportError(stderr, err)
+	}
+	return values, 0
+}
+
+func parseAdapterConfigurationValues(candidate *modpkg.Adapter, output string) (map[string]string, error) {
 	allowed := map[string]bool{}
 	for _, key := range candidate.ConfigKeys() {
 		allowed[key] = true
 	}
 	values := map[string]string{}
-	for _, line := range strings.Split(strings.TrimSuffix(output.String(), "\n"), "\n") {
+	for _, line := range strings.Split(output, "\n") {
+		// PowerShell emits CRLF records. Strip the line-ending CR while
+		// continuing to reject carriage returns embedded in a value.
+		line = strings.TrimSuffix(line, "\r")
 		if line == "" {
 			continue
 		}
 		parts := strings.SplitN(line, "\t", 2)
 		if len(parts) != 2 || !allowed[parts[0]] || parts[1] == "" || strings.ContainsAny(parts[1], "\r\n") {
-			fmt.Fprintf(stderr, "ctx: adapter %s returned an invalid configuration record\n", candidate.Manifest.Name)
-			return nil, 1
+			return nil, fmt.Errorf("adapter %s returned an invalid configuration record", candidate.Manifest.Name)
 		}
 		values[parts[0]] = parts[1]
 	}
 	if values[candidate.Manifest.SelectorKey] == "" {
-		fmt.Fprintf(stderr, "ctx: adapter %s did not return selector key %s\n", candidate.Manifest.Name, candidate.Manifest.SelectorKey)
-		return nil, 1
+		return nil, fmt.Errorf("adapter %s did not return selector key %s", candidate.Manifest.Name, candidate.Manifest.SelectorKey)
 	}
-	return values, 0
+	return values, nil
 }
 
 func clearContext(args []string, stdout, stderr io.Writer) int {
