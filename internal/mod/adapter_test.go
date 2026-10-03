@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -95,6 +96,42 @@ self_contained = "true"
 	loaded, err := LoadDirectory(path)
 	if err != nil || loaded.IsSelectable() || !loaded.HasCapability("share") {
 		t.Fatalf("nonselectable share adapter: loaded=%v err=%v", loaded, err)
+	}
+}
+
+func TestAdapterDisplayName(t *testing.T) {
+	directory := fixtureAdapter(t, t.TempDir(), "example", "browser")
+	path := filepath.Join(directory, "adapter.toml")
+	original, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadDirectory(directory)
+	if err != nil || loaded.DisplayLabel() != "example" {
+		t.Fatalf("default display label=%v err=%v", loaded, err)
+	}
+	for _, test := range []struct {
+		name  string
+		valid bool
+	}{
+		{"Example App", true},
+		{" Example App", false},
+		{"Example\nApp", false},
+		{"Example\u202eApp", false},
+		{strings.Repeat("A", 81), false},
+	} {
+		manifest := string(original) + "display_name = " + strconv.Quote(test.name) + "\n"
+		if err := os.WriteFile(path, []byte(manifest), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		loaded, err := LoadDirectory(directory)
+		if test.valid {
+			if err != nil || loaded.DisplayLabel() != test.name {
+				t.Fatalf("display name %q: loaded=%v err=%v", test.name, loaded, err)
+			}
+		} else if err == nil {
+			t.Fatalf("invalid display name %q accepted", test.name)
+		}
 	}
 }
 

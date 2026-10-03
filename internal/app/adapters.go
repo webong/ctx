@@ -94,6 +94,7 @@ func adapterCommand(resolver *config.Resolver, args []string, stdout, stderr io.
 			state = "trusted"
 		}
 		fmt.Fprintf(stdout, "name:         %s\n", candidate.Manifest.Name)
+		fmt.Fprintf(stdout, "display name: %s\n", candidate.DisplayLabel())
 		fmt.Fprintf(stdout, "api:          %s\n", candidate.Manifest.APIVersion)
 		fmt.Fprintf(stdout, "runtime:      %s\n", candidate.Manifest.Runtime)
 		fmt.Fprintf(stdout, "surfaces:     %s\n", strings.Join(candidate.Manifest.Surfaces, ","))

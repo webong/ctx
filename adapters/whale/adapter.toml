@@ -1,5 +1,6 @@
 api_version = "2.0"
 name = "whale"
+display_name = "Whale"
 runtime = "browser"
 surfaces = "web"
 executable = "ctx-whale"

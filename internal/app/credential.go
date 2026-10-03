@@ -69,6 +69,7 @@ func credentialCommand(resolver *config.Resolver, args []string, stdin io.Reader
 		if err != nil {
 			return reportErrorCode(stderr, err, 2)
 		}
+		reportCredentialRequester(source, stderr)
 		value, code := readCredential(resolver, source, stderr)
 		if code != 0 {
 			return code
@@ -114,6 +115,7 @@ func credentialCommand(resolver *config.Resolver, args []string, stdin io.Reader
 			return reportErrorCode(stderr, errors.New("credential input must contain 1 byte to 1 MiB"), 2)
 		}
 		defer eraseCredential(value)
+		reportCredentialRequester(target, stderr)
 		if code := writeCredential(resolver, target, value, *replace, stderr); code != 0 {
 			return code
 		}
@@ -166,6 +168,26 @@ func loadCredentialEndpoint(ref string) (credentialEndpoint, error) {
 		return credentialEndpoint{}, err
 	}
 	return credentialEndpoint{adapter: adapter, item: item}, nil
+}
+
+// The inherited adapter name is only an informational hint. The display label
+// comes from a trusted manifest and never changes authorization or native UI.
+func reportCredentialRequester(endpoint credentialEndpoint, stderr io.Writer) {
+	name := os.Getenv("CTX_ADAPTER_NAME")
+	if name == "" || name == endpoint.adapter.Manifest.Name {
+		return
+	}
+	store := adapterStore()
+	requester, err := store.Load(name)
+	if err != nil || store.AssertTrusted(requester) != nil {
+		return
+	}
+	dependency, declared := requester.Manifest.Dependencies["credential"]
+	if !declared || dependency.Adapter != endpoint.adapter.Manifest.Name {
+		return
+	}
+	fmt.Fprintf(stderr, "ctx: reported requester %s (%s) is accessing credentials through %s; check any native permission prompt separately\n",
+		requester.DisplayLabel(), requester.Manifest.Name, endpoint.adapter.Manifest.Name)
 }
 
 type boundedCredentialWriter struct{ bytes.Buffer }

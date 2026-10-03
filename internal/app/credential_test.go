@@ -16,6 +16,7 @@ func TestCredentialCLIUsesTrustedAdapterAndPrivateOutputs(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("CTX_HOME", filepath.Join(root, "state"))
 	t.Setenv("CTX_ADAPTER_HOME", filepath.Join(root, "state", "adapters"))
+	t.Setenv("CTX_ADAPTER_NAME", "")
 	t.Setenv("CTX_TEST_VAULT_DIR", filepath.Join(root, "vault"))
 	if err := os.MkdirAll(filepath.Join(root, "vault"), 0o700); err != nil {
 		t.Fatal(err)
@@ -96,6 +97,45 @@ esac
 	if code, out, errText := run("get", "vault:alpha", "--stdout"); code != 0 || out != "private-value" || errText != "" {
 		t.Fatalf("stdout get code=%d output=%q diagnostics=%q", code, out, errText)
 	}
+	requesterSource := filepath.Join(root, "requester")
+	if err := os.MkdirAll(requesterSource, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	requesterManifest := `api_version = "2.0"
+name = "caller"
+display_name = "Example App"
+runtime = "computer"
+surfaces = "shell"
+executable = "ctx-caller"
+capabilities = "validate,doctor,share"
+selectable = "false"
+self_contained = "true"
+dependencies_darwin = "credential:vault@2.0"
+dependencies_linux = "credential:vault@2.0"
+`
+	if err := os.WriteFile(filepath.Join(requesterSource, "adapter.toml"), []byte(requesterManifest), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(requesterSource, "ctx-caller"), []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	requester, err := store.Install(requesterSource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Trust(requester); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CTX_ADAPTER_NAME", "caller")
+	if code, out, errText := run("get", "vault:alpha", "--stdout"); code != 0 || out != "private-value" ||
+		!strings.Contains(errText, "reported requester Example App (caller) is accessing credentials through vault") {
+		t.Fatalf("requester notice code=%d output=%q diagnostics=%q", code, out, errText)
+	}
+	t.Setenv("CTX_ADAPTER_NAME", "missing")
+	if code, _, errText := run("get", "vault:alpha", "--stdout"); code != 0 || errText != "" {
+		t.Fatalf("undeclared requester code=%d diagnostics=%q", code, errText)
+	}
+	t.Setenv("CTX_ADAPTER_NAME", "")
 	if code, _, errText := run("get", "vault:alpha", "--to-file", output); code == 0 || !strings.Contains(errText, "already exists") {
 		t.Fatalf("existing output code=%d diagnostics=%q", code, errText)
 	}

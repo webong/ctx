@@ -1,5 +1,6 @@
 api_version = "2.0"
 name = "dia"
+display_name = "Dia"
 runtime = "browser"
 surfaces = "web"
 executable = "ctx-dia"

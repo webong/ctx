@@ -16,6 +16,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 const APIVersion = "2.0"
@@ -55,6 +57,7 @@ type Manifest struct {
 	Executable           string
 	ExecutableWindows    string
 	Description          string
+	DisplayName          string
 	Capabilities         []string
 	Supports             []string
 	SelectorKey          string
@@ -81,6 +84,14 @@ type Manifest struct {
 type Adapter struct {
 	Directory string
 	Manifest  Manifest
+}
+
+// DisplayLabel is presentation metadata, never an authentication identity.
+func (a *Adapter) DisplayLabel() string {
+	if a.Manifest.DisplayName != "" {
+		return a.Manifest.DisplayName
+	}
+	return a.Manifest.Name
 }
 
 // Dependency binds a share space to a separately installed adapter using an
@@ -130,6 +141,7 @@ func LoadDirectoryForOS(directory, goos string) (*Adapter, error) {
 		Executable:           values["executable"],
 		ExecutableWindows:    values["executable_windows"],
 		Description:          values["description"],
+		DisplayName:          values["display_name"],
 		Capabilities:         splitList(values["capabilities"]),
 		Supports:             splitList(values["supports"]),
 		SelectorKey:          values["selector_key"],
@@ -573,6 +585,17 @@ func parseManifest(path string) (map[string]string, error) {
 }
 
 func validateManifest(manifest Manifest, directory, goos string) error {
+	if manifest.DisplayName != "" {
+		if !utf8.ValidString(manifest.DisplayName) || utf8.RuneCountInString(manifest.DisplayName) > 80 ||
+			strings.TrimSpace(manifest.DisplayName) != manifest.DisplayName {
+			return fmt.Errorf("adapter %s has invalid display_name", manifest.Name)
+		}
+		for _, character := range manifest.DisplayName {
+			if unicode.IsControl(character) || unicode.Is(unicode.Cf, character) {
+				return fmt.Errorf("adapter %s has invalid display_name", manifest.Name)
+			}
+		}
+	}
 	if manifest.APIVersion != APIVersion && manifest.APIVersion != legacyAPIVersion && manifest.APIVersion != legacyDecimalAPIVersion {
 		return fmt.Errorf("adapter %s uses unsupported API %s (expected %s)", manifest.Name, manifest.APIVersion, APIVersion)
 	}

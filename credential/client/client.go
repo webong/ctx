@@ -68,6 +68,7 @@ func GetDeclaredWithEnv(ctx context.Context, space, item string, extra map[strin
 	}
 	var output boundedOutput
 	command.Stdout = &output
+	command.Stderr = os.Stderr
 	if err := command.Run(); err != nil {
 		return nil, fmt.Errorf("credential lookup via %s failed: %w; check that the dependency is installed and trusted", name, err)
 	}

@@ -15,6 +15,19 @@ Percent-encode special characters within an item reference and quote the whole
 reference in a shell. These are item selectors, never secret values. `ctx` does
 not enumerate a vault or extract Windows domain credentials. Native access
 rules, prompts, account scope, and Linux session-bus availability still apply.
+
+When a caller reports a trusted adapter ID with a declared credential
+dependency, CTX writes an informational notice such as `reported requester
+Google Chrome (chrome) is accessing credentials through keychain` to stderr.
+The adapter supplies the human-readable `display_name` in its trusted
+manifest; otherwise CTX uses its adapter ID. The inherited requester ID is
+only a hint for this notice, not proof of the calling process or a permission
+grant. Check the actual system prompt
+separately: macOS identifies the native process that accesses Keychain, not an
+arbitrary display name supplied by the browser adapter. Linux Secret Service
+prompts are displayed by the service. Windows CredMan's direct generic-
+credential operations do not add a CTX-controlled prompt.
+
 The Linux adapter requires `secret-tool` and a running Secret Service provider
 in the user's desktop session. The macOS adapter uses Security.framework and
 needs a native macOS build when installing from source; prebuilt releases carry

@@ -30,6 +30,7 @@ provider switch in core code.
 ~~~toml
 api_version = "2.0"
 name = "example"
+display_name = "Example App"
 runtime = "computer"
 surfaces = "shell,web"
 executable = "ctx-example"
@@ -54,9 +55,17 @@ default_provider = "false"
 ~~~
 
 Names use lowercase letters, numbers, and underscores, and cannot collide with a
-runtime, surface, or ctx command. `validate` and `doctor` are required. An
-adapter must provide `run`, `open`, or `share`; `list` is optional. A
-share-only browser adapter can expose profile discovery and browser resources
+runtime, surface, or ctx command.
+
+`display_name` is optional, user-facing adapter metadata (up to 80 Unicode
+characters, without control characters). CTX falls back to `name` when it is
+absent. It appears in `ctx adapter inspect` and CTX's credential-request notice
+when this trusted adapter declares the selected credential-store dependency.
+The label is not an authentication identity and does not change native OS
+permission dialogs. An adapter changing its manifest needs to be trusted again.
+
+`validate` and `doctor` are required. An adapter must provide `run`, `open`, or
+`share`; `list` is optional. A share-only browser adapter can expose profile discovery and browser resources
 without implementing URL launching.
 `selectable = "false"` omits the selector key and command shim for a share-only
 adapter. It defaults to `true` for existing adapters.
