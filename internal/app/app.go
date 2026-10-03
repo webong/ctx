@@ -224,8 +224,11 @@ usage:
   ctx run -- <command> [arguments...]
   ctx shell [--shell <executable>] [-- <command> [arguments...]]
   ctx graph scan
+  ctx graph shells
+  ctx graph filesystems
+  ctx graph webviews
   ctx graph resolve [runtime|all] [capability...] [--supports <kind>] [--share <resource.operation>]
-  ctx graph <scan|status|vertices|edges|snapshot|changes> [arguments...]
+  ctx graph <scan|shells|filesystems|webviews|status|vertices|edges|snapshot|changes> [arguments...]
   ctx version`)
 }
 

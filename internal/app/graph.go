@@ -35,10 +35,42 @@ func graphCommand(args []string, stdout, stderr io.Writer) int {
 	encoder := json.NewEncoder(stdout)
 	encoder.SetIndent("", "  ")
 	switch args[0] {
+	case "shells", "filesystems", "webviews":
+		if len(args) != 1 {
+			fmt.Fprintf(stderr, "ctx: graph %s takes no arguments\n", args[0])
+			return 2
+		}
+		inventory := systemgraph.HostInventory{}
+		var result any
+		switch args[0] {
+		case "shells":
+			inventory.Shells, err = systemgraph.DiscoverShells(ctx)
+			result = inventory.Shells
+		case "filesystems":
+			inventory.Filesystems, err = systemgraph.DiscoverFilesystems(ctx)
+			result = inventory.Filesystems
+		case "webviews":
+			inventory.Webviews, err = systemgraph.DiscoverWebviews(ctx)
+			result = inventory.Webviews
+		}
+		if err != nil {
+			return reportError(stderr, err)
+		}
+		if err := system.ObserveHost(ctx, inventory); err != nil {
+			return reportError(stderr, err)
+		}
+		if err := encoder.Encode(result); err != nil {
+			return reportError(stderr, err)
+		}
+		return 0
 	case "scan":
 		if len(args) != 1 {
 			fmt.Fprintln(stderr, "ctx: graph scan takes no arguments")
 			return 2
+		}
+		host, err := system.ScanHost(ctx)
+		if err != nil {
+			return reportError(stderr, err)
 		}
 		if resolveErr != nil {
 			return reportError(stderr, resolveErr)
@@ -55,6 +87,8 @@ func graphCommand(args []string, stdout, stderr io.Writer) int {
 			}
 		}
 		fmt.Fprintf(stdout, "observed %d adapters and %d contexts\n", len(adapters), count)
+		fmt.Fprintf(stdout, "observed %d shells and %d mounted filesystems\n", len(host.Shells), len(host.Filesystems))
+		fmt.Fprintf(stdout, "observed %d shared webview runtimes\n", len(host.Webviews))
 		return 0
 	case "resolve":
 		if resolveErr != nil {
@@ -212,7 +246,7 @@ func graphCommand(args []string, stdout, stderr io.Writer) int {
 		return 0
 	default:
 		fmt.Fprintf(stderr, "ctx: unknown graph command %s\n", args[0])
-		fmt.Fprintln(stderr, "ctx: use graph scan, resolve [runtime|all] [capability...] [--supports kind] [--share resource.operation], status, vertices, edges, snapshot, or changes [cursor]")
+		fmt.Fprintln(stderr, "ctx: use graph scan, shells, filesystems, webviews, resolve [runtime|all] [capability...] [--supports kind] [--share resource.operation], status, vertices, edges, snapshot, or changes [cursor]")
 		return 2
 	}
 }

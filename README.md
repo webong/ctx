@@ -223,8 +223,24 @@ ctx adapter add postgres mysql
 ctx adapter ls
 ctx adapter inspect postgres
 ctx graph scan
+ctx graph shells
+ctx graph filesystems
+ctx graph webviews
 ctx graph resolve browser --share cookie.list
 ```
+
+The graph discovers host shells, mounted filesystems, and shared webview
+runtimes directly, even with no adapters installed. `graph shells` reports
+executable paths, resolved symlink
+targets, discovery sources, and the configured default. `graph filesystems`
+reports mount points, filesystem types, sources, read-only status, and space in
+bytes where available. `graph webviews` reports detected embedding runtimes and
+their rendering engines, API/ABI generations, versions where available, and
+discovery evidence. These commands emit JSON and refresh their graph records;
+`graph scan` refreshes all host inventories alongside adapter inventory. Inspect
+stored records with `ctx graph vertices shell`, `ctx graph vertices filesystem`,
+or `ctx graph vertices webview`.
+See [host discovery](docs/host-discovery.md) for platform coverage and the library API.
 
 Third-party adapters use the same API. Installing one directly leaves it
 untrusted until you review and trust it:

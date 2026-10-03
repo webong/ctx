@@ -87,8 +87,16 @@ active profile, and selected adapter context IDs. Optional Bash, Zsh, and
 PowerShell prompt hooks refresh shell location after directory changes.
 Successful browser opens add the provider, profile, and URL origin. URL paths,
 query strings, fragments, arbitrary environment values, and shell history are
-not collected. `ctx graph scan` records installed adapters, their declared
-capabilities and surfaces, and versioned observations from trusted adapters.
+not collected. Host shell executables, mounted filesystems, and shared webview
+runtimes are discovered directly by the public system graph package,
+independently of adapters.
+`ctx graph shells`, `ctx graph filesystems`, and `ctx graph webviews` refresh and
+expose those host inventories, including executable paths, mounted filesystem
+space, and evidence of shared web rendering runtimes. Native
+host discovery stays in `graph/system`; product-specific provider discovery
+stays in adapters. `ctx graph scan` records all host inventories and installed
+adapters, their declared capabilities and surfaces, and versioned observations
+from trusted adapters.
 The fallback `list` collector handles existing browser and manager adapters.
 Adapters also project declared resource support, such as `virtualizer` and
 `container`, separately from executable capabilities.
