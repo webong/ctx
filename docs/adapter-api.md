@@ -342,6 +342,14 @@ and [Neura Local settings](https://www.neurarelay.com/operators#neura-local-sett
 
 ## Process protocol
 
+CTX adapters also expose a shared library descriptor through
+`github.com/webong/ctx/adapter.PluginDescriptor`, using the `ctx.adapter`
+contract and their native API version. CTX uses the public `plugin` package
+for capability lookup and package integrity checking. The argv and stream
+binding below remains the adapter transport; it does not require a JSON-line
+handshake. See [the shared plugin contract](adr-plugin-contract.md) for the
+public host API and Xallet/Cymonkey integration boundary.
+
 ctx selects `executable_windows` on Windows when it is present and otherwise uses
 `executable`. Windows adapters may be `.exe`, `.cmd`, `.bat`, or `.ps1`; PowerShell
 scripts are launched without loading the user's profile.

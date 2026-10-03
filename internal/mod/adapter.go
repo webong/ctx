@@ -2,8 +2,6 @@ package mod
 
 import (
 	"bufio"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,6 +16,9 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/webong/ctx/adapter"
+	"github.com/webong/ctx/plugin"
 )
 
 const APIVersion = "2.0"
@@ -269,10 +270,9 @@ func (s *Store) List() ([]*Adapter, error) {
 }
 
 func (a *Adapter) HasCapability(capability string) bool {
-	if capability == "manage" && len(a.Manifest.BrowserManagement) > 0 && a.IsRuntime("browser") {
-		return true
-	}
-	return contains(a.Manifest.Capabilities, capability) || a.HasComputerCapability(capability)
+	d := adapter.PluginDescriptor(plugin.Identity{}, a.pluginOperations())
+	_, err := d.Lookup(plugin.ContractRef{Name: adapter.PluginContractName, Version: adapter.APIVersion}, capability)
+	return err == nil
 }
 
 // ValidateDependency checks the declared API and capability of a runtime
@@ -372,41 +372,11 @@ func (a *Adapter) ExecutablePathForOS(goos string) string {
 }
 
 func (a *Adapter) Checksum() (string, error) {
-	if err := rejectLinks(a.Directory); err != nil {
-		return "", err
-	}
-	var files []string
-	err := filepath.WalkDir(a.Directory, func(path string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if entry.Type().IsRegular() {
-			relative, err := filepath.Rel(a.Directory, path)
-			if err != nil {
-				return err
-			}
-			files = append(files, filepath.ToSlash(relative))
-		}
-		return nil
-	})
-	if err != nil {
-		return "", err
-	}
-	sort.Strings(files)
-	outer := sha256.New()
-	for _, relative := range files {
-		contents, err := os.ReadFile(filepath.Join(a.Directory, filepath.FromSlash(relative)))
-		if err != nil {
-			return "", err
-		}
-		inner := sha256.Sum256(contents)
-		fmt.Fprintf(outer, "./%s %s\n", relative, hex.EncodeToString(inner[:]))
-	}
-	return hex.EncodeToString(outer.Sum(nil)), nil
+	return plugin.DirectoryDigest(a.Directory)
 }
 
 func (s *Store) IsTrusted(a *Adapter) (bool, error) {
-	checksum, err := a.Checksum()
+	descriptor, err := a.PluginDescriptor()
 	if err != nil {
 		return false, err
 	}
@@ -414,7 +384,7 @@ func (s *Store) IsTrusted(a *Adapter) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return trust[a.Manifest.Name] == checksum, nil
+	return trust[a.Manifest.Name] == strings.TrimPrefix(descriptor.Identity.Revision, "sha256:"), nil
 }
 
 func (s *Store) AssertTrusted(a *Adapter) error {

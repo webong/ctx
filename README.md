@@ -274,6 +274,7 @@ and [the graph design](docs/adr-graph-runtime.md).
 - [Adapter API and packaging](docs/adapter-api.md)
 - [Cross-platform support](docs/cross-platform.md)
 - [System graph design](docs/adr-graph-runtime.md)
+- [Shared plugin contract and consumer integration](docs/adr-plugin-contract.md)
 
 ## License
 
