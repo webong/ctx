@@ -7,7 +7,8 @@ wire protocols do not become compatible merely by importing this package.
 ## Ownership
 
 CTX supplies `github.com/webong/ctx/plugin`, alongside `graph` and `supervisor`.
-Its implementations include `plugin/jsonline` and `plugin/hashicorp`, with
+Its implementations include `plugin/inprocess`, `plugin/jsonline`,
+`plugin/hashicorp`, `plugin/nativego`, `plugin/wasm`, and `plugin/cshared`, with
 additional backends able to implement the same public interface. HashiCorp
 go-plugin is a dependency of the plugin library, not a CTX product adapter.
 CTX adapters and ecosystem applications are consumers of these libraries.
@@ -99,8 +100,9 @@ the guest's deadline bound, calls the required domain handler, and normalizes
 responses and public errors. The handler still owns domain authorization.
 
 `plugin.NewGuest` accepts a descriptor and `GuestOptions`; the same guest can
-be served by `jsonline.ServeGuest` or `hashicorp.Plugin`. The host continues to
-use `plugin.Open` and `Session.Call` for either implementation. RPC bindings
+be served by `jsonline.ServeGuest`, `hashicorp.Plugin`, a native Go factory,
+a WASI command, or the C ABI guest bridge. The host continues to
+use `plugin.Open` and `Session.Call` for every implementation. RPC bindings
 may invoke guest handlers concurrently, so handlers must synchronize mutable
 state. Transport shutdown does not itself destroy a shared guest endpoint.
 
@@ -108,6 +110,15 @@ New backends implement `Backend` on the host side and bind `Endpoint` on the
 guest side. They preserve identity checking, cancellation, envelope limits,
 per-call authorization, and error semantics. They do not add a provider switch
 to `plugin.Open`. Distinct domain APIs retain their own declared contracts.
+
+Native execution inside the host cannot be forcibly terminated. Native Go
+loaders/initializers are synchronous and handlers must honor contexts. C ABI
+cancellation stops waiting, closes admission and defers handle destruction until
+native work returns; `WaitClosed` observes actual cleanup. Both keep loaded code
+resident for process lifetime. WASI cancellation closes its command pipes and
+terminates module execution; blocking host-provided I/O still needs host
+cooperation. These mechanics are explicit in backend profiles and the
+[runtime authoring guide](plugin-runtimes.md).
 
 ## JSON-line binding
 

@@ -19,6 +19,10 @@ Their existing native protocols are not automatically compatible with CTX.
 | `plugin/inprocess` | Trusted endpoints with connection lifetime cancellation |
 | `plugin/jsonline` | Bounded JSON-line transport on a supplied duplex connection |
 | `plugin/hashicorp` | Native go-plugin startup and net/rpc or gRPC bindings |
+| `plugin/nativego` | Dynamic Go `.so` loading through a standard guest factory |
+| `plugin/wasm` | Embedded wazero execution of WASI Preview 1 command guests |
+| `plugin/cshared` | Dynamic C ABI loading with separate guest handles and owned buffers |
+| `plugin/cshared/guest` | Go guest lifecycle and cgo export bridge for C shared libraries |
 | `plugin/instance` | Configuration revisions, resource leases, replacement and disposal |
 | `plugin/capability` | Optional health and configuration contracts |
 | `plugin/stream` | Optional, scoped, bounded pull streams |
@@ -69,6 +73,9 @@ named runtime, platform artifact, protocol and exact host dependency versions.
 | JSON-line | Serialized per connection | Close connection | Host/supervisor |
 | HashiCorp net/rpc | Yes | Close dispensed RPC stream | go-plugin client when using `Connect` |
 | HashiCorp gRPC | Yes | Cancel request | go-plugin client when using `Connect` |
+| Native Go | Yes, when handler supports it | Cooperative request context; loader/init cannot be interrupted | Embedding host; image stays loaded |
+| WASI Preview 1 | Serialized per module | Close pipes and terminate module execution | wazero runtime |
+| C shared library | Serialized per handle | Release caller; clean up after native call returns | Embedding host; image stays loaded |
 
 All bind the same `Guest`. A transport error or cancellation after dispatch
 fails its CTX session; start a fresh verified session to reconnect. Actions are
@@ -77,6 +84,13 @@ SDK's pull stream capability works over those unary calls; native gRPC streams,
 HashiCorp broker callbacks and reattachment still require explicit bindings.
 An in-process handler must honor cancellation and has no isolation boundary.
 Subprocess separation also does not constitute an OS sandbox.
+
+The [runtime authoring guide](plugin-runtimes.md) contains build recipes and one
+typed implementation shared across native Go, WASI and C shared libraries.
+WASI guests use the same `jsonline.ServeStdio` helper as standalone command
+guests. The C binding has its own versioned ABI header, while domain envelopes
+continue to use `ctx.plugin/v1`. Native loaders require explicit verified paths;
+they do not discover, install or authorize artifacts.
 
 ## Typed authoring
 
@@ -239,8 +253,8 @@ adapters retain their existing shared descriptor/integrity integration and nativ
 argv/stream behavior. Xallet and Cymonkey are reference consumers for future
 adoption; no migration or dependency change is included in their repositories.
 
-Future releases can add backends such as WASM or remote RPC, native multiplexed
-streaming, richer schema tooling and publisher-specific distribution through
+Future releases can add remote RPC backends, WASI component-model bindings,
+native multiplexed streaming, richer schema tooling and publisher-specific distribution through
 the same boundaries. A Grafana plugin or arbitrary HashiCorp interface still
 needs an explicit domain translation. Source release/tagging and npm publication
 are separate steps; the TypeScript package remains private during development.

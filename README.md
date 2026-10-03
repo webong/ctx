@@ -271,15 +271,18 @@ CTX and its ecosystem share public Go libraries:
 - `github.com/webong/ctx/graph` supplies generic graph storage and transactions.
 - `github.com/webong/ctx/plugin` supplies the shared host/guest contract,
   validation, selection, admission, and session lifecycle. Its implementations
-  include `plugin/jsonline` and `plugin/hashicorp` (net/rpc and gRPC); future
-  backends implement the same interfaces.
+  include `plugin/inprocess`, `plugin/jsonline`, `plugin/hashicorp` (net/rpc and
+  gRPC), `plugin/nativego`, `plugin/wasm` (WASI Preview 1), and `plugin/cshared`
+  (versioned C ABI). All use the same typed authoring and host session APIs.
 - `github.com/webong/ctx/supervisor` supplies local process supervision when
   the selected plugin backend does not already own its process lifecycle.
 
 CTX adapters, Xallet, Cymonkey, and other applications can build on these
 libraries. Domain behavior and authorization remain with each consumer.
 See the [plugin contract](docs/adr-plugin-contract.md) and the
-[HashiCorp backend guide](plugin/hashicorp/README.md).
+[HashiCorp backend guide](plugin/hashicorp/README.md). The
+[runtime authoring guide](docs/plugin-runtimes.md) shows one implementation built
+as a Go plugin, a WASI command, or a C shared library.
 
 ## Documentation
 

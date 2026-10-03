@@ -1,11 +1,12 @@
 module github.com/webong/ctx
 
-go 1.23
+go 1.23.0
 
 require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/hashicorp/go-hclog v0.14.1
 	github.com/hashicorp/go-plugin v1.6.3
+	github.com/tetratelabs/wazero v1.10.1
 	google.golang.org/grpc v1.58.3
 	google.golang.org/protobuf v1.36.1
 )

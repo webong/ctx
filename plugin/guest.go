@@ -29,7 +29,7 @@ type GuestOptions struct {
 }
 
 // Guest holds an immutable declaration and a domain handler, reusable across
-// in-process, JSON-line, and RPC backends. Each backend owns its
+// in-process, JSON-line, RPC, native Go, WASI and C ABI backends. Each backend owns its
 // connections; shutting one connection does not shut down the guest process.
 type Guest struct {
 	descriptor Descriptor
