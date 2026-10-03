@@ -6,8 +6,11 @@ wire protocols do not become compatible merely by importing this package.
 
 ## Ownership
 
-CTX supplies `github.com/webong/ctx/plugin` and
-`github.com/webong/ctx/plugin/jsonline`, alongside `graph` and `supervisor`.
+CTX supplies `github.com/webong/ctx/plugin`, alongside `graph` and `supervisor`.
+Its implementations include `plugin/jsonline` and `plugin/hashicorp`, with
+additional backends able to implement the same public interface. HashiCorp
+go-plugin is a dependency of the plugin library, not a CTX product adapter.
+CTX adapters and ecosystem applications are consumers of these libraries.
 The plugin library owns generic declarations, validation, exact selection,
 admission sequencing, handshake checking, bounded invocation, and draining.
 It has no product catalog, default installation location, native command map,
@@ -16,7 +19,8 @@ browser fallback, or built-in permission vocabulary.
 Consumers define domain contracts, payloads, authorization, configuration,
 discovery, package distribution, trust storage, and endpoint authentication.
 Product and native mechanisms in CTX belong under `adapters/<name>/`.
-Portable integrity and transport utilities may be shared. A descriptor, graph
+Portable integrity and plugin runtime implementations belong in the library.
+A descriptor, graph
 record, matching checksum, or successful handshake never grants authority.
 
 ## One contract, independent versions
@@ -74,15 +78,36 @@ The default handshake, call, and drain timeout is 30 seconds. `Options.Timeout`
 sets the session bound; an earlier caller deadline wins. Backend implementations
 must honor context cancellation and make `Close` interrupt outstanding I/O.
 
-Process lifecycle remains in `supervisor`: leases, process trees, health,
-restart policy, secret resolution, resource controls, and graph projection.
-An embedding host starts an already-authorized `supervisor.Spec`, uses
+Each child has one lifecycle owner. A host using `supervisor` gets leases,
+process trees, health, restart policy, secret resolution, resource controls,
+and graph projection. It starts an already-authorized `supervisor.Spec`, uses
 `EndpointReady` for its declared endpoint, and opens a session in
 `ProtocolHandshake`. It drains the session before `Supervisor.Stop`, and uses
 `Abort` on process failure or forced shutdown. Each restart needs a new session
 and fresh handshake. The host must fence old session references when replacing
 a process and own rollback of a multi-plugin composition. The plugin library
 does not implement an additional process supervisor or composition database.
+The HashiCorp backend delegates startup and cleanup to go-plugin's client;
+the same child must not also be owned by CTX supervisor.
+
+## Shared host and guest interface
+
+`plugin.Endpoint` exposes `Handshake` and `Invoke`. `plugin.Backend` embeds it
+and adds connection cleanup for hosts. `plugin.Guest` implements the endpoint
+for plugin authors: it freezes the descriptor, validates each request, enforces
+the guest's deadline bound, calls the required domain handler, and normalizes
+responses and public errors. The handler still owns domain authorization.
+
+`plugin.NewGuest` accepts a descriptor and `GuestOptions`; the same guest can
+be served by `jsonline.ServeGuest` or `hashicorp.Plugin`. The host continues to
+use `plugin.Open` and `Session.Call` for either implementation. RPC bindings
+may invoke guest handlers concurrently, so handlers must synchronize mutable
+state. Transport shutdown does not itself destroy a shared guest endpoint.
+
+New backends implement `Backend` on the host side and bind `Endpoint` on the
+guest side. They preserve identity checking, cancellation, envelope limits,
+per-call authorization, and error semantics. They do not add a provider switch
+to `plugin.Open`. Distinct domain APIs retain their own declared contracts.
 
 ## JSON-line binding
 
@@ -123,6 +148,46 @@ process. There is no automatic replay, idempotency, streaming-event channel,
 server-initiated callback, or reconnect in v1. Domains can define bounded polling
 methods and use separately declared channels for streams.
 
+## HashiCorp backend
+
+`github.com/webong/ctx/plugin/hashicorp` implements HashiCorp go-plugin's
+`Plugin` and `GRPCPlugin` interfaces, supporting both net/rpc and gRPC for hosts
+and guests. It is a library implementation alongside JSON-line transport.
+The shared plugin core has no HashiCorp imports; importing the HashiCorp backend
+brings in the pinned go-plugin dependency and its RPC dependencies.
+
+The native launch handshake, CTX descriptor handshake, and consumer contract
+versions serve separate purposes. The magic cookie is a launch convention,
+not authentication. Configure upstream `SecureConfig`, `AutoMTLS`/TLS,
+environment, logging, and startup limits as appropriate to the host's policy.
+The CTX verifier still runs before `hashicorp.Connect` may start a process.
+
+`Connect` takes ownership of a dedicated go-plugin client and dispenses the CTX
+interface. The backend closes the client and kills its process when the CTX
+session closes or fails. Set `StartTimeout`: cancellation returns promptly,
+but cleanup of an in-progress native startup waits for that startup to finish.
+Hosts that use native `Dispense` directly retain responsibility for `Client.Kill`.
+
+Existing go-plugin interfaces use `ConnectInterface` with a consumer-supplied
+translation to `plugin.Backend`. Their existing method signatures and payloads
+must be mapped explicitly; a runtime framework cannot infer domain semantics.
+The translation must provide a verified descriptor and honor cancellation.
+
+The gRPC service schema is `plugin/hashicorp/runtime.proto`. It uses standard
+protobuf `Empty` and `BytesValue` messages carrying CTX JSON envelopes, so other
+languages can generate service stubs without a custom codec. Use the supplied
+`hashicorp.GRPCServer` factory for transport message limits. net/rpc checks the
+JSON limit after upstream Gob decoding; its upstream decoder is not an
+untrusted-input memory boundary. Cancellation closes the dispensed net/rpc
+connection, while gRPC cancels the binding's in-flight requests. Neither path
+retries a call automatically.
+
+Native broker callbacks, streaming interfaces, and reattachment remain explicit
+upstream features that consumer bindings can use. This backend's standard CTX
+interface currently exposes unary handshake/invocation. See
+[`plugin/hashicorp/README.md`](../plugin/hashicorp/README.md) for host and guest
+usage and process examples.
+
 ## CTX adapter adoption
 
 `adapter.PluginDescriptor` maps existing adapters to `ctx.adapter@2.0`.
@@ -149,7 +214,7 @@ selected adapter's product-specific plugin operation.
 
 | Consumer | Shared mechanics | Consumer-owned contract and policy |
 | --- | --- | --- |
-| CTX adapters | Descriptor validation, operation lookup, directory integrity | `ctx.adapter`, argv/stream binding, context selection, native behavior in adapters |
+| CTX adapters | Descriptor validation, operation lookup, directory integrity; library backends when needed | `ctx.adapter`, argv/stream binding, context selection, native behavior in adapters |
 | Xallet Package plugins | Selection, handshake, admission sequencing, call envelopes, draining | Roles, Package/Node/Worker identities, surfaces, Host Broker permits, approval, secrets, reconciliation |
 | Xallet platform extensions | The same host mechanics where applicable | Contribution points, route mounting, schema restrictions, generations and composition rollback |
 | Cymonkey plugins | Selection, verified package identity, bounded transport, structured errors | Display/content/device methods, domain adapters, device grants, runtime choices |
@@ -177,3 +242,7 @@ versioned domain contracts may coexist in a descriptor.
 Run the end-to-end example with `go run ./examples/plugin`. Contract, admission,
 drain, integrity, malformed-frame, cancellation, concurrency, and CTX compatibility
 tests live under `plugin/`, `plugin/jsonline/`, and `internal/mod/plugin_test.go`.
+HashiCorp tests under `plugin/hashicorp/` launch real subprocesses over both
+RPC protocols with checksum verification and automatic TLS. They cover host
+admission, concurrent requests, structured errors, mismatch, cancellation, and
+cleanup. These tests require permission to bind local IPC sockets.

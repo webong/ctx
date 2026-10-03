@@ -264,6 +264,23 @@ observations from installed, trusted adapters; it does not assume every tool
 is present. See [adapter packaging](docs/adapter-api.md#binary-packages-and-go-builds)
 and [the graph design](docs/adr-graph-runtime.md).
 
+## Go libraries
+
+CTX and its ecosystem share public Go libraries:
+
+- `github.com/webong/ctx/graph` supplies generic graph storage and transactions.
+- `github.com/webong/ctx/plugin` supplies the shared host/guest contract,
+  validation, selection, admission, and session lifecycle. Its implementations
+  include `plugin/jsonline` and `plugin/hashicorp` (net/rpc and gRPC); future
+  backends implement the same interfaces.
+- `github.com/webong/ctx/supervisor` supplies local process supervision when
+  the selected plugin backend does not already own its process lifecycle.
+
+CTX adapters, Xallet, Cymonkey, and other applications can build on these
+libraries. Domain behavior and authorization remain with each consumer.
+See the [plugin contract](docs/adr-plugin-contract.md) and the
+[HashiCorp backend guide](plugin/hashicorp/README.md).
+
 ## Documentation
 
 - [Browser cookies and automation input](docs/browser-cookies.md)

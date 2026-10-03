@@ -138,7 +138,7 @@ func (c *Client) Close() error {
 // Handler performs consumer authorization and executes one domain call. It
 // must honor ctx. Return a RemoteError to expose a deliberate public error;
 // other errors are reduced to a stable generic response.
-type Handler func(context.Context, plugin.Request) (json.RawMessage, error)
+type Handler = plugin.Handler
 
 // Server configures a domain endpoint. MaxCallDuration is a server-owned bound,
 // independent of caller deadlines; zero defaults to plugin.DefaultTimeout.
@@ -156,21 +156,21 @@ func Serve(ctx context.Context, conn io.ReadWriteCloser, descriptor plugin.Descr
 }
 
 func (s Server) Serve(ctx context.Context, conn io.ReadWriteCloser) error {
-	defer conn.Close()
-	descriptor, handler := s.Descriptor, s.Handler
-	if s.MaxCallDuration < 0 {
-		return plugin.ErrInvalid
-	}
-	if s.MaxCallDuration == 0 {
-		s.MaxCallDuration = plugin.DefaultTimeout
-	}
-	if err := descriptor.Validate(); err != nil {
+	guest, err := plugin.NewGuest(s.Descriptor, plugin.GuestOptions{Handler: s.Handler, MaxCallDuration: s.MaxCallDuration})
+	if err != nil {
+		_ = conn.Close()
 		return err
 	}
-	if handler == nil {
+	return ServeGuest(ctx, conn, guest)
+}
+
+// ServeGuest binds a shared guest endpoint to a JSON-line connection. This
+// owns only conn; the embedding application owns the endpoint's lifecycle.
+func ServeGuest(ctx context.Context, conn io.ReadWriteCloser, guest plugin.Endpoint) error {
+	defer conn.Close()
+	if guest == nil {
 		return plugin.ErrDenied
 	}
-	descriptor = descriptor.Clone()
 	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer stop()
 	reader := bufio.NewReader(conn)
@@ -198,36 +198,19 @@ func (s Server) Serve(ctx context.Context, conn io.ReadWriteCloser) error {
 			if !time.Now().Before(request.Deadline) {
 				return context.DeadlineExceeded
 			}
-			response.Payload, err = json.Marshal(descriptor)
-			hello = true
-		} else if validateErr := plugin.ValidateRequest(descriptor, request); validateErr != nil {
-			response.Error = &plugin.RemoteError{Code: "invalid_request", Message: "request does not match selected contract"}
-		} else {
-			callCtx, cancel := context.WithDeadline(ctx, request.Deadline)
-			callCtx, limitCancel := context.WithTimeout(callCtx, s.MaxCallDuration)
-			if callCtx.Err() != nil {
-				err = callCtx.Err()
-			} else {
-				response.Payload, err = handler(callCtx, request.Clone())
+			var descriptor plugin.Descriptor
+			helloCtx, cancel := context.WithDeadline(ctx, request.Deadline)
+			descriptor, err = guest.Handshake(helloCtx)
+			cancel()
+			if err == nil {
+				err = descriptor.Validate()
 			}
 			if err == nil {
-				err = callCtx.Err()
+				response.Payload, err = json.Marshal(descriptor)
 			}
-			limitCancel()
-			cancel()
-			if err != nil {
-				response.Payload = nil
-				var remote *plugin.RemoteError
-				if errors.As(err, &remote) && remote != nil {
-					copy := *remote
-					response.Error = &copy
-				} else {
-					response.Error = &plugin.RemoteError{Code: "operation_failed", Message: "plugin operation failed"}
-				}
-				err = nil
-			} else if len(response.Payload) == 0 {
-				response.Payload = json.RawMessage("null")
-			}
+			hello = true
+		} else {
+			response, err = guest.Invoke(ctx, request)
 		}
 		if err != nil {
 			return err

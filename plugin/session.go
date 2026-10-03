@@ -15,8 +15,7 @@ import (
 // Backends never decide product authorization. A CLI binding may preserve raw
 // streams outside this JSON invocation API and use ValidateRequest directly.
 type Backend interface {
-	Handshake(context.Context) (Descriptor, error)
-	Invoke(context.Context, Request) (Response, error)
+	Endpoint
 	Close() error
 }
 
@@ -40,9 +39,9 @@ const (
 	StateFailed   State = "failed"
 )
 
-// Session owns invocation admission and draining. Process start/stop/restart,
-// leases, and resource controls remain in the supervisor package. A process
-// restart requires a fresh Session and handshake.
+// Session owns invocation admission and draining. The chosen backend or host
+// owns process lifecycle, using supervisor or the backend's runtime (such as
+// go-plugin). A process restart requires a fresh Session and handshake.
 type Session struct {
 	descriptor Descriptor
 	backend    Backend

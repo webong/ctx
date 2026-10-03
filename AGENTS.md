@@ -16,3 +16,12 @@ own paths, identifiers, capabilities, and policy through configuration.
 
 Apply this boundary when bringing code into CTX: move provider-specific behavior
 into the owning adapter before wiring it into shared workflows.
+
+# Public libraries
+
+`graph` and `plugin` are reusable libraries for CTX and its ecosystem. CTX
+adapters, Xallet, and Cymonkey can build on them as consumers. Plugin runtime
+backends, including HashiCorp go-plugin, belong inside the plugin library
+(for example `plugin/hashicorp`), together with their dependencies. They are
+not CTX product adapters. Keep the shared host/guest contract independent of
+backend choice so existing and future plugin implementations can use it.
