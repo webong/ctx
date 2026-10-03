@@ -19,7 +19,7 @@ Register-ArgumentCompleter -Native -CommandName ctx -ScriptBlock {
     param($wordToComplete, $commandAst, $cursorPosition)
 
     $words = @($commandAst.CommandElements | ForEach-Object { $_.Extent.Text })
-    $commands = @('status', 'resolve', 'explain', 'env', 'set', 'clear', 'profile', 'adapter', 'computer', 'manager', 'browser', 'setup', 'ls', 'open', 'doctor', 'build', 'share:manager', 'share:browser', 'share:computer', 'graph', 'hook', 'plugin', 'run', 'shell', 'real', 'completion', 'version')
+    $commands = @('status', 'resolve', 'explain', 'env', 'set', 'clear', 'profile', 'adapter', 'computer', 'manager', 'browser', 'credential', 'setup', 'ls', 'open', 'doctor', 'build', 'share:manager', 'share:browser', 'share:computer', 'share:credential', 'graph', 'hook', 'plugin', 'run', 'shell', 'real', 'completion', 'version')
 
     function Emit-CtxCompletion([string[]]$values) {
         $values | Where-Object { $_ -and $_ -like "$wordToComplete*" } | Sort-Object -Unique | ForEach-Object {
@@ -82,6 +82,12 @@ Register-ArgumentCompleter -Native -CommandName ctx -ScriptBlock {
             if ($words[2] -eq 'hooks') { Emit-CtxCompletion @('--events', '--handler'); return }
         }
         'browser' { if ($words.Count -le 3) { Emit-CtxCompletion @('manage') } }
+        { $_ -in @('credential', 'share:credential') } {
+            if ($words.Count -le 2) { Emit-CtxCompletion @('get', 'put', 'copy'); return }
+            if ($words[2] -eq 'get') { Emit-CtxCompletion @('--to-file', '--stdout'); return }
+            if ($words[2] -eq 'put') { Emit-CtxCompletion @('--from-file', '--stdin', '--replace'); return }
+            if ($words[2] -eq 'copy') { Emit-CtxCompletion @('--replace'); return }
+        }
         'share:manager' {
             if ($words.Count -le 2) { Emit-CtxCompletion @('image', 'volume'); return }
             if ($words[2] -eq 'image' -and $words.Count -le 3) { Emit-CtxCompletion @('sync', 'copy'); return }

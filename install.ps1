@@ -12,7 +12,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $repositoryRoot = $PSScriptRoot
 $localSource = Test-Path (Join-Path $repositoryRoot 'cmd\ctx\main.go')
-$catalogAdapters = @('docker', 'podman', 'nerdctl', 'apple', 'rancher_desktop', 'orbstack', 'docker_desktop', 'firefox', 'zen', 'floorp', 'waterfox', 'librewolf', 'chrome', 'chromium', 'edge', 'brave', 'safari', 'vivaldi', 'opera', 'whale', 'arc', 'comet', 'dia', 'atlas', 'helium', 'kube', 'aws', 'gcloud', 'postgres', 'mysql', 'php', 'claude_code', 'codex')
+$catalogAdapters = @('docker', 'podman', 'nerdctl', 'apple', 'rancher_desktop', 'orbstack', 'docker_desktop', 'firefox', 'zen', 'floorp', 'waterfox', 'librewolf', 'chrome', 'chromium', 'edge', 'brave', 'safari', 'vivaldi', 'opera', 'whale', 'arc', 'comet', 'dia', 'atlas', 'helium', 'kube', 'aws', 'gcloud', 'postgres', 'mysql', 'php', 'claude_code', 'codex', 'credman')
 $needCatalog = $AllAdapters.IsPresent -or $Interactive.IsPresent -or [bool]$Adapters
 $bundleRoot = $null
 $downloadRoot = $null
@@ -111,6 +111,17 @@ if ($needCatalog) {
             if ($adapter -eq 'firefox') {
                 Remove-Item -Recurse -Force (Join-Path $target 'engine')
             }
+        }
+        if ($localSource -and $adapter -eq 'credman') {
+            $credentialBinary = [System.IO.Path]::GetFullPath((Join-Path $target 'ctx-credman.exe'))
+            Push-Location $repositoryRoot
+            try {
+                & go build -o $credentialBinary './adapters/credman/native'
+                if ($LASTEXITCODE -ne 0) { throw 'Failed to build Credential Manager adapter.' }
+            }
+            finally { Pop-Location }
+            Remove-Item -Recurse -Force (Join-Path $target 'native')
+            Remove-Item -Recurse -Force (Join-Path $target 'store')
         }
     }
 }

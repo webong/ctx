@@ -10,10 +10,44 @@ permissions:
   attestations: write
 
 jobs:
+  keychain:
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '11.0'
+    strategy:
+      matrix:
+        include:
+          - runner: macos-15-intel
+            arch: amd64
+          - runner: macos-15
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache: true
+      - run: go test ./adapters/keychain/store ./credential/adapterkit
+      - run: mkdir -p keychain && go build -trimpath -ldflags '-s -w' -o keychain/ctx-keychain ./adapters/keychain/native
+      - uses: actions/upload-artifact@v4
+        with:
+          name: keychain-${{ matrix.arch }}
+          path: keychain/ctx-keychain
+          if-no-files-found: error
+
   release:
+    needs: keychain
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: keychain-amd64
+          path: native-keychain/amd64
+      - uses: actions/download-artifact@v4
+        with:
+          name: keychain-arm64
+          path: native-keychain/arm64
       - uses: actions/setup-go@v5
         with:
           go-version: '1.23.x'
@@ -22,6 +56,9 @@ jobs:
       - run: ./tests/native_test.sh
       - run: ./tests/native_installer_test.sh
       - run: sh ./scripts/build-release.sh "$GITHUB_REF_NAME" dist
+        env:
+          CTX_KEYCHAIN_AMD64: ${{ github.workspace }}/native-keychain/amd64/ctx-keychain
+          CTX_KEYCHAIN_ARM64: ${{ github.workspace }}/native-keychain/arm64/ctx-keychain
       - name: Create checksums
         run: (cd dist && sha256sum ctx-* > checksums.txt)
       - name: Attest release provenance

@@ -70,6 +70,11 @@ strings for lists, as shown above. Use `surfaces = "shell,web"`, not a TOML
 array. Use standalone comment lines rather than trailing comments on values.
 
 Optional fields include `extra_keys`, `override_env`, and `package_files`.
+Set `selectable = "false"` for a share-only adapter with no context selection.
+Use `dependencies_darwin`, `dependencies_linux`, or `dependencies_windows` to
+declare separately installed share-space adapters, for example
+`dependencies_darwin = "credential:keychain@2.0"`. Catalog selection installs
+missing dependencies; manual package installation leaves them to the user.
 `go_entry` defaults to `.` and can point to a relative main package such as
 `./cmd/ctx-my-tool`. `package_files = "templates,policy.json"` includes assets
 in a Go build. Keep credentials outside package files and project selectors.

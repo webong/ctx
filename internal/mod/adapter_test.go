@@ -70,6 +70,81 @@ func TestStoreInstallTrustAndTamper(t *testing.T) {
 	}
 }
 
+func TestNonselectableShareAdapter(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "vault")
+	if err := os.MkdirAll(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	manifest := `api_version = "2.0"
+name = "vault"
+runtime = "computer"
+surfaces = "shell"
+executable = "ctx-vault"
+capabilities = "validate,doctor,share"
+share_spaces = "credential"
+selectable = "false"
+self_contained = "true"
+`
+	if err := os.WriteFile(filepath.Join(path, "adapter.toml"), []byte(manifest), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(path, "ctx-vault"), []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadDirectory(path)
+	if err != nil || loaded.IsSelectable() || !loaded.HasCapability("share") {
+		t.Fatalf("nonselectable share adapter: loaded=%v err=%v", loaded, err)
+	}
+}
+
+func TestPlatformDependencyDeclaration(t *testing.T) {
+	directory := fixtureAdapter(t, t.TempDir(), "chrome", "browser")
+	path := filepath.Join(directory, "adapter.toml")
+	original, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest := string(original) + "dependencies_darwin = \"credential:keychain@2.0\"\n" +
+		"dependencies_linux = \"credential:secret_service@2.0\"\n"
+	if err := os.WriteFile(path, []byte(manifest), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct{ platform, name string }{{"darwin", "keychain"}, {"linux", "secret_service"}, {"windows", ""}} {
+		loaded, err := LoadDirectoryForOS(directory, test.platform)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := loaded.Manifest.Dependencies["credential"].Adapter; got != test.name {
+			t.Fatalf("%s dependency=%q, want %q", test.platform, got, test.name)
+		}
+	}
+	invalid := strings.Replace(manifest, "keychain@2.0", "keychain@1.0", 1)
+	if err := os.WriteFile(path, []byte(invalid), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadDirectoryForOS(directory, "linux"); err == nil {
+		t.Fatal("invalid dependency on another platform was accepted")
+	}
+}
+
+func TestValidateDependencyContract(t *testing.T) {
+	requirement := Dependency{Space: "credential", Adapter: "vault", APIVersion: "2.0"}
+	target := &Adapter{Manifest: Manifest{Name: "vault", APIVersion: "2.0", Capabilities: []string{"share"}, ShareSpaces: []string{"credential"}}}
+	if err := ValidateDependency(requirement, target); err != nil {
+		t.Fatal(err)
+	}
+	target.Manifest.ShareSpaces = []string{"browser"}
+	if err := ValidateDependency(requirement, target); err == nil {
+		t.Fatal("wrong share space satisfied dependency")
+	}
+	target.Manifest.ShareSpaces = []string{"credential"}
+	target.Manifest.APIVersion = "1.0"
+	if err := ValidateDependency(requirement, target); err == nil {
+		t.Fatal("wrong API version satisfied dependency")
+	}
+}
+
 func TestStoreReplace(t *testing.T) {
 	root := t.TempDir()
 	first := fixtureAdapter(t, filepath.Join(root, "first"), "echo", "computer")

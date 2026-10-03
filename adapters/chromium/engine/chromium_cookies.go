@@ -23,6 +23,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	credentialclient "github.com/webong/ctx/credential/client"
 	"github.com/webong/ctx/internal/app/browser/share"
 )
 
@@ -480,65 +481,72 @@ func chromiumMacKeychainPassword(provider Config) (string, error) {
 		return password, err
 	}
 	service, account := provider.KeychainService, provider.KeychainAccount
-	if _, err := exec.LookPath("security"); err != nil {
-		return "", errors.New("macOS security command is required to unlock Chromium cookies")
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	args := []string{"find-generic-password", "-w", "-s", service, "-a", account}
+	item := "service=" + url.QueryEscape(service) + "&account=" + url.QueryEscape(account)
+	extra := map[string]string{}
 	if provider.KeychainPath != "" {
 		if !filepath.IsAbs(provider.KeychainPath) {
 			return "", errors.New("macOS keychain path must be absolute")
 		}
-		args = append(args, provider.KeychainPath)
+		extra["CTX_KEYCHAIN_PATH"] = provider.KeychainPath
 	}
-	output, err := exec.CommandContext(ctx, "security", args...).Output()
-	if err != nil || len(output) == 0 {
-		return "", fmt.Errorf("cannot read %s from macOS Keychain; unlock it for ctx and retry", service)
+	value, err := credentialclient.GetDeclaredWithEnv(ctx, "credential", item, extra)
+	if err != nil {
+		return "", fmt.Errorf("cannot read %s from macOS Keychain: %w", service, err)
 	}
-	return strings.TrimSuffix(strings.TrimSuffix(string(output), "\n"), "\r"), nil
+	return string(value), nil
 }
 
 func chromiumLinuxSecret(provider Config) (string, error) {
 	if password, set, err := configuredSafeStoragePassword(provider); set || err != nil {
 		return password, err
 	}
+	var secretErr, walletErr error
 	if strings.Contains(strings.ToUpper(os.Getenv("XDG_CURRENT_DESKTOP")), "KDE") {
 		if secret, err := chromiumKWalletSecret(provider); err == nil {
 			return secret, nil
+		} else {
+			walletErr = err
 		}
 		if secret, err := chromiumSecretServiceSecret(provider); err == nil {
 			return secret, nil
+		} else {
+			secretErr = err
 		}
 	} else {
 		if secret, err := chromiumSecretServiceSecret(provider); err == nil {
 			return secret, nil
+		} else {
+			secretErr = err
 		}
 		if secret, err := chromiumKWalletSecret(provider); err == nil {
 			return secret, nil
+		} else {
+			walletErr = err
 		}
 	}
-	return "", fmt.Errorf("cannot read the %s cookie key from Secret Service or KWallet", provider.Name)
+	return "", fmt.Errorf("cannot read the %s cookie key (Secret Service: %v; KWallet: %v)", provider.Name, secretErr, walletErr)
 }
 
 func chromiumSecretServiceSecret(provider Config) (string, error) {
-	if _, err := exec.LookPath("secret-tool"); err == nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		output, lookupErr := exec.CommandContext(ctx, "secret-tool", "lookup", "application", provider.SecretApplication).Output()
-		if lookupErr == nil && len(bytes.TrimRight(output, "\r\n")) > 0 {
-			return strings.TrimRight(string(output), "\r\n"), nil
-		}
-		// Some stores use service/account attributes rather than Chromium's
-		// application attribute. Both identities are owned by this adapter.
-		if provider.KeychainService != "" && provider.KeychainAccount != "" {
-			output, lookupErr = exec.CommandContext(ctx, "secret-tool", "lookup", "service", provider.KeychainService, "account", provider.KeychainAccount).Output()
-			if lookupErr == nil && len(bytes.TrimRight(output, "\r\n")) > 0 {
-				return strings.TrimRight(string(output), "\r\n"), nil
-			}
-		}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	value, primaryErr := credentialclient.GetDeclared(ctx, "credential", "application="+url.QueryEscape(provider.SecretApplication))
+	if primaryErr == nil {
+		return strings.TrimRight(string(value), "\r\n"), nil
 	}
-	return "", errors.New("Secret Service key unavailable")
+	// Some stores use service/account attributes rather than Chromium's
+	// application attribute. Both identities are owned by this adapter.
+	if provider.KeychainService != "" && provider.KeychainAccount != "" {
+		item := "service=" + url.QueryEscape(provider.KeychainService) + "&account=" + url.QueryEscape(provider.KeychainAccount)
+		value, err := credentialclient.GetDeclared(ctx, "credential", item)
+		if err == nil {
+			return strings.TrimRight(string(value), "\r\n"), nil
+		}
+		return "", fmt.Errorf("Secret Service key unavailable (application: %v; service/account: %v)", primaryErr, err)
+	}
+	return "", fmt.Errorf("Secret Service key unavailable: %w", primaryErr)
 }
 
 func chromiumKWalletSecret(provider Config) (string, error) {

@@ -94,6 +94,10 @@ mkdir -p "$bundle_stage/ctx/adapters"
 for adapter in docker podman nerdctl apple rancher_desktop orbstack docker_desktop firefox zen floorp waterfox librewolf chrome chromium edge brave safari vivaldi opera whale arc comet dia atlas helium kube aws gcloud postgres mysql php claude_code codex; do
   cp -R "$ROOT/adapters/$adapter" "$bundle_stage/ctx/adapters/$adapter"
 done
+case "$os" in
+  darwin) cp -R "$ROOT/adapters/keychain" "$bundle_stage/ctx/adapters/keychain" ;;
+  linux) cp -R "$ROOT/adapters/secret_service" "$bundle_stage/ctx/adapters/secret_service" ;;
+esac
 catalog_asset="ctx-adapters-$os-$arch.tar.gz"
 tar -C "$bundle_stage" -czf "$release_dir/$catalog_asset" ctx/adapters
 if command -v shasum >/dev/null 2>&1; then

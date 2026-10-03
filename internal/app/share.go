@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 	"io"
+	"os"
 
 	"github.com/webong/ctx/internal/config"
 	modpkg "github.com/webong/ctx/internal/mod"
@@ -30,6 +31,8 @@ func shareSpaceCommand(resolver *config.Resolver, space string, args []string, s
 		}
 	case "browser":
 		return shareBrowserCommand(resolver, args, stdout, stderr)
+	case "credential":
+		return credentialCommand(resolver, args, os.Stdin, stdout, stderr)
 	case "computer":
 		fmt.Fprintln(stderr, "ctx: computer sharing is not available yet; no computer transfer format is registered")
 		return 1

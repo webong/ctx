@@ -43,6 +43,10 @@ extra_keys = "example_namespace"
 commands = "example,examplectl"
 # Optional when capabilities includes share; defaults to adapter name.
 share_spaces = "workspace,project"
+# A share-only store can opt out of project context selection.
+# selectable = "false"
+# Optional platform-specific runtime dependency: share space, adapter, API.
+# dependencies_darwin = "credential:keychain@2.0"
 # Native variables that take priority over the stored selection.
 override_env = "EXAMPLE_CONTEXT,EXAMPLE_HOST"
 # Optional for the manager runtime. At most one installed provider should set it.
@@ -54,6 +58,35 @@ runtime, surface, or ctx command. `validate` and `doctor` are required. An
 adapter must provide `run`, `open`, or `share`; `list` is optional. A
 share-only browser adapter can expose profile discovery and browser resources
 without implementing URL launching.
+`selectable = "false"` omits the selector key and command shim for a share-only
+adapter. It defaults to `true` for existing adapters.
+
+`dependencies_darwin`, `dependencies_linux`, and `dependencies_windows` are
+comma-separated `space:adapter@api` declarations. The API version must match
+the dependency's adapter API exactly. Catalog installation installs and trusts
+missing dependencies; an already installed dependency must satisfy the declared
+share space and remain trusted. Manual package installation does not silently
+add dependencies. CTX passes a declared dependency to the child process as
+`CTX_DEPENDENCY_<UPPERCASE_SPACE>`; operations that use it fail if the store is
+missing or untrusted, without blocking unrelated adapter operations.
+`ctx adapter remove` refuses to remove a dependency while an installed adapter
+declares it; `--force` is available when intentionally breaking that feature.
+
+### Credential stores
+
+A credential store adapter declares `validate,doctor,share`,
+`share_spaces = "credential"`, `selectable = "false"`, and
+`self_contained = "true"`. Multiple installed adapters can register this
+reserved share space; `ctx credential` selects one by the `adapter:item`
+reference. CTX invokes `share "" -- credential get <item>` to receive up to
+1 MiB of secret bytes on stdout, or `share "" -- credential put <item>
+[--replace]` with the bytes on stdin. The adapter must reject overwrites unless
+`--replace` is present and must not print the value in diagnostics. Its item
+syntax and native lookup behavior are adapter-owned. See
+[native credentials](credentials.md) for the CLI and security contract.
+Browser adapters can use `credential/client.GetDeclared` to request an item
+through CTX rather than importing a store implementation package. The host
+checks the installed adapter's trust and API before dispatching.
 
 ### Machine graph observation
 

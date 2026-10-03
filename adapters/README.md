@@ -64,6 +64,15 @@ can declare `executable_windows` alongside its default executable; the native
 core selects the platform implementation at runtime while keeping one manifest,
 capability set, and trust record.
 
+`keychain`, `secret_service`, and `credman` are separate, nonselectable
+credential-store adapters for macOS, Linux, and Windows. They register the
+`credential` share space and own their native store APIs and item identities.
+The generic `ctx credential` command moves explicit item values through their
+trusted processes without storing secrets in CTX configuration. Chromium
+browser adapters declare platform-specific credential dependencies and request
+supported cookie keys through CTX's trusted adapter protocol. They retain
+browser-specific identities without importing store implementation packages.
+
 `php` is the PHP interpreter adapter. It declares `supports = "interpreter"`,
 observes installed Homebrew PHP formulae as graph contexts, and runs the selected
 version for the current project without relinking the host's global `php` command.

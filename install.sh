@@ -5,6 +5,12 @@ DST_BIN=${CTX_BIN_DIR:-$HOME/.local/bin}
 CONFIG_DIR=${CTX_HOME:-$HOME/.config/ctx}
 VERSION=${CTX_VERSION:-latest}
 CATALOG_ADAPTERS='docker podman nerdctl apple rancher_desktop orbstack docker_desktop firefox zen floorp waterfox librewolf chrome chromium edge brave safari vivaldi opera whale arc comet dia atlas helium kube aws gcloud postgres mysql php claude_code codex'
+case "$(uname -s)" in
+  Darwin) CREDENTIAL_ADAPTER=keychain ;;
+  Linux) CREDENTIAL_ADAPTER=secret_service ;;
+  *) CREDENTIAL_ADAPTER= ;;
+esac
+if [ -n "$CREDENTIAL_ADAPTER" ]; then CATALOG_ADAPTERS="$CATALOG_ADAPTERS $CREDENTIAL_ADAPTER"; fi
 SETUP_MODE=minimal
 SETUP_CHOSEN=0
 SETUP_ADAPTERS=
@@ -73,6 +79,10 @@ if [ "$SETUP_MODE" != minimal ]; then
       (cd "$ROOT" && go build -o "$bundle/adapters/$adapter/ctx-$adapter-share" "./adapters/$adapter/native")
       rm -rf "$bundle/adapters/$adapter/native"
     done
+    if [ -n "$CREDENTIAL_ADAPTER" ]; then
+      (cd "$ROOT" && go build -o "$bundle/adapters/$CREDENTIAL_ADAPTER/ctx-$(printf '%s' "$CREDENTIAL_ADAPTER" | tr _ -)" "./adapters/$CREDENTIAL_ADAPTER/native")
+      rm -rf "$bundle/adapters/$CREDENTIAL_ADAPTER/native" "$bundle/adapters/$CREDENTIAL_ADAPTER/store"
+    fi
     rm -rf "$bundle/adapters/chromium/engine"
 		rm -rf "$bundle/adapters/firefox/engine"
   else

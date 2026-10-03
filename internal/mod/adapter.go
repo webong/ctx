@@ -44,6 +44,7 @@ var validComputerHookEvent = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9]*$`)
 var reservedNames = map[string]bool{
 	"browser": true, "container": true, "profile": true, "shell": true, "env": true, "image": true,
 	"volume": true, "build": true, "adapter": true, "share": true, "computer": true, "manager": true,
+	"credential": true,
 }
 
 type Manifest struct {
@@ -57,6 +58,7 @@ type Manifest struct {
 	Capabilities         []string
 	Supports             []string
 	SelectorKey          string
+	Selectable           bool
 	ExtraKeys            []string
 	Commands             []string
 	ComputerCommands     []string
@@ -66,6 +68,7 @@ type Manifest struct {
 	ComputerHookSettings string
 	ComputerHookTemplate string
 	ShareSpaces          []string
+	Dependencies         map[string]Dependency
 	BrowserShare         []string
 	BrowserQueryPriority int
 	BrowserQueryAuto     bool
@@ -78,6 +81,14 @@ type Manifest struct {
 type Adapter struct {
 	Directory string
 	Manifest  Manifest
+}
+
+// Dependency binds a share space to a separately installed adapter using an
+// exact adapter API version. The binding is platform-specific in the manifest.
+type Dependency struct {
+	Space      string
+	Adapter    string
+	APIVersion string
 }
 
 type Store struct {
@@ -122,6 +133,7 @@ func LoadDirectoryForOS(directory, goos string) (*Adapter, error) {
 		Capabilities:         splitList(values["capabilities"]),
 		Supports:             splitList(values["supports"]),
 		SelectorKey:          values["selector_key"],
+		Selectable:           values["selectable"] != "false",
 		ExtraKeys:            splitList(values["extra_keys"]),
 		Commands:             splitList(values["commands"]),
 		ComputerCommands:     splitList(values["computer_commands"]),
@@ -137,6 +149,15 @@ func LoadDirectoryForOS(directory, goos string) (*Adapter, error) {
 		OverrideEnv:          splitList(values["override_env"]),
 		DefaultProvider:      values["default_provider"] == "true",
 		SelfContained:        values["self_contained"] == "true",
+	}
+	for _, platform := range []string{"darwin", "linux", "windows"} {
+		dependencies, err := parseDependencies(values["dependencies_"+platform], manifest.Name)
+		if err != nil {
+			return nil, err
+		}
+		if platform == goos {
+			manifest.Dependencies = dependencies
+		}
 	}
 	if raw := values["browser_query_priority"]; raw != "" {
 		priority, err := strconv.Atoi(raw)
@@ -158,7 +179,7 @@ func LoadDirectoryForOS(directory, goos string) (*Adapter, error) {
 	if manifest.Runtime != "browser" && (values["browser_query_priority"] != "" || values["browser_query_auto"] != "") {
 		return nil, fmt.Errorf("adapter %s browser query preferences require the browser runtime", manifest.Name)
 	}
-	if manifest.SelectorKey == "" && !hasComputerEndpoint(manifest) {
+	if manifest.SelectorKey == "" && manifest.Selectable && !hasComputerEndpoint(manifest) {
 		if manifest.Runtime == "browser" {
 			manifest.SelectorKey = "browser"
 		} else {
@@ -167,6 +188,9 @@ func LoadDirectoryForOS(directory, goos string) (*Adapter, error) {
 	}
 	if value := values["self_contained"]; value != "" && value != "true" && value != "false" {
 		return nil, fmt.Errorf("adapter %s has invalid self_contained value %s", manifest.Name, value)
+	}
+	if value := values["selectable"]; value != "" && value != "true" && value != "false" {
+		return nil, fmt.Errorf("adapter %s has invalid selectable value %s", manifest.Name, value)
 	}
 	if len(manifest.Commands) == 0 && manifest.SelectorKey != "" && manifest.Runtime != "browser" && !manifest.SelfContained {
 		manifest.Commands = []string{manifest.Name}
@@ -179,6 +203,20 @@ func LoadDirectoryForOS(directory, goos string) (*Adapter, error) {
 		return nil, err
 	}
 	return &Adapter{Directory: absolute, Manifest: manifest}, nil
+}
+
+func parseDependencies(raw, owner string) (map[string]Dependency, error) {
+	dependencies := map[string]Dependency{}
+	for _, entry := range splitList(raw) {
+		space, target, ok := strings.Cut(entry, ":")
+		name, version, hasVersion := strings.Cut(target, "@")
+		if !ok || !hasVersion || !validName.MatchString(space) || !validName.MatchString(name) ||
+			reservedNames[name] || name == owner || version != APIVersion || dependencies[space].Space != "" {
+			return nil, fmt.Errorf("adapter %s has invalid dependency %q; expected space:name@%s", owner, entry, APIVersion)
+		}
+		dependencies[space] = Dependency{Space: space, Adapter: name, APIVersion: version}
+	}
+	return dependencies, nil
 }
 
 func (s *Store) Load(name string) (*Adapter, error) {
@@ -223,6 +261,17 @@ func (a *Adapter) HasCapability(capability string) bool {
 		return true
 	}
 	return contains(a.Manifest.Capabilities, capability) || a.HasComputerCapability(capability)
+}
+
+// ValidateDependency checks the declared API and capability of a runtime
+// dependency. Trust is checked separately against the installed package.
+func ValidateDependency(dependency Dependency, target *Adapter) error {
+	if target.Manifest.Name != dependency.Adapter || target.Manifest.APIVersion != dependency.APIVersion ||
+		!target.HasCapability("share") || !contains(target.Manifest.ShareSpaces, dependency.Space) {
+		return fmt.Errorf("adapter %s does not satisfy %s:%s@%s", target.Manifest.Name,
+			dependency.Space, dependency.Adapter, dependency.APIVersion)
+	}
+	return nil
 }
 
 func (a *Adapter) HasBrowserShare(operation string) bool {
@@ -552,8 +601,11 @@ func validateManifest(manifest Manifest, directory, goos string) error {
 	if manifest.SelfContained && (len(manifest.Commands) != 0 || len(manifest.ComputerCommands) != 0) {
 		return fmt.Errorf("adapter %s cannot declare native commands when self_contained is true", manifest.Name)
 	}
-	if !hasComputerEndpoint(manifest) && manifest.SelectorKey == "" {
+	if manifest.Selectable && !hasComputerEndpoint(manifest) && manifest.SelectorKey == "" {
 		return fmt.Errorf("adapter %s must declare a selector key", manifest.Name)
+	}
+	if !manifest.Selectable && manifest.SelectorKey != "" {
+		return fmt.Errorf("adapter %s cannot declare selector_key when selectable is false", manifest.Name)
 	}
 	if manifest.SelectorKey != "" && !validName.MatchString(manifest.SelectorKey) {
 		return fmt.Errorf("adapter %s has invalid selector key %s", manifest.Name, manifest.SelectorKey)

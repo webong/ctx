@@ -162,14 +162,49 @@ func installedAdapterNames() map[string]bool {
 }
 
 func addCatalogAdapter(name string) (*modpkg.Adapter, error) {
+	return addCatalogAdapterWithDependencies(name, map[string]bool{})
+}
+
+func addCatalogAdapterWithDependencies(name string, active map[string]bool) (*modpkg.Adapter, error) {
+	if active[name] {
+		return nil, fmt.Errorf("adapter dependency cycle includes %s", name)
+	}
+	active[name] = true
+	defer delete(active, name)
 	source, err := catalogStore().Load(name)
 	if err != nil {
 		return nil, fmt.Errorf("adapter %s is not available in the local catalog; rerun the installer with adapter selection or use ctx adapter install: %w", name, err)
 	}
+	store := adapterStore()
+	for _, space := range sortedDependencySpaces(source.Manifest.Dependencies) {
+		dependency := source.Manifest.Dependencies[space]
+		installed, err := store.Load(dependency.Adapter)
+		if err == nil {
+			if err := modpkg.ValidateDependency(dependency, installed); err != nil {
+				return nil, err
+			}
+			if err := store.AssertTrusted(installed); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		if _, statErr := os.Lstat(filepath.Join(store.Home, dependency.Adapter)); !errors.Is(statErr, os.ErrNotExist) {
+			return nil, fmt.Errorf("dependency %s for adapter %s is installed but unavailable: %w", dependency.Adapter, name, err)
+		}
+		available, err := catalogStore().Load(dependency.Adapter)
+		if err != nil {
+			return nil, fmt.Errorf("dependency %s for adapter %s is missing from the catalog: %w", dependency.Adapter, name, err)
+		}
+		if err := modpkg.ValidateDependency(dependency, available); err != nil {
+			return nil, err
+		}
+		if _, err := addCatalogAdapterWithDependencies(dependency.Adapter, active); err != nil {
+			return nil, err
+		}
+	}
 	if err := checkShimConflicts(source); err != nil {
 		return nil, err
 	}
-	store := adapterStore()
 	var installed *modpkg.Adapter
 	if _, statErr := os.Lstat(filepath.Join(store.Home, name)); statErr == nil {
 		installed, err = store.Replace(source.Directory)
@@ -198,17 +233,49 @@ func refreshCatalogAdapters(stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
+	names := map[string]bool{}
 	for _, entry := range installed {
-		if !entry.IsDir() {
-			continue
+		if entry.IsDir() {
+			names[entry.Name()] = true
 		}
-		if _, err := catalogStore().Load(entry.Name()); err != nil {
-			continue
+	}
+	done, active := map[string]bool{}, map[string]bool{}
+	var refresh func(string) error
+	refresh = func(name string) error {
+		if done[name] {
+			return nil
 		}
-		if _, err := addCatalogAdapter(entry.Name()); err != nil {
+		if active[name] {
+			return fmt.Errorf("adapter dependency cycle includes %s", name)
+		}
+		active[name] = true
+		defer delete(active, name)
+		source, err := catalogStore().Load(name)
+		if err != nil {
+			done[name] = true // External adapters are not refreshed from the catalog.
+			return nil
+		}
+		for _, space := range sortedDependencySpaces(source.Manifest.Dependencies) {
+			dependency := source.Manifest.Dependencies[space]
+			if names[dependency.Adapter] {
+				if err := refresh(dependency.Adapter); err != nil {
+					return err
+				}
+			}
+		}
+		if _, err := addCatalogAdapter(name); err != nil {
 			return err
 		}
-		fmt.Fprintf(stdout, "refreshed adapter %s\n", entry.Name())
+		fmt.Fprintf(stdout, "refreshed adapter %s\n", name)
+		done[name] = true
+		return nil
+	}
+	for _, entry := range installed {
+		if entry.IsDir() {
+			if err := refresh(entry.Name()); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }

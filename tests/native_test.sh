@@ -38,11 +38,24 @@ mkdir -p "$CTX_HOME/catalog/adapters"
 for adapter in docker podman nerdctl apple rancher_desktop orbstack docker_desktop firefox chrome kube aws gcloud postgres mysql; do
   cp -R "$ROOT/adapters/$adapter" "$CTX_HOME/catalog/adapters/$adapter"
 done
+case "$(uname -s)" in
+  Darwin) credential_adapter=keychain; credential_executable=ctx-keychain ;;
+  Linux) credential_adapter=secret_service; credential_executable=ctx-secret-service ;;
+  *) credential_adapter= ;;
+esac
+if [ -n "$credential_adapter" ]; then
+  cp -R "$ROOT/adapters/$credential_adapter" "$CTX_HOME/catalog/adapters/$credential_adapter"
+  GOCACHE=${GOCACHE:-/tmp/ctx-go-build-cache} GOMODCACHE=${GOMODCACHE:-/tmp/ctx-go-mod-cache} \
+    go build -o "$CTX_HOME/catalog/adapters/$credential_adapter/$credential_executable" "$ROOT/adapters/$credential_adapter/native"
+fi
 ctx adapter available | grep -Eq '^docker[[:space:]]+manager[[:space:]]+available'
 ctx setup --adapters docker,podman,nerdctl,apple,rancher_desktop,orbstack,docker_desktop,firefox,chrome,kube,aws,gcloud,postgres,mysql >/dev/null
 for adapter in docker podman nerdctl apple rancher_desktop orbstack docker_desktop firefox chrome kube aws gcloud postgres mysql; do
   ctx adapter ls | grep -Eq "^${adapter}[[:space:]]+trusted"
 done
+if [ -n "$credential_adapter" ]; then
+  ctx adapter ls | grep -Eq "^${credential_adapter}[[:space:]]+trusted"
+fi
 for engine in docker podman nerdctl; do test -x "$CTX_BIN_DIR/$engine"; done
 ctx adapter available | grep -Eq '^docker[[:space:]]+manager[[:space:]]+installed'
 ctx adapter remove nerdctl >/dev/null

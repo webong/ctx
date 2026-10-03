@@ -124,6 +124,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return openBrowser(resolver, args[1:], stdout, stderr)
 	case "browser":
 		return browserCommand(resolver, args[1:], stdout, stderr)
+	case "credential":
+		return credentialCommand(resolver, args[1:], os.Stdin, stdout, stderr)
 	case "doctor":
 		return doctor(resolver, stdout, stderr)
 	case "build":
@@ -214,6 +216,8 @@ usage:
   ctx share:browser policy export [--from <browser:profile>] (--to-file <path> | --stdout)
   ctx share:browser capabilities [--from <browser:profile>]
   ctx share:browser <resource> <list|export|copy|import> [bridge options] [-- adapter arguments...]
+  ctx credential <get|put|copy> [arguments...]
+  ctx share:credential <get|put|copy> [arguments...]
   ctx share:computer (reserved; unavailable)
   ctx share:<space> [arguments...] (when an adapter registers the space)
   ctx run <provider-or-adapter-command> [arguments...]

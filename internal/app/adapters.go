@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -23,6 +24,25 @@ func adapterStore() *modpkg.Store {
 		home = filepath.Join(configHomePath(), "adapters")
 	}
 	return modpkg.NewStore(home)
+}
+
+func sortedDependencySpaces(dependencies map[string]modpkg.Dependency) []string {
+	spaces := make([]string, 0, len(dependencies))
+	for space := range dependencies {
+		spaces = append(spaces, space)
+	}
+	sort.Strings(spaces)
+	return spaces
+}
+
+func stripDependencyEnvironment(values []string) []string {
+	filtered := values[:0]
+	for _, value := range values {
+		if !strings.HasPrefix(strings.ToUpper(value), "CTX_DEPENDENCY_") {
+			filtered = append(filtered, value)
+		}
+	}
+	return filtered
 }
 
 func adapterCommand(resolver *config.Resolver, args []string, stdout, stderr io.Writer) int {
@@ -95,6 +115,12 @@ func adapterCommand(resolver *config.Resolver, args []string, stdout, stderr io.
 		}
 		if len(candidate.Manifest.ShareSpaces) > 0 {
 			fmt.Fprintf(stdout, "share spaces: %s\n", strings.Join(candidate.Manifest.ShareSpaces, ","))
+		}
+		if len(candidate.Manifest.Dependencies) > 0 {
+			for _, space := range sortedDependencySpaces(candidate.Manifest.Dependencies) {
+				dependency := candidate.Manifest.Dependencies[space]
+				fmt.Fprintf(stdout, "dependency:   %s:%s@%s\n", space, dependency.Adapter, dependency.APIVersion)
+			}
 		}
 		if len(candidate.Manifest.OverrideEnv) > 0 {
 			fmt.Fprintf(stdout, "override env: %s\n", strings.Join(candidate.Manifest.OverrideEnv, ","))
@@ -271,13 +297,27 @@ func adapterCommand(resolver *config.Resolver, args []string, stdout, stderr io.
 		}
 		return invokeAdapter(resolver, candidate, "doctor", selection, nil, "", stdout, stderr)
 	case "remove":
-		if len(args) != 2 {
-			fmt.Fprintln(stderr, "ctx: adapter remove needs a name")
+		force := len(args) == 3 && args[2] == "--force"
+		if len(args) != 2 && !force {
+			fmt.Fprintln(stderr, "ctx: adapter remove needs a name, optionally followed by --force")
 			return 2
 		}
 		candidate, err := store.Load(args[1])
 		if err != nil {
 			return reportError(stderr, err)
+		}
+		if !force {
+			installed, err := store.List()
+			if err != nil {
+				return reportError(stderr, err)
+			}
+			for _, dependent := range installed {
+				for _, dependency := range dependent.Manifest.Dependencies {
+					if dependency.Adapter == candidate.Manifest.Name {
+						return reportError(stderr, fmt.Errorf("adapter %s is required by %s; remove the dependent first or pass --force", candidate.Manifest.Name, dependent.Manifest.Name))
+					}
+				}
+			}
 		}
 		if err := removeAdapterShims(candidate); err != nil {
 			return reportError(stderr, err)
@@ -659,6 +699,10 @@ func invokeAdapterIOWithEnv(resolver *config.Resolver, candidate *modpkg.Adapter
 	}
 	for key, value := range extraEnv {
 		command.Env = setEnvironment(command.Env, key, value)
+	}
+	command.Env = stripDependencyEnvironment(command.Env)
+	for space, dependency := range candidate.Manifest.Dependencies {
+		command.Env = setEnvironment(command.Env, "CTX_DEPENDENCY_"+strings.ToUpper(space), dependency.Adapter)
 	}
 	if operation == "list" || operation == "observe" || (candidate.IsRuntime("browser") && operation == "share" && len(args) == 2 && args[0] == "status" && args[1] == "probe") {
 		return runPreparedDiscovery(command, stdout, stderr)

@@ -185,6 +185,33 @@ Read [browser management](docs/browser-management.md) for operations and
 [extension distribution](docs/extension-distribution.md) for publishing and
 platform-specific installation rules.
 
+## Native credentials
+
+Install the store adapter for your OS: `keychain` on macOS, `secret_service` on
+Linux, or `credman` on Windows (`.\install.ps1 -Adapters credman`). ctx can then
+move an explicitly named secret
+without putting its value in `.ctx` or command arguments:
+
+```sh
+./install.sh --adapters keychain   # macOS; choose secret_service on Linux
+chmod 600 ./secret.txt
+ctx credential put 'keychain:service=ctx&account=work' --from-file ./secret.txt
+ctx credential get 'keychain:service=ctx&account=work' --stdout | consumer
+ctx credential copy 'keychain:service=ctx&account=work' \
+  'keychain:service=ctx&account=work-copy'
+```
+
+`get --stdout` requires a pipe; `get --to-file` creates a new private file.
+`put` reads from a private file or redirected stdin. An existing item requires
+`--replace`. Copy is a point-in-time transfer, not synchronization. Native
+permissions and unlock prompts still apply. Chromium-family browser adapters
+declare a runtime credential dependency on Keychain (macOS) or Secret Service
+(Linux). Selecting one from the catalog installs its store adapter too; the
+browser requests supported cookie keys through CTX's trusted adapter protocol.
+Updating a store adapter does not require rebuilding the browser adapter. CTX
+does not bypass browser-bound encryption. See [native credentials](docs/credentials.md)
+for store reference formats, cross-machine transfer, and security limits.
+
 ## Adapters and the system graph
 
 The optional installer catalog contains maintained adapters. After obtaining
@@ -218,6 +245,7 @@ and [the graph design](docs/adr-graph-runtime.md).
 
 - [Browser cookies and automation input](docs/browser-cookies.md)
 - [Browser profile and page management](docs/browser-management.md)
+- [Native credentials](docs/credentials.md)
 - [Extension distribution](docs/extension-distribution.md)
 - [Build a CTX adapter](docs/adapter-authoring.md)
 - [Adapter API and packaging](docs/adapter-api.md)

@@ -76,12 +76,14 @@ func TestChromiumKWalletDiscoveryFallbackAndFalseSuccess(t *testing.T) {
 }
 
 func TestChromiumSecretServiceIdentityFallback(t *testing.T) {
-	cookieCredentialHelper(t, "secret-tool", `case "$*" in
-  'lookup application fixture') exit 1;;
-  'lookup service Fixture Safe Storage account Fixture') printf '%s\n' fixture-password;;
+	root := cookieCredentialHelper(t, "ctx", `case "$3" in
+  'secret_service:application=fixture') exit 1;;
+  'secret_service:service=Fixture+Safe+Storage&account=Fixture') printf '%s\n' fixture-password;;
   *) exit 2;;
 esac
 `)
+	t.Setenv("CTX_EXECUTABLE", filepath.Join(root, "ctx"))
+	t.Setenv("CTX_DEPENDENCY_CREDENTIAL", "secret_service")
 	config := Config{SecretApplication: "fixture", KeychainService: "Fixture Safe Storage", KeychainAccount: "Fixture"}
 	if secret, err := chromiumSecretServiceSecret(config); err != nil || secret != "fixture-password" {
 		t.Fatalf("service/account fallback failed: %v", err)

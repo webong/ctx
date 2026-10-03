@@ -18,6 +18,12 @@ build_bundle() {
   os=$1
   arch=$2
   extension=$3
+  case "$os" in
+    darwin) credential_adapter=keychain ;;
+    linux) credential_adapter=secret_service ;;
+    windows) credential_adapter=credman ;;
+  esac
+  catalog_adapters="$CATALOG_ADAPTERS $credential_adapter"
   staging=$(mktemp -d "$OUTPUT/.ctx-release.XXXXXX")
   bundle="$staging/ctx"
   mkdir -p "$bundle/bin"
@@ -35,9 +41,37 @@ build_bundle() {
   fi
 
   mkdir -p "$bundle/adapters"
-  for adapter in $CATALOG_ADAPTERS; do
+  for adapter in $catalog_adapters; do
     cp -R "$ROOT/adapters/$adapter" "$bundle/adapters/$adapter"
   done
+  case "$os" in
+    darwin)
+      case "$arch" in
+        amd64) keychain_binary=${CTX_KEYCHAIN_AMD64:-} ;;
+        arm64) keychain_binary=${CTX_KEYCHAIN_ARM64:-} ;;
+      esac
+      [ -n "$keychain_binary" ] && [ -f "$keychain_binary" ] || {
+        printf 'ctx: a native macOS Keychain adapter binary is required for %s\n' "$arch" >&2
+        exit 1
+      }
+      keychain_info=$(go version -m "$keychain_binary")
+      printf '%s\n' "$keychain_info" | grep -Fq "GOOS=darwin" || {
+        printf 'ctx: Keychain adapter is not a Darwin Go binary\n' >&2; exit 1;
+      }
+      printf '%s\n' "$keychain_info" | grep -Fq "GOARCH=$arch" || {
+        printf 'ctx: Keychain adapter architecture does not match %s\n' "$arch" >&2; exit 1;
+      }
+      cp "$keychain_binary" "$bundle/adapters/keychain/ctx-keychain"
+      chmod +x "$bundle/adapters/keychain/ctx-keychain"
+      ;;
+    linux|windows)
+      credential_executable="ctx-$(printf '%s' "$credential_adapter" | tr _ -)$extension"
+      (cd "$ROOT" && CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
+        go build -trimpath -ldflags "-s -w" \
+        -o "$bundle/adapters/$credential_adapter/$credential_executable" "./adapters/$credential_adapter/native")
+      ;;
+  esac
+  rm -rf "$bundle/adapters/$credential_adapter/native" "$bundle/adapters/$credential_adapter/store"
   for adapter in firefox zen floorp waterfox librewolf chrome chromium edge brave safari vivaldi opera whale arc comet dia atlas helium; do
     (cd "$ROOT" && CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
       go build -trimpath -ldflags "-s -w" \
