@@ -228,6 +228,9 @@ usage:
   ctx graph filesystems
   ctx graph webviews
   ctx graph resolve [runtime|all] [capability...] [--supports <kind>] [--share <resource.operation>]
+  ctx graph resolve shell [--name <name>] [--select <executable>]
+  ctx graph resolve filesystem [--path <path>] [--type <type>] [--writable] [--min-free <bytes>] [--select <mount>]
+  ctx graph resolve webview [--engine <engine>] [--api <api>] [--abi <generation>] [--version <version>] [--arch <architecture>] [--select <location>]
   ctx graph <scan|shells|filesystems|webviews|status|vertices|edges|snapshot|changes> [arguments...]
   ctx version`)
 }
@@ -439,18 +442,28 @@ func shell(resolver *config.Resolver, args []string, stdout, stderr io.Writer) i
 		fmt.Fprintln(stderr, "ctx: shell only accepts --shell followed by an executable or -- followed by a command")
 		return 2
 	}
+	values, err := profileEnvironment(resolver)
+	if err != nil {
+		return reportError(stderr, err)
+	}
 	if shellName == "" {
-		values, err := profileEnvironment(resolver)
-		if err != nil {
-			fmt.Fprintf(stderr, "ctx: %v\n", err)
-			return 1
-		}
 		shellName = values["CTX_SHELL"]
 		if shellName == "" {
 			shellName = platform.DefaultShell()
 		}
 	}
-	return execute(resolver, shellName, nil, stdout, stderr)
+	searchPath := os.Getenv("PATH")
+	if values["PATH"] != "" {
+		searchPath = values["PATH"]
+	}
+	prepared, err := prepareHostOperation(systemgraph.OperationRequirements{
+		Operation: "shell.launch",
+		Shell:     &systemgraph.ShellRequirement{Select: shellName, SearchPath: &searchPath},
+	})
+	if err != nil {
+		return reportError(stderr, err)
+	}
+	return execute(resolver, prepared.Shell.Path, nil, stdout, stderr)
 }
 
 func execute(resolver *config.Resolver, name string, args []string, stdout, stderr io.Writer) int {

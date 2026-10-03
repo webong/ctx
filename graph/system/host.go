@@ -52,9 +52,10 @@ type FilesystemInfo struct {
 // adapters. Nil slices in ObserveHost preserve the corresponding inventory;
 // non-nil empty slices remove previously observed entries of that kind.
 type HostInventory struct {
-	Shells      []ShellInfo      `json:"shells"`
-	Filesystems []FilesystemInfo `json:"filesystems"`
-	Webviews    []WebviewInfo    `json:"webviews"`
+	Shells          []ShellInfo      `json:"shells"`
+	Filesystems     []FilesystemInfo `json:"filesystems"`
+	Webviews        []WebviewInfo    `json:"webviews"`
+	shellSearchPath *string
 }
 
 type shellPath struct{ path, source string }
@@ -63,6 +64,10 @@ type shellPath struct{ path, source string }
 // PATH, platform shell locations, and a configured SHELL/ComSpec executable.
 // Registered and configured paths can identify shells with arbitrary names.
 func DiscoverShells(ctx context.Context) ([]ShellInfo, error) {
+	return discoverShells(ctx, os.Getenv("PATH"))
+}
+
+func discoverShells(ctx context.Context, searchPath string) ([]ShellInfo, error) {
 	candidates, err := platformShellPaths(ctx)
 	if err != nil {
 		return nil, err
@@ -74,7 +79,7 @@ func DiscoverShells(ctx context.Context) ([]ShellInfo, error) {
 	if defaultPath != "" {
 		candidates = append(candidates, shellPath{defaultPath, "configured-default"})
 	}
-	for _, directory := range filepath.SplitList(os.Getenv("PATH")) {
+	for _, directory := range filepath.SplitList(searchPath) {
 		if !filepath.IsAbs(directory) {
 			continue
 		}
@@ -195,7 +200,11 @@ func (g *Graph) ObserveHost(ctx context.Context, inventory HostInventory) error 
 	if inventory.Shells != nil {
 		managedKinds[Namespace+"/shell"] = true
 		managedTypes[Namespace+"/has-shell"] = true
-		add("host-inventory/shells", "host-inventory", "has-host-inventory", map[string]any{"kind": "shell", "count": len(inventory.Shells), "observed_at": now.Format(time.RFC3339Nano)})
+		searchPath := os.Getenv("PATH")
+		if inventory.shellSearchPath != nil {
+			searchPath = *inventory.shellSearchPath
+		}
+		add("host-inventory/shells", "host-inventory", "has-host-inventory", map[string]any{"kind": "shell", "count": len(inventory.Shells), "observed_at": now.Format(time.RFC3339Nano), "environment": shellEnvironment(searchPath)})
 		for _, shell := range inventory.Shells {
 			if !filepath.IsAbs(shell.Path) || shell.Name == "" {
 				return errors.New("host shell requires a name and absolute executable path")
@@ -209,7 +218,7 @@ func (g *Graph) ObserveHost(ctx context.Context, inventory HostInventory) error 
 	if inventory.Filesystems != nil {
 		managedKinds[Namespace+"/filesystem"] = true
 		managedTypes[Namespace+"/has-filesystem"] = true
-		add("host-inventory/filesystems", "host-inventory", "has-host-inventory", map[string]any{"kind": "filesystem", "count": len(inventory.Filesystems), "observed_at": now.Format(time.RFC3339Nano)})
+		add("host-inventory/filesystems", "host-inventory", "has-host-inventory", map[string]any{"kind": "filesystem", "count": len(inventory.Filesystems), "observed_at": now.Format(time.RFC3339Nano), "environment": hostEnvironment()})
 		for _, filesystem := range inventory.Filesystems {
 			if !filepath.IsAbs(filesystem.MountPoint) {
 				return errors.New("host filesystem requires an absolute mount point")
@@ -234,7 +243,7 @@ func (g *Graph) ObserveHost(ctx context.Context, inventory HostInventory) error 
 	if inventory.Webviews != nil {
 		managedKinds[Namespace+"/webview"] = true
 		managedTypes[Namespace+"/has-webview"] = true
-		add("host-inventory/webviews", "host-inventory", "has-host-inventory", map[string]any{"kind": "webview", "count": len(inventory.Webviews), "observed_at": now.Format(time.RFC3339Nano)})
+		add("host-inventory/webviews", "host-inventory", "has-host-inventory", map[string]any{"kind": "webview", "count": len(inventory.Webviews), "observed_at": now.Format(time.RFC3339Nano), "environment": webviewEnvironment()})
 		for _, webview := range inventory.Webviews {
 			if webview.Name == "" || webview.Engine == "" || webview.API == "" || webview.Location == "" || webview.Scope == "" || webview.Source == "" {
 				return errors.New("host webview requires a name, engine, API, location, scope, and source")

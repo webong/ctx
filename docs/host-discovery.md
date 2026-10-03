@@ -132,3 +132,105 @@ of the existing inventory, while a non-nil empty slice removes its old entries.
 The schema uses `shell`, `filesystem`, `webview`, and `host-inventory` vertices
 linked to `machine/local`. The generic graph store owns persistence and transactions;
 `graph/system` owns host discovery and its vocabulary.
+
+## Operation requirements and preparation
+
+Host operations declare typed `OperationRequirements`. An operation can require
+any combination of a shell, filesystem, and webview. Requirements are
+conjunctive: every requested resource must match.
+
+```sh
+ctx graph resolve shell --name zsh
+ctx graph resolve shell --select /bin/zsh
+ctx graph resolve filesystem --path ./export.json --writable --min-free 1048576
+ctx graph resolve filesystem --type apfs --type ext4 --writable
+ctx graph resolve webview --engine webkit --api WKWebView
+ctx graph resolve webview --engine webkit --api WebKitWebView --abi 4.1
+```
+
+The commands emit JSON candidates with per-category observation timestamps and
+return an error when the requirement cannot be satisfied. `--select` pins an
+executable, mount point, or runtime location; an unavailable or incompatible
+explicit choice produces an error. It does not select a different resource.
+`--type` can be repeated for alternative filesystem types. Webview engine, API,
+ABI, architecture, and known runtime version requirements match exactly.
+
+`Graph.ReadHost` reads the typed stored inventory without probing. `ResolveHost`
+refreshes only requested stale categories, with a default maximum age of five
+seconds. CLI `--max-age` and library `OperationRequirements.MaxAge` change that
+policy; negative durations force discovery. Changes to the shell's effective
+PATH/default environment or the shared-library search environment invalidate
+the corresponding cache. Host/user identity and Linux mount/user namespace
+fingerprints also invalidate cached observations; raw environment values are
+not stored in these fingerprints. `ShellRequirement.SearchPath` supports an effective
+PATH without changing the calling process's environment.
+
+When a filesystem requirement includes a path that does not exist yet, CTX
+uses its nearest existing ancestor and resolves symlinks. The OS determines
+the actual mount: macOS filesystem statistics handle volume mappings, Linux
+uses the path handle's mount ID, and Windows queries the volume mount path.
+These use the [Linux mount identity contract](https://docs.kernel.org/filesystems/proc.html)
+and [Windows volume path API](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getvolumepathnamew).
+`ResolveHost` with `Writable` filters mount read-only status; it does not prove
+directory access or allocate a file.
+
+Before using resources, call `PrepareHost`. It discovers current candidates,
+selects one per requirement, checks the executable and its resolved path,
+rechecks the selected filesystem and available bytes, and checks directory
+write access when required. It creates no filesystem probe files. Named shell
+choices follow the effective PATH; otherwise an unambiguous configured default
+can be selected. Multiple remaining mounts, runtimes, or shells require an
+explicit selection or narrower requirements.
+
+```go
+requirements := systemgraph.OperationRequirements{
+    Operation: "report.export",
+    Shell: &systemgraph.ShellRequirement{Name: "zsh"},
+    Filesystem: &systemgraph.FilesystemRequirement{
+        Path: outputPath,
+        Writable: true,
+        MinimumAvailableBytes: uint64(len(report)),
+    },
+}
+prepared, err := system.PrepareHost(ctx, requirements, nil)
+if err != nil {
+    return err
+}
+// Launch prepared.Shell.Path and write to the requested outputPath.
+```
+
+Webview preparation requires a `WebviewValidator` from the embedding backend:
+
+```go
+prepared, err := system.PrepareHost(ctx, systemgraph.OperationRequirements{
+    Operation: "ui.open",
+    Webview: &systemgraph.WebviewRequirement{
+        Engine: supportedEngine,
+        API: supportedAPI,
+        ABIVersion: supportedABI,
+        Select: selectedRuntimeLocation,
+    },
+}, backend.ValidateWebview)
+```
+
+The backend owns loading, native compatibility, dependencies, and application
+permissions. CTX does not infer those from an engine name. A missing validator,
+ambiguous runtime, or failed backend validation blocks preparation. Additional
+host observations can be projected with `ObserveHost`; `PrepareHost` performs
+local built-in discovery, so a private runtime outside that discovery remains
+the owning adapter/backend's responsibility.
+
+CTX now uses preparation before interactive `ctx shell` launches, protected
+cookie/policy/credential file outputs, and manager image archive staging.
+Shell selection preserves `--shell`, `CTX_SHELL`, profile configuration, and
+the existing platform default precedence, and resolves names using the effective
+profile PATH. Explicit output paths and `TMPDIR`/platform temporary directories
+remain the selected destinations. JSON exports declare their encoded byte
+size; streaming outputs and image archives can check only a minimum because
+their final size is unknown.
+
+`HostRequirementError` identifies the operation and resource kind and preserves
+underlying errors for `errors.Is` and `errors.As`. Preparation is a point-in-time
+check, not a lock or capacity reservation. The eventual executable launch and
+exclusive output open still enforce native errors, permissions, and overwrite
+protection. Direct `ctx shell -- <command>` execution retains its command mode.

@@ -62,7 +62,10 @@ Register-ArgumentCompleter -Native -CommandName ctx -ScriptBlock {
         'graph' {
             if ($words.Count -le 2) { Emit-CtxCompletion @('scan', 'shells', 'filesystems', 'webviews', 'resolve', 'status', 'vertices', 'edges', 'snapshot', 'changes'); return }
             if ($words[2] -eq 'resolve') {
-                if ($words.Count -le 3) { Emit-CtxCompletion @('all', 'browser', 'computer', 'manager'); return }
+                if ($words.Count -le 3) { Emit-CtxCompletion @('all', 'browser', 'computer', 'manager', 'shell', 'filesystem', 'webview'); return }
+                if ($words[3] -eq 'shell') { Emit-CtxCompletion @('--name', '--select', '--max-age'); return }
+                if ($words[3] -eq 'filesystem') { Emit-CtxCompletion @('--path', '--type', '--writable', '--min-free', '--select', '--max-age'); return }
+                if ($words[3] -eq 'webview') { Emit-CtxCompletion @('--engine', '--api', '--abi', '--version', '--arch', '--select', '--max-age'); return }
                 if ($words[-2] -eq '--supports') { Emit-CtxCompletion @('virtualizer', 'container'); return }
                 Emit-CtxCompletion @('--supports'); return
             }

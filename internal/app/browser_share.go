@@ -417,20 +417,7 @@ func parseBrowserEndpoint(choice string) (browserEndpoint, error) {
 }
 
 func writeCookieBundle(path string, bundle browserCookieBundle) error {
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return err
-	}
-	if err := json.NewEncoder(file).Encode(bundle); err != nil {
-		_ = file.Close()
-		_ = os.Remove(path)
-		return err
-	}
-	if err := file.Close(); err != nil {
-		_ = os.Remove(path)
-		return err
-	}
-	return nil
+	return writePrivateJSON(path, bundle)
 }
 
 func sameListedCookie(a, b browserCookie) bool {

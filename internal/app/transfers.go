@@ -213,6 +213,9 @@ func imageCopy(resolver *config.Resolver, args []string, stdout, stderr io.Write
 }
 
 func copyImagesArchive(resolver *config.Resolver, source, target endpoint, images []string, stdout, stderr io.Writer) int {
+	if err := prepareOutputDirectory("image.archive", os.TempDir(), 1); err != nil {
+		return reportError(stderr, err)
+	}
 	for _, image := range images {
 		archive, err := os.CreateTemp("", "ctx-image-*.tar")
 		if err != nil {

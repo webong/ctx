@@ -97,6 +97,11 @@ host discovery stays in `graph/system`; product-specific provider discovery
 stays in adapters. `ctx graph scan` records all host inventories and installed
 adapters, their declared capabilities and surfaces, and versioned observations
 from trusted adapters.
+Host consumers declare operation requirements through `ResolveHost` and
+`PrepareHost`. Queries refresh stale required categories; preparation performs
+current discovery and live validation, preserves explicit selections, and
+rejects ambiguous choices. Native webview compatibility is validated by the
+embedding backend. Shell launches and protected file exports consume this API.
 The fallback `list` collector handles existing browser and manager adapters.
 Adapters also project declared resource support, such as `virtualizer` and
 `container`, separately from executable capabilities.

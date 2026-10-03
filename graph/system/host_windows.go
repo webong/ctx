@@ -77,57 +77,67 @@ func platformFilesystems(ctx context.Context) ([]FilesystemInfo, error) {
 	}
 	result := make([]FilesystemInfo, 0, len(mounts))
 	for _, mount := range mounts {
-		if err := ctx.Err(); err != nil {
+		details, present, err := windowsMountDetails(ctx, mount)
+		if err != nil {
 			return nil, err
 		}
-		point, err := syscall.UTF16PtrFromString(mount.MountPoint)
-		if err != nil {
-			return nil, fmtHostReadError("Windows mount point", err)
+		if present {
+			result = append(result, details)
 		}
-		driveType, _, _ := hostGetDriveType.Call(uintptr(unsafe.Pointer(point)))
-		switch driveType {
-		case 2:
-			mount.DriveKind = "removable"
-		case 3:
-			mount.DriveKind = "fixed"
-		case 4:
-			mount.DriveKind = "network"
-		case 5:
-			mount.DriveKind = "optical"
-		case 6:
-			mount.DriveKind = "ramdisk"
-		default:
-			mount.DriveKind = "unknown"
-		}
-		label, kind := make([]uint16, 261), make([]uint16, 261)
-		var flags uint32
-		ok, _, err := hostGetVolumeInformation.Call(uintptr(unsafe.Pointer(point)),
-			uintptr(unsafe.Pointer(&label[0])), uintptr(len(label)), 0, 0,
-			uintptr(unsafe.Pointer(&flags)), uintptr(unsafe.Pointer(&kind[0])), uintptr(len(kind)))
-		if ok != 0 {
-			mount.Label, mount.Type = syscall.UTF16ToString(label), syscall.UTF16ToString(kind)
-			mount.ReadOnly = flags&0x00080000 != 0
-		} else {
-			// A drive letter with no removable media is not a mounted filesystem.
-			if errors.Is(err, syscall.Errno(21)) && (driveType == 2 || driveType == 5) {
-				continue
-			}
-			mount.DetailError = "volume details unavailable: " + err.Error()
-		}
-		var available, total, free uint64
-		ok, _, err = hostGetDiskFreeSpace.Call(uintptr(unsafe.Pointer(point)),
-			uintptr(unsafe.Pointer(&available)), uintptr(unsafe.Pointer(&total)), uintptr(unsafe.Pointer(&free)))
-		if ok != 0 {
-			mount.Space = &FilesystemSpace{TotalBytes: total, FreeBytes: free, AvailableBytes: available}
-		} else {
-			if mount.DetailError != "" {
-				mount.DetailError += "; "
-			}
-			mount.DetailError += "space unavailable: " + err.Error()
-		}
-		result = append(result, mount)
 	}
 	return result, nil
+}
+
+func windowsMountDetails(ctx context.Context, mount FilesystemInfo) (FilesystemInfo, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return FilesystemInfo{}, false, err
+	}
+	point, err := syscall.UTF16PtrFromString(mount.MountPoint)
+	if err != nil {
+		return FilesystemInfo{}, false, fmtHostReadError("Windows mount point", err)
+	}
+	driveType, _, _ := hostGetDriveType.Call(uintptr(unsafe.Pointer(point)))
+	switch driveType {
+	case 2:
+		mount.DriveKind = "removable"
+	case 3:
+		mount.DriveKind = "fixed"
+	case 4:
+		mount.DriveKind = "network"
+	case 5:
+		mount.DriveKind = "optical"
+	case 6:
+		mount.DriveKind = "ramdisk"
+	default:
+		mount.DriveKind = "unknown"
+	}
+	label, kind := make([]uint16, 261), make([]uint16, 261)
+	var flags uint32
+	ok, _, err := hostGetVolumeInformation.Call(uintptr(unsafe.Pointer(point)),
+		uintptr(unsafe.Pointer(&label[0])), uintptr(len(label)), 0, 0,
+		uintptr(unsafe.Pointer(&flags)), uintptr(unsafe.Pointer(&kind[0])), uintptr(len(kind)))
+	if ok != 0 {
+		mount.Label, mount.Type = syscall.UTF16ToString(label), syscall.UTF16ToString(kind)
+		mount.ReadOnly = flags&0x00080000 != 0
+	} else {
+		// A drive letter with no removable media is not a mounted filesystem.
+		if errors.Is(err, syscall.Errno(21)) && (driveType == 2 || driveType == 5) {
+			return mount, false, nil
+		}
+		mount.DetailError = "volume details unavailable: " + err.Error()
+	}
+	var available, total, free uint64
+	ok, _, err = hostGetDiskFreeSpace.Call(uintptr(unsafe.Pointer(point)),
+		uintptr(unsafe.Pointer(&available)), uintptr(unsafe.Pointer(&total)), uintptr(unsafe.Pointer(&free)))
+	if ok != 0 {
+		mount.Space = &FilesystemSpace{TotalBytes: total, FreeBytes: free, AvailableBytes: available}
+	} else {
+		if mount.DetailError != "" {
+			mount.DetailError += "; "
+		}
+		mount.DetailError += "space unavailable: " + err.Error()
+	}
+	return mount, true, ctx.Err()
 }
 
 func windowsVolumeMounts(ctx context.Context) (map[string]FilesystemInfo, error) {

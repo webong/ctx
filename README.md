@@ -226,6 +226,9 @@ ctx graph scan
 ctx graph shells
 ctx graph filesystems
 ctx graph webviews
+ctx graph resolve shell --name zsh
+ctx graph resolve filesystem --path ./export.json --writable --min-free 1048576
+ctx graph resolve webview --engine webkit --api WKWebView
 ctx graph resolve browser --share cookie.list
 ```
 
@@ -240,6 +243,10 @@ discovery evidence. These commands emit JSON and refresh their graph records;
 `graph scan` refreshes all host inventories alongside adapter inventory. Inspect
 stored records with `ctx graph vertices shell`, `ctx graph vertices filesystem`,
 or `ctx graph vertices webview`.
+Host resolution matches operation requirements and refreshes stale observations.
+Shell launches and protected file exports use graph preparation to validate the
+selected executable or destination before use. Explicit choices take precedence.
+Webview preparation requires a compatibility validator from its embedding backend.
 See [host discovery](docs/host-discovery.md) for platform coverage and the library API.
 
 Third-party adapters use the same API. Installing one directly leaves it

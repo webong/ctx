@@ -91,6 +91,9 @@ func graphCommand(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "observed %d shared webview runtimes\n", len(host.Webviews))
 		return 0
 	case "resolve":
+		if len(args) > 1 && (args[1] == "shell" || args[1] == "filesystem" || args[1] == "webview") {
+			return graphHostResolve(system, args[1], args[2:], stdout, stderr)
+		}
 		if resolveErr != nil {
 			return reportError(stderr, resolveErr)
 		}

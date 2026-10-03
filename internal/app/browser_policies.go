@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	browsershare "github.com/webong/ctx/internal/app/browser/share"
 	"github.com/webong/ctx/internal/config"
@@ -74,12 +75,25 @@ func shareBrowserPolicyCommand(resolver *config.Resolver, args []string, stdout,
 }
 
 func writePrivateJSON(path string, value any) error {
-	return writePrivateOutput(path, func(output io.Writer) error {
-		return json.NewEncoder(output).Encode(value)
+	data, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	return writePrivateOutputSize(path, uint64(len(data)), func(output io.Writer) error {
+		_, err := output.Write(data)
+		return err
 	})
 }
 
 func writePrivateOutput(path string, write func(io.Writer) error) error {
+	return writePrivateOutputSize(path, 1, write)
+}
+
+func writePrivateOutputSize(path string, minimumBytes uint64, write func(io.Writer) error) error {
+	if err := prepareOutputDirectory("file.export", filepath.Dir(path), minimumBytes); err != nil {
+		return err
+	}
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return err
