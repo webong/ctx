@@ -1,73 +1,44 @@
 # ctx
 
-Project-local contexts for the tools you already use.
-
-`ctx` lets each project choose its own Docker context, Podman connection,
-Kubernetes context, cloud profile, browser profile, database profile, and shell
-environment—without changing global defaults.
+Project-local contexts for the tools you already use. Choose a Docker engine,
+Kubernetes cluster, cloud profile, browser profile, database connection, or
+shell environment for one project without changing a machine-wide default.
 
 ```sh
 cd my-project
-
 ctx set docker orbstack
 ctx set kube development --namespace payments
 ctx set aws client-a
-ctx set firefox:client-a
+ctx set 'firefox:client-a'
 
-docker ps
+docker ps                         # ctx shim uses the project's Docker context
 ctx run kubectl get pods
 ctx run aws sts get-caller-identity
-ctx open http://localhost:3000
+ctx open http://localhost:3000     # opens the selected browser profile
 ```
 
-Selections are stored in a local `.ctx` file and automatically applied when a
-command runs through ctx or one of its container shims.
+Selections live in the project's `.ctx` file. ctx stores selectors and
+non-secret profile values; credentials remain with the native tools.
 
-## Why ctx?
+## What ctx does
 
-- Keep development, client, and personal environments separate.
-- Switch tool contexts per project instead of globally.
-- Bundle several selections into a reusable profile.
-- Use Docker, Podman, nerdctl, and Apple Container through one interface.
-- Open URLs in the browser profile selected for the project.
-- Extend ctx with trusted adapters instead of adding tool-specific logic to the
-  core.
-- Keep credentials in the native tools; ctx stores selectors, not secrets.
-
-Adapters describe one runtime—`computer`, `manager`, or `browser`—and one
-or more interaction surfaces: `shell` and `web`. Their capabilities decide what
-ctx can list, run, open, or share. This keeps tool-specific behavior in adapter
-packages while the core provides common discovery and routing.
-The runtime describes the adapter's role, not whether its implementation uses
-virtualization. Computer, manager, and browser adapters may each observe
-virtualized resources; capabilities and graph observations describe what is
-actually available.
-Adapters may declare `supports = "virtualizer,container"` independently of
-their runtime. `supports` describes resource kinds the native tool can manage;
-`capabilities` declares executable ctx operations. Inspect both with
-`ctx adapter inspect <name>`, or find observed contexts with
-`ctx graph resolve all --supports virtualizer`.
-
-## What works today
-
-| Area | Current capability |
+| Area | Available today |
 | --- | --- |
-| Project contexts | Select native tool contexts in `.ctx`, group selections in profiles, inspect resolution, and apply profile environment values to a command or child shell. |
-| Computer tools | Route Kubernetes, AWS, gcloud, PostgreSQL, and MySQL commands through their selected contexts. Claude Code and Codex adapters provide CLI shims, project hooks, and native plugin delegation. |
-| Managers | Route Docker, Podman, nerdctl, and Apple Container commands. Register named engine connections, use supported registry build caches, and transfer images or named volumes between engines. |
-| Browsers | Open URLs in a selected Firefox, Chrome, Chromium, Edge, Brave, or Safari profile. Trusted adapters expose extension, userscript, bookmarklet, and native page-session workflows through the [browser management API](docs/browser-management.md), including [CRX publishing and supported local/server installation](docs/extension-distribution.md). |
-| System graph | Scan trusted adapters for available contexts and capabilities, resolve usable providers, and inspect or export the local inventory. Other services can import the graph and supervisor Go packages. |
-| Extensions | Install maintained or third-party adapters on demand. A prebuilt, platform-specific adapter archive works with a bare ctx binary; building an adapter from Go source requires Go. |
+| Project contexts | Select contexts per project, group them into profiles, inspect resolution, and apply profile environment values to a command or child shell. |
+| Container engines | Route Docker, Podman, nerdctl/containerd, and Apple Container. Use named engine connections, registry-backed build caches, and point-in-time image or volume transfers. |
+| Desktop managers | Inspect and explicitly start or stop Rancher Desktop, OrbStack, and Docker Desktop through separate app adapters. Rancher diagnostics distinguish VM, k3s, and Docker-plugin issues. |
+| Computer tools | Route Kubernetes, AWS, gcloud, PostgreSQL, MySQL, and PHP. Claude Code and Codex adapters add CLI shims and project hooks. |
+| Browsers | Open a selected profile; query and share supported cookies and other browser resources; prepare extensions and userscripts; and attach to supported live pages. Capabilities vary by browser and OS. |
+| Extensibility | Install trusted adapters on demand. The core provides selection, validation, trust, dispatch, and a graph of discovered contexts and capabilities. |
 
-Available operations depend on the installed, trusted adapter and its native
-tool. Use `ctx adapter inspect <name>` and `ctx share:browser capabilities
---from <browser:profile>` to inspect a particular installation.
+The core does not ship with an active adapter or a bundled adapter catalog. An
+adapter owns its product-specific behavior; ctx only invokes its declared
+capabilities. See [Build a CTX adapter](docs/adapter-authoring.md) to build one.
 
 ## Install
 
-### macOS and Linux
-
-Install from a source checkout with Go 1.23 or newer:
+The default installer installs only the ctx core. Run it from a source checkout
+with Go 1.23 or newer:
 
 ```sh
 git clone https://github.com/webong/ctx.git
@@ -76,757 +47,182 @@ cd ctx
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-The default installer builds only the ctx core: no adapter catalog or adapter
-is included. Put the install directory before the real container CLIs on
-`PATH`. To opt into adapters, run one of these from the checkout:
+Choose adapters explicitly when you need them:
 
 ```sh
-./install.sh --adapters docker,kube,firefox
-./install.sh --all
-./install.sh --interactive
+./install.sh --adapters docker,kube,aws,firefox
+# Or: ./install.sh --interactive
+# Or: ./install.sh --all
 ```
 
-These modes prepare the separate adapter catalog and install your selection.
-You can rerun the installer later to add more adapters; existing adapters are
-preserved by a core-only update.
-
-On Windows, install from a source checkout with Go 1.23 or newer:
+On Windows, use PowerShell:
 
 ```powershell
 git clone https://github.com/webong/ctx.git
 Set-Location ctx
-.\install.ps1
-$env:PATH = (Join-Path $env:LOCALAPPDATA 'Programs\ctx\bin') + ';' + $env:PATH
+.\install.ps1 -Adapters docker,kube,aws,firefox
 ```
 
-For Windows adapter selection, use `-Adapters docker,kube,firefox`,
-`-AllAdapters`, or `-Interactive`.
-The Windows installer writes PowerShell completion to
-`$env:APPDATA\ctx\ctx-completion.ps1` by default. Add this line to your
-PowerShell profile to enable it:
+Omit `-Adapters` for a core-only install, or use `-Interactive` or
+`-AllAdapters`. The installer places `ctx.exe` in
+`$env:LOCALAPPDATA\Programs\ctx\bin` by default; add that directory to `PATH`.
 
-```powershell
-. "$env:APPDATA\ctx\ctx-completion.ps1"
-```
-
-When a prebuilt release is available, macOS and Linux can download it without
-Go:
+When a release is published, the remote installers do not require Go:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/webong/ctx/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/webong/ctx/main/install.sh |
+  sh -s -- --adapters docker,kube,aws,firefox
 ```
 
-To add an adapter later without cloning the repository, rerun it with a
-selection, for example `curl -fsSL https://raw.githubusercontent.com/webong/ctx/main/install.sh | sh -s -- --adapters docker`.
+For Windows, download and run
+[install.ps1](https://github.com/webong/ctx/blob/main/install.ps1) with the same
+`-Adapters` selection. Release downloads are checksum-verified. The adapter
+catalog is a separate, optional download; a core-only update preserves
+previously installed adapters. If no release is published, install from source.
+See [cross-platform support](docs/cross-platform.md) for platform details.
 
-Windows can download the installer script to a temporary file and run it:
-
-```powershell
-$ctxInstaller = Join-Path $env:TEMP 'ctx-install.ps1'
-Invoke-WebRequest https://raw.githubusercontent.com/webong/ctx/main/install.ps1 -OutFile $ctxInstaller
-& $ctxInstaller
-```
-
-Rerun `$ctxInstaller -Adapters docker` to obtain the optional catalog and
-install Docker after a core-only installation.
-
-The remote installers verify release checksums. The core download is separate
-from the optional adapter catalog download; neither installer fetches the
-catalog by default. If GitHub Releases has no published version, use the source
-checkout instructions above.
-
-See [Cross-platform support](docs/cross-platform.md) for platform details. Set
-`CTX_BIN_DIR` and `CTX_HOME` to use custom installation locations.
-
-## Quick start
-
-First opt into the adapters you intend to use, for example
-`./install.sh --adapters docker` or `.\install.ps1 -Adapters docker`.
-List the contexts available for a tool, select one in the current project, and
-inspect the result:
+## Everyday use
 
 ```sh
-ctx ls manager
-ctx ls docker
-ctx set docker orbstack
-ctx status
-ctx explain
-```
+ctx ls docker                    # discover native contexts
+ctx set docker orbstack          # write this project's selection
+ctx status                       # show active selections
+ctx explain                      # show values and where they came from
+ctx doctor                       # check selected contexts and adapters
 
-With the Docker, Podman, and nerdctl shims installed, normal commands use the
-project selection:
-
-```sh
-docker ps
-podman ps
-nerdctl ps
-```
-
-Use `ctx run` for tools that do not have transparent shims:
-
-```sh
-ctx set kube development --namespace payments
-ctx run kubectl get pods
-
-ctx set aws client-a
-ctx run aws sts get-caller-identity
-
-ctx set gcloud client-a
-ctx run gcloud projects list
-```
-
-Explicit CLI flags and environment variables still take priority over ctx.
-`ctx real docker` shows which Docker executable the ctx shim will launch.
-
-## Browser and database contexts
-
-Choose a browser profile and open project URLs in it:
-
-```sh
-ctx ls browser
-ctx set 'chrome:Profile 1'
-ctx open http://localhost:3000
-```
-
-Database adapters use profiles maintained by the database clients. Passwords are
-not copied into `.ctx`.
-
-```sh
-ctx set postgres client-a-dev
-ctx run psql app
-
-ctx set mysql client-a
-ctx run mysql app
-```
-
-## Profiles and shell environments
-
-A profile groups several context selections and non-secret environment values:
-
-```sh
 ctx profile set client-a docker orbstack
-ctx profile set client-a kube_context client-a-dev
-ctx profile set client-a kube_namespace payments
-ctx profile set client-a aws_profile client-a
 ctx profile set client-a browser firefox:client-a
 ctx profile env client-a APP_ENV development
-
 ctx profile use client-a
-ctx profile show client-a
-ctx doctor
+ctx run -- npm test              # apply profile environment to one command
+ctx shell                        # or start a child shell with that environment
 ```
 
-Use `ctx profile ls` to list profiles, `ctx profile unset <name> <key>` or
-`ctx profile env-unset <name> <variable>` to remove individual values, and
-`ctx profile clear` to stop using the project profile. A profile can also set
-`shell_path` to prepend a directory to `PATH` for commands launched through
-ctx.
+Installed Docker, Podman, and nerdctl adapters can place small shims before
+the native commands on `PATH`, so ordinary `docker`, `podman`, and `nerdctl`
+commands honor the project selection. `ctx real docker` shows the executable
+behind a shim. For other tools, use `ctx run <tool> ...`. Explicit native CLI
+flags and environment variables take precedence over ctx.
 
-Apply the profile environment to one command or start a child shell:
+## Managers and sharing
 
-```sh
-ctx run -- npm test
-ctx shell
-ctx shell -- npm test
-```
-
-`ctx env` prints the environment additions for the current profile, and
-`ctx shell --shell <executable>` chooses the child shell explicitly. `CTX_SHELL`
-sets the default child shell when `--shell` is omitted.
-
-Environment values are stored as plain text. Use them for ordinary configuration,
-not passwords, tokens, or private keys.
-
-## Computer-side AI CLIs
-
-Computer integrations use the `computer` runtime on the `shell` surface and
-declare CLI shims, hooks, and plugins in their manifest. The installer catalog
-includes maintained Claude Code and Codex packages. Activate one or both with:
-
-```sh
-ctx setup --adapters claude_code,codex
-ctx adapter ls computer
-```
-
-Put the ctx binary directory first on `PATH`, then use either CLI's normal
-command:
-
-```sh
-claude
-codex
-```
-
-The shims launch the real CLIs through ctx. Install hooks for the current
-project with a local handler executable:
-
-```sh
-ctx computer hooks install claude_code --handler ./scripts/ctx-policy
-ctx computer hooks install codex --events PreToolUse,PermissionRequest --handler ./scripts/ctx-policy
-```
-
-This writes native hook entries to `.claude/settings.local.json` or
-`.codex/hooks.json`, and stores the handler and event list in the project's
-git-ignored `.ctx` file. The event name is passed to the handler as its first
-argument, and native hook JSON flows through stdin/stdout. Preview generated
-settings with `ctx computer hooks print claude_code`; remove ctx-managed hooks
-with `ctx computer hooks remove claude_code`. `ctx plugin computer <adapter>
-...` delegates plugin and marketplace operations to the CLI's native plugin
-command, where provider-specific project scope is supported. See [the adapter
-API](docs/adapter-api.md#computer-side-cli-integrations) for details. The design
-follows the runtime-neutral decision boundary and local operator controls described by
-[Neura for Builders](https://www.neurarelay.com/builders) and
-[Neura Local settings](https://www.neurarelay.com/operators#neura-local-settings).
-
-## PHP interpreter adapter
-
-PHP is available as a computer-runtime interpreter adapter. After opting into
-the adapter catalog, install it, inspect its discovered versions, and select a version for the
-current project:
-
-```sh
-ctx adapter add php
-ctx ls php
-ctx set php 8.4
-ctx graph resolve computer --supports interpreter
-```
-
-The adapter declares interpreter support in the graph and routes `php` to the
-selected installed version. On Homebrew systems it discovers versioned PHP
-formulae; it does not change Homebrew's global link.
-
-## Manager sharing and build caches
-
-`ctx graph scan` discovers installed adapters and their declared capabilities.
-Trusted browser and manager adapters can also supply named contexts. The
-inventory is available through `ctx graph vertices adapter`, `ctx graph
-vertices capability`, and `ctx graph vertices context`; it does not presume
-which providers or host products are installed.
-
-You can give an engine connection a convenient alias. `--provider` names a
-trusted ctx adapter, and `--selection` is that adapter's native context,
-connection, or namespace. `--virtualizer` and `--machine` add descriptive
-metadata when known; neither is required by the core.
-
-```sh
-ctx manager add orb --virtualizer orbstack --provider docker --selection orbstack
-ctx manager add desktop --virtualizer docker-desktop --provider docker --selection desktop-linux
-ctx manager add dev-vm --virtualizer utm --machine dev-vm --provider docker --selection utm-dev
-ctx manager add local-apple --virtualizer apple-container --provider apple --selection local
-ctx manager ls
-ctx manager show dev-vm
-```
-
-Rancher Desktop, OrbStack, and Docker Desktop have separate app adapters. Install
-the ones you use from the optional catalog; they inspect the desktop app, while
-`docker` and `nerdctl` remain the workload-engine adapters:
+Container-engine adapters and desktop-manager adapters have different jobs.
+For example, `docker` routes Docker commands while `docker_desktop` inspects
+the Docker Desktop application. Install only the ones you use:
 
 ```sh
 ctx adapter add rancher_desktop orbstack docker_desktop
 ctx manager apps
-ctx manager app rancher_desktop status
 ctx manager app rancher_desktop doctor
 ctx manager app orbstack status
-ctx manager app docker_desktop status
-ctx manager doctor
 ```
 
-`ctx manager app <name> start` and `stop` explicitly call that app's supported
-CLI. Merely running a doctor never starts, stops, resets, or reconfigures an
-app. Rancher's adapter checks its last failed Lima boot for filesystem and
-guest-SSH errors, and its latest startup failure for a k3s crash. It assesses
-global Docker plugin links only when the engine is Moby; in containerd mode
-those links are irrelevant to `nerdctl`.
-
-On macOS, Docker-based managers can use their own CLI and Compose/Buildx
-plugins without changing `~/.docker/cli-plugins` symlinks. For example:
+`doctor` is read-only. `start` and `stop` are separate, explicit actions.
+You can also name an engine connection for builds and transfers:
 
 ```sh
-ctx manager add rancher --virtualizer rancher-desktop --provider docker \
-  --selection rancher-desktop \
-  --command "$HOME/.rd/bin/docker" --plugin-dir "$HOME/.rd/bin"
-ctx set docker @rancher
-ctx run docker compose version
-ctx manager doctor
+ctx manager add orb --virtualizer orbstack --provider docker --selection orbstack
+ctx manager add desktop --virtualizer docker-desktop --provider docker --selection desktop-linux
+
+ctx build @orb --cache-ref ghcr.io/acme/api:docker-cache -- --tag acme/api:dev .
+ctx share:manager image copy @orb @desktop acme/api:dev
+ctx share:manager volume copy @orb @desktop app-data app-data
 ```
 
-This Docker example applies when Rancher Desktop uses its Docker/Moby engine.
-With Rancher Desktop's containerd engine, use its `nerdctl` provider instead;
-there is no Rancher Docker daemon for ctx to select. Use the Docker context
-name shown by `ctx ls docker` for `--selection`; `rancher-desktop` is an
-example, not a guaranteed context name. `--plugin buildx=/absolute/path` and
-`--plugin compose=/absolute/path` can override individual plugins. ctx creates
-a temporary Docker config for each invocation, retaining your contexts and
-credentials while routing Compose/Buildx through that manager's directory.
-Ordinary Docker commands, including `docker login`, keep the normal config;
-an explicit Docker `--config` also takes precedence over plugin routing. ctx
-does not modify the global links. With the Rancher app adapter installed,
-`ctx manager doctor` can report a failed VM boot, host disk pressure, and
-relevant plugin-link conflicts. It does not repair an EXT4 filesystem or reset
-the VM; back up important volumes before attempting either repair.
-If the VM is down, add `--offline` to register its selection without contacting
-the engine; `ctx set docker @rancher` still requires it to be available.
-For the containerd mode, a registration can instead start with
-`ctx manager add rancher-ctr --virtualizer rancher-desktop --provider nerdctl
---selection default --command "$HOME/.rd/bin/nerdctl" --offline`; verify the
-namespace with `ctx ls nerdctl` once the VM starts.
+Image copy uses an archive; image sync can use a registry when both adapters
+support it. A volume copy is a point-in-time transfer, **not live sync**: stop
+or quiesce a database first. ctx refuses to import over an existing target
+volume. Named connections can also pin a CLI and Compose/Buildx plugin
+directory, avoiding changes to global Docker plugin symlinks. A registration
+describes an engine inside a VM; it does not copy VM disks or snapshots.
 
-For the maintained nerdctl adapter, pin the daemon address separately from its
-namespace:
+## Browsers
+
+The `ctx open` command launches URLs in a selected profile of Firefox,
+Chrome, Chromium, Edge, Brave, or Safari. Other maintained browser adapters
+may support sharing without implementing `ctx open`. Discover what a particular
+installation can do with `ctx adapter inspect <name>` and
+`ctx share:browser capabilities --from <browser:profile>`.
+
+Cookie queries can read supported profile stores or caller-provided exports,
+select by site/name/scope, and return JSON, an HTTP Cookie header, or a
+Netscape cookie jar where that format can preserve the cookie's scope:
 
 ```sh
-ctx manager add local-containerd --provider nerdctl \
-  --selection default --address /run/containerd/containerd.sock
+ctx share:browser cookie query --from firefox:personal \
+  --site https://example.com --name session --to-file ./cookies.json
+
+ctx share:browser cookie query --browser firefox --browser chrome \
+  --site https://example.com --mode first --stdout | consumer
+
+ctx share:browser cookie normalize --from chrome:Default --store-id 0 \
+  --from-file ./authorized-export.json --to-file ./normalized-cookies.json
 ```
 
-The `utm-dev` selection above must already be a Docker context pointing at the
-engine inside that UTM VM. For Podman in a VM, register its Podman connection
-instead. These registrations describe container engines inside VMs; they do
-not copy UTM VM disks or snapshots. Registered endpoints use `@name` in share
-commands. `ctx` shows the resolved source and target before transferring.
-Native `provider:selection` endpoints continue to work without registration.
-The graph records aliases as declarations and contexts as adapter observations;
-share commands still validate the selected endpoint before transferring.
-This runtime rename is a clean break: use `ctx manager` and
-`ctx share:manager`, update external adapter manifests to `runtime = "manager"`,
-and recreate any named registrations previously stored in
-`$CTX_HOME/virtualizers.json`. Project selections such as `docker=orbstack`
-continue to use their adapter selector keys. Re-run the installer with adapter
-selection to refresh packages; replacing only the ctx binary leaves older packages
-with the removed runtime name.
+Sharing also covers supported cookie import, browser policy export, and
+exportable Firefox certificates. Browser encryption, OS permissions, and
+profile state limit what can be read or transferred. A query never bypasses
+Chrome App-Bound encryption or a browser's access controls. Cookie values are
+sensitive; file output is private, and stdout requires a pipe. See
+[browser cookies](docs/browser-cookies.md) for input formats, fallbacks,
+normalization, and security limits.
 
-Share a registry-backed build cache using a registered instance:
+Trusted browser adapters can prepare and install extensions through supported
+native routes, manage userscripts, encode bookmarklets, and attach to a page
+whose debugging endpoint is already available:
 
 ```sh
-ctx build @orb \
-  --cache-ref ghcr.io/acme/api:docker-cache \
-  -- --tag ghcr.io/acme/api:dev .
+ctx browser manage extension prepare --target chrome:Default \
+  --input '{"source":"/path/to/extension.zip"}'
+
+ctx browser manage session targets --target chrome:Default
 ```
 
-Copy images between supported engines through a temporary archive:
+Preparing or registering an extension is not proof that a browser installed or
+enabled it. A page attachment does not launch or close the user's browser.
+Read [browser management](docs/browser-management.md) for operations and
+[extension distribution](docs/extension-distribution.md) for publishing and
+platform-specific installation rules.
+
+## Adapters and the system graph
+
+The optional installer catalog contains maintained adapters. After obtaining
+it with `--adapters`, `--interactive`, or `--all`, you can add more locally:
 
 ```sh
-ctx share:manager image copy \
-  @orb \
-  @desktop \
-  acme/api:dev
-```
-
-Copy a named volume between engines:
-
-```sh
-ctx share:manager volume copy \
-  @orb \
-  @dev-vm \
-  postgres-data \
-  postgres-data
-```
-
-`image sync` pushes and pulls a registry reference when both adapters support
-it, and falls back to an archive transfer otherwise. `image copy` always uses
-an archive. You can also stream a named volume through a file or pipe:
-
-```sh
-ctx share:manager volume export @orb postgres-data > postgres-data.tar
-ctx share:manager volume import @desktop restored-data < postgres-data.tar
-```
-
-Volume copy is a point-in-time migration, not live synchronization. Stop or
-quiesce databases first. ctx refuses to import into an existing target volume.
-
-Docker, Podman, and nerdctl adapters declare build, registry image transfer,
-archive image transfer, and named-volume transfer capabilities. Apple Container
-declares archive image and named-volume transfer, but no build or registry
-push/pull capability. Apple Container image imports require a version newer
-than 1.3.0 because of
-[GHSA-r3h2-rgqf-9hv9](https://github.com/apple/containerization/security/advisories/GHSA-r3h2-rgqf-9hv9).
-
-## Browser sharing
-
-`ctx share:browser` bridges browser resources through installed adapters.
-Its versioned JSON contract is documented in the adapter API. External Go
-adapters can use `github.com/webong/ctx/adapter/browser` for the shared types
-and validation helpers. CTX core does not contain browser storage or
-platform-specific code.
-
-| Maintained adapter | Declared share operations |
-| --- | --- |
-| Firefox | Cookie list, query, export, and import; policy export; certificate list, export, and import |
-| Zen, Floorp, Waterfox, and LibreWolf | Cookie list, query, export, and import; certificate list, export, and import |
-| Chrome, Chromium, Edge, and Brave | Cookie list, query, export, and import; policy export |
-| Vivaldi, Opera, Whale, Arc, Comet, Dia, Atlas, and Helium | Cookie list, query, export, and import |
-| Safari (macOS) | Cookie list, query, and export from a readable `Cookies.binarycookies` store; policy export |
-
-The adapter's declared operations are the starting point; OS encryption and
-profile state can further limit an individual transfer. Default profile
-discovery is available only on platforms where that browser has a known
-profile location; an absolute profile directory or cookie-store path can be
-used for a supported store elsewhere. The new share-only adapters do not
-implement `ctx open`.
-
-Firefox and the Chromium-family adapters can list and export a selected site cookie and
-import a supported cookie into a closed profile. Source and target may be
-different browser providers. It runs as a shell command and does not require
-a browser extension:
-
-```sh
-ctx share:browser cookie list --from firefox:personal --site https://example.com
-ctx share:browser cookie query --from firefox:personal --site https://example.com --name session --to-file ./site-cookies.json
-ctx share:browser cookie query --browser firefox --browser chrome --site https://example.com --mode first --stdout | consumer
-ctx share:browser cookie query --from chrome:Default --all-hosts --include-expired --to-file ./all-cookies.json
-ctx share:browser cookie query --from chrome:Default --site https://example.com --fallback-file ./authorized-export.json --to-file ./site-cookies.json
-ctx share:browser cookie query --from firefox:personal --site https://example.com --strict --require-match --to-file ./complete-cookies.json
-ctx share:browser cookie query --from chrome:Default --site https://example.com/account --format header --strict --require-match --to-file ./cookie-header.txt
-ctx share:browser cookie query --from firefox:personal --site https://example.com --format netscape --to-file ./cookies.txt
-ctx share:browser cookie normalize --from chrome:Default --store-id 0 --from-file ./native-export.json --to-file ./normalized-cookies.json
-ctx share:browser cookie copy --from firefox:personal --site https://example.com --name session --to-profile firefox:work
-ctx share:browser cookie copy --from firefox:personal --site https://example.com --name session --to-file ./session-cookie.json
-ctx share:browser cookie copy --from firefox:personal --site https://example.com --name session --stdout | consumer
-ctx share:browser cookie list --from chrome:Default --site https://example.com
-ctx share:browser cookie copy --from chrome:Default --site https://example.com --name session --to-file ./chrome-cookie.json
-ctx share:browser cookie copy --from chromium:Default --site https://example.com --name session --stdout | consumer
-ctx share:browser cookie list --from edge:Default --site https://example.com/account
-ctx share:browser cookie copy --from brave:Default --site https://example.com/account --name session --to-file ./brave-cookie.json
-ctx share:browser cookie copy --from firefox:personal --site https://example.com --name session --to-profile chromium:Default
-ctx share:browser cookie import --from-file ./session-cookie.json --to-profile chrome:Profile\ 1
-ctx share:browser cookie import --from-file ./site-cookies.json --site https://example.com --name session --to-profile chrome:Profile\ 1
-ctx share:browser cookie import --from-file ./cookies.txt --site https://example.com --name session --to-profile chromium:Default
-ctx share:browser cookie list --from safari:default --site https://example.com
-ctx share:browser cookie copy --from safari:default --site https://example.com --name session --to-file ./safari-cookie.json
-ctx share:browser policy export --from chrome:Default --to-file ./chrome-policies.json
-ctx share:browser capabilities --from safari:default
-ctx graph resolve browser --share cookie.list
-ctx share:browser certificate list --from firefox:personal
-ctx share:browser certificate copy --from firefox:personal --to-profile firefox:work -- --nickname 'Client Identity' --password-file ./identity.pass
-```
-
-`--from` defaults to the selected browser. Listing prints cookie metadata, not
-values, and does not unlock the OS cookie key. An origin-only `--site` lists all
-cookie paths for that host; including a URL path applies browser path matching.
-Use `--path` to select an exact cookie path. A site can have cookies
-with the same name in different domains, paths, or partitions. Use `--id` from
-`cookie list` to select an exact row, or narrow Firefox cookies with
-`--attribute firefox.container_name=Work` or
-`--attribute firefox.origin_attributes=<value>`. Firefox container names and
-profile-local IDs come from `containers.json` and appear as namespaced
-attributes when available. Listing is tab-separated and includes name, domain,
-path, expiry, SameSite policy, row ID, and partition scope. Files are created
-with mode 0600 and are plain JSON containing `version`, `source`, `site`, and a
-`cookie` object with its value and scope fields. `same_site_policy` is the
-portable value; browser-specific fields are namespaced under `attributes`.
-`--stdout` requires a pipe; use `--to-file` for a protected file.
-
-`cookie query` returns a JSON `cookies` array with values and a `warnings`
-array for cookies that could not be read. Repeat `--site`, `--name`, or `--from`
-to select multiple sites, names, or ordered profiles. Without `--from` or
-`--browser`, ctx discovers profiles from installed, trusted browser adapters.
-`--mode merge` combines the sources and keeps the first cookie with each scope;
-`--mode first` stops at the first source with a match. `--inline-file` or
-`--inline-stdin` adds JSON or Netscape cookies ahead of the adapters; `--inline-only` uses
-only inline inputs. `--fallback-file` or `--fallback-stdin` supplies cookies after
-browser adapters, filling scopes those adapters could not return. Only one
-stdin input can be used in a command. In `--mode first`, fallback is used only
-when earlier sources returned no matching cookies. `--all-hosts` explicitly permits a query without `--site`,
-and `--include-expired` includes expired rows. The public
-`github.com/webong/ctx/browser` package exposes the same query as `Get` for
-other Go services. Browser adapters retain ownership of profile paths and
-credential access. Older adapters with only list/export can answer site
-queries; all-host and expired queries require `cookie.query`.
-An empty result is `{"cookies":[]}`. Ordinary queries retain partial success
-with warnings. `--strict` refuses to write output when any source reports a
-warning; `--require-match` refuses empty output. `--timeout` bounds the overall
-adapter query (default two minutes). Cancellation or timeout fails the command
-without writing a result. In `--mode first`, fallback input is used only when
-earlier sources returned no cookies. See [cookie formats and validation](docs/browser-cookies.md).
-Automatic CLI queries try the browser selected by `ctx set` first, then installed,
-trusted adapters in the order declared by their manifests. Helium is omitted
-from automatic discovery; select it with `ctx set`, `--browser helium`, or
-`--from helium:<profile>`. An explicit `--from`
-or `--browser` list always keeps the caller's order. Each result includes the
-existing `source` label plus `source_info` with adapter, profile, and a store
-path when the adapter reports one. Inline fallback cookies carry
-`source_info.fallback = true`.
-
-`cookie normalize` and the public `browser.Normalize` API route authorized
-browser-API exports through the owning trusted adapter. They require an explicit
-browser/profile and native store ID, retain partition/container metadata, and
-return canonical JSON for inline/fallback input. Export permissions and runtime
-binding remain the exporting application's responsibility. See
-[native export normalization](docs/browser-cookies.md#normalize-an-authorized-browser-export).
-
-Chromium-family export reads the profile's committed SQLite cookies. On
-macOS, encrypted cookies require access to the browser's Safe Storage item in
-Keychain; the source adapter requests it only after a cookie is selected and the output is
-valid. On Linux, v10 cookies can be decoded locally; v11 cookies use Secret
-Service through `secret-tool` or KWallet through `kwallet-query`. KWallet can
-discover the network wallet through `dbus-send`; `CTX_KWALLET_NAME` overrides
-discovery. Credential lookups and failures are cached within one operation.
-On Windows, legacy DPAPI and
-AES-GCM cookies can be exported for the current user. Chrome App-Bound (`v20`)
-cookies cannot be exported by a standalone ctx process. Unsupported encryption
-versions and unavailable OS keys fail without writing a partial bundle.
-For a macOS Keychain or Linux keyring value already known to the user, a
-Chromium-family adapter also accepts a private password file through
-`CTX_BROWSER_<ADAPTER>_SAFE_STORAGE_PASSWORD_FILE` (for example,
-`CTX_BROWSER_CHROME_SAFE_STORAGE_PASSWORD_FILE`). The file must be absolute,
-regular, at most 4096 bytes, and mode 0600 or 0400; the adapter reads it in place of
-the OS helper. This does not decrypt Windows App-Bound cookies.
-
-Chromium-family profile import encrypts the selected cookie for the target
-profile on macOS or Linux. The browser must be closed; `lsof` is required, and
-the adapter rejects an existing Chromium `SingletonLock`. On Linux, it uses the
-target's existing v10 or v11 format, or v11 when a wallet key is available.
-Windows profile import is unavailable for browser-bound encryption. Cross-browser
-copy supports unpartitioned cookies when the target can represent their scope;
-otherwise the target adapter rejects the import. `cookie import` accepts a
-previously exported file or `--stdin` from a pipe. On macOS, Safari can list and
-export cookies from its on-disk `Cookies.binarycookies` store when the invoking
-process has file access. The adapter checks the container and legacy locations;
-`CTX_SAFARI_COOKIE_FILE` can name an absolute path to another readable store.
-Recent in-memory cookies may not yet be present there. Safari cookie import is
-not supported, and a macOS access denial is reported by the adapter.
-For Safari cookies unavailable from a readable on-disk store, supply an export
-authorized by the browser as `--fallback-file` or `--fallback-stdin` input.
-
-Firefox profile import requires `sqlite3` and `lsof`, a closed target profile,
-and an unpartitioned, persistent cookie. Session cookies cannot be represented
-by Firefox's persistent SQLite store and are rejected. Firefox adapters convert
-schema 16 and 17 millisecond expiry values to portable seconds on read, and
-back on import; schemas through 15 use seconds. The partitioned attribute and
-origin attributes remain adapter-owned cookie scope. It refuses to overwrite an existing target cookie
-unless `--replace` is given. The read-only
-list and file/pipe forms need `sqlite3`; they can read committed cookies while
-the browser is open, though recent in-memory changes may not yet appear. When a
-read-only SQLite connection cannot open a write-ahead log, the adapter makes a private
-temporary database snapshot and removes it on normal completion. A forced
-process termination can leave that snapshot in the system temporary directory.
-`policy export` collects available machine policy files or registry entries
-from the selected browser adapter into a mode-0600 bundle. Policies are usually
-machine or user managed rather than profile data; export does not apply them to
-another browser. The adapter protocol permits additional resource operations.
-Browser encryption keys and non-exportable private keys are not transferable.
-Firefox can share an exportable client certificate and its private key through
-a password-protected PKCS#12 bundle when `certutil` and `pk12util` are installed.
-Use `-- --nickname <name> --password-file <mode-0600-file>` for export or copy;
-import needs `-- --password-file <mode-0600-file>`. The source and target Firefox
-profiles must be closed. A hardware-backed or otherwise non-exportable key
-fails in the NSS tool without a partial bundle.
-
-`ctx share:browser capabilities --from <browser:profile>` prints each declared
-operation with a live prerequisite state: `ready`, `blocked`, or `unknown`.
-`ctx graph resolve browser --share cookie.list` finds profiles whose adapter
-confirmed the local prerequisites for listing. A probe never reads cookie
-values or unlocks OS credentials. `unknown` means the adapter could not confirm
-the operation without attempting it, such as encrypted Chromium export; a
-`ready` operation can still fail if the profile or key changes afterward.
-
-Third-party browser adapters can register `resource.list`, `resource.export`,
-and `resource.import` under `browser_share`. `ctx share:browser <resource>` then
-routes list, file/pipe export, profile copy, and file/pipe import through a
-versioned JSON bundle without a core change. The destination adapter decides
-whether it can represent the source resource.
-
-`ctx share:computer` is reserved for sharing a computer context. Adapters can
-register other spaces through a `share` capability and optional `share_spaces`
-manifest field, exposed as `ctx share:<space> ...`.
-
-## Adapters
-
-The repository maintains adapters for:
-
-| Family | Adapters |
-| --- | --- |
-| Managers | Docker, Podman, nerdctl/containerd, Apple Container |
-| Browsers | Firefox, Chrome, Chromium, Edge, Brave, Safari |
-| Cloud and orchestration | Kubernetes, AWS, gcloud |
-| Databases | PostgreSQL, MySQL |
-| Computer integrations | Shell AI CLI shims, hooks, and plugins |
-
-The native installer downloads the adapter catalog only when you explicitly
-select adapters. Once the catalog is present, install only what you need:
-
-```sh
-ctx setup
 ctx adapter available
-ctx adapter add podman postgres
-ctx adapter remove firefox
-ctx adapter refresh
+ctx adapter add postgres mysql
+ctx adapter ls
+ctx adapter inspect postgres
+ctx graph scan
+ctx graph resolve browser --share cookie.list
 ```
 
-On a core-only installation, rerun the installer with `--adapters` or
-`--interactive` (PowerShell: `-Adapters` or `-Interactive`) to obtain the
-optional catalog first. `ctx adapter install` can also install a package from
-an explicit local path or checksum-pinned URL without the catalog.
-
-External adapters use the same API and are untrusted until explicitly reviewed
-and trusted:
+Third-party adapters use the same API. Installing one directly leaves it
+untrusted until you review and trust it:
 
 ```sh
-ctx adapter test ./ctx-azure
-ctx adapter install ./ctx-azure
-ctx adapter inspect azure
-ctx adapter trust azure
+ctx adapter test ./my-adapter
+ctx adapter install ./my-adapter
+ctx adapter trust my-adapter
 ```
 
-A bare `ctx` binary can also install a prebuilt adapter archive without Go.
-The archive includes the manifest and an executable for the current platform:
+A bare ctx binary can install a prebuilt `.ctxadapter` archive or a
+checksum-pinned HTTPS adapter index without Go. The system graph records
+observations from installed, trusted adapters; it does not assume every tool
+is present. See [adapter packaging](docs/adapter-api.md#binary-packages-and-go-builds)
+and [the graph design](docs/adr-graph-runtime.md).
 
-```sh
-ctx adapter install ./azure-darwin-arm64.ctxadapter
-ctx adapter trust azure
-```
+## Documentation
 
-For a published multi-platform adapter index, pin the index checksum. ctx picks
-the current platform and verifies the selected archive's checksum from the index:
-
-```sh
-ctx adapter install https://example.com/azure.ctxadapter.json --sha256 "$INDEX_SHA256"
-ctx adapter trust azure
-```
-
-Go adapter authors build the same archive explicitly with `ctx adapter build
-./my-adapter`; this command requires Go. See the [Go example](examples/adapters/go_echo)
-and [adapter packaging guide](docs/adapter-api.md#binary-packages-and-go-builds).
-
-See [Adapters](adapters/README.md) for maintained packages and
-[Adapter API v2.0](docs/adapter-api.md) to build an integration.
-
-## Command reference
-
-| Command | Purpose |
-| --- | --- |
-| `ctx version` | Show the installed ctx version |
-| `ctx ls <runtime-or-selector>` | List available contexts |
-| `ctx set <adapter>:<selection>` | Select a context using its adapter's declared runtime |
-| `ctx set <selector> <name>` | Select a context with the existing two-argument form |
-| `ctx clear [selector]` | Remove one or all project selections |
-| `ctx profile <ls|show|use|set|unset|env|env-unset|clear> ...` | Manage named profiles and their environment values |
-| `ctx status` | Show active selections |
-| `ctx resolve <key>` | Print one resolved configuration value |
-| `ctx explain` | Show resolved values and their sources |
-| `ctx env` | Print environment additions for the active profile |
-| `ctx real <command>` | Find the native executable behind a ctx shim |
-| `ctx run <tool> ...` | Run a tool with its selected context |
-| `ctx run -- <command> ...` | Run any command with the profile environment |
-| `ctx shell [--shell <executable>]` | Start a child shell with the profile environment |
-| `ctx open <url>` | Open a URL with the selected browser profile |
-| `ctx hook computer <adapter> <event>` | Pass a computer hook event through a trusted adapter |
-| `ctx computer hooks <print|install|remove> ...` | Manage ctx entries in supported AI CLI project settings |
-| `ctx plugin computer <adapter> ...` | Run a computer integration's plugin operation |
-| `ctx setup [--all|--minimal|--adapters <names>]` | Select adapters from a downloaded catalog |
-| `ctx adapter <ls|available|add|refresh|inspect|trust|test|doctor|remove> ...` | Inspect and manage adapter packages |
-| `ctx adapter build <source>` | Compile a Go adapter into a platform archive |
-| `ctx adapter pack <directory>` | Archive an already built adapter package |
-| `ctx adapter index <output> <archives...>` | Create a platform index with archive checksums |
-| `ctx adapter install <source>` | Install a local directory, archive, or pinned HTTPS package |
-| `ctx manager <add|ls|show|doctor|remove> ...` | Register named manager instances and diagnose their toolchains |
-| `ctx manager apps` | List installed, trusted manager-app adapters |
-| `ctx manager app <adapter> <status|start|stop|doctor>` | Inspect or explicitly control an installed desktop manager |
-| `ctx build [provider|@instance] --cache-ref <ref> -- <args>` | Build with a registry-backed cache on a capable manager |
-| `ctx share:manager image <sync|copy> ...` | Transfer images through installed manager providers |
-| `ctx share:manager volume <export|import|copy> ...` | Transfer named volumes through installed manager providers |
-| `ctx share:browser cookie <list|query|normalize|copy|import> ...` | List, query, normalize, export, or import cookies through browser adapters |
-| `ctx share:browser policy export ...` | Export browser policy sources to a protected bundle or pipe |
-| `ctx share:browser certificate <list|export|copy|import> ...` | Share an exportable certificate through a capable browser adapter |
-| `ctx share:browser capabilities ...` | Show declared browser share operations and live prerequisite states |
-| `ctx share:<space> ...` | Invoke a trusted adapter's registered share operation |
-| `ctx doctor` | Validate configured selections and adapters |
-| `ctx hook <bash|zsh|powershell>` | Generate an optional shell prompt observer |
-| `ctx completion powershell` | Generate dynamic PowerShell command completion |
-| `ctx graph status` | Show the local system graph revision and size |
-| `ctx graph scan` | Refresh the machine's adapter, capability, and context inventory |
-| `ctx graph resolve [runtime|all] [capability...]` | Discover usable contexts from the refreshed graph |
-| `ctx graph resolve all --supports <kind>` | Find observed contexts whose adapter supports a resource kind |
-| `ctx graph resolve browser --share <resource.operation>` | Find browser profiles with confirmed local prerequisites for a share operation |
-| `ctx graph vertices [kind]` | Inspect observed graph vertices |
-| `ctx graph edges [relationship]` | Inspect observed graph relationships |
-| `ctx graph snapshot` | Export the CTX system graph as JSON |
-| `ctx graph changes [cursor]` | Read graph changes after a cursor |
-
-Run `ctx` without arguments for the complete command list.
-
-## System graph
-
-CTX stores observed system context in `$CTX_HOME/graph.json` (by default,
-`$HOME/.config/ctx/graph.json`). A CTX command records the invoking shell's
-parent process, current directory, detected project, and active profile.
-Successful `ctx open` calls record the browser provider, profile, and URL
-origin; paths, query strings, and fragments are omitted. Environment values,
-shell history, and browser credentials are not collected.
-
-`ctx graph scan` asks trusted installed adapters for their available contexts
-and ordinary resource metadata. Adapters declaring `observe` return versioned
-JSON; older browser and manager adapters use their line-oriented `list`
-output. The scan reconciles removed contexts and records when it ran.
-`ctx graph resolve manager image_save` returns contexts that currently offer that
-capability. `ctx ls`, `ctx status`, browser share, manager share, and build
-read the graph projection; adapter trust and live validation still govern each
-operation.
-`ctx status` marks a selected browser or adapter context `[observed]` when the
-current graph scan found it.
-
-An unqualified manager context resolves to the sole observed provider when
-there is one; ambiguous names require `provider:context` or a registered
-`@instance`. Build can choose the sole observed provider that offers `build`.
-
-The public `github.com/webong/ctx/graph` package supports other services
-registering their own namespaces and validators. The public
-`github.com/webong/ctx/graph/system` package supplies CTX's system inventory
-projection. Observations inform discovery; adapters still validate and route
-each operation.
-
-Services can also import `github.com/webong/ctx/supervisor` for approved local
-processes. It verifies declared executable checksums, isolates process trees,
-tracks leases and orphan recovery, gates readiness on caller-supplied endpoint
-and protocol checks, and projects bounded lifecycle history into the graph.
-Callers retain their own authorization, process admission, and protocol rules.
-See [the graph and supervisor contract](docs/adr-graph-runtime.md) for the API
-and recovery behavior.
-
-To update shell location context after each prompt, opt in to a prompt hook:
-
-```sh
-eval "$(ctx hook bash)" # or: eval "$(ctx hook zsh)"
-```
-
-In PowerShell, add `ctx hook powershell | Out-String | Invoke-Expression` to
-your PowerShell profile.
-
-The hook starts a short-lived observation command. Browser activity is currently
-observed when URLs are opened through `ctx open`; direct navigation in other
-browser windows is not collected yet.
-
-## Configuration
-
-Project selections live in `.ctx`. In Git repositories, ctx adds that file to
-the repository's local exclude list instead of modifying `.gitignore`.
-
-Global defaults, project mappings, profiles, and profile environments live in
-`$HOME/.config/ctx/config.toml` on macOS and Linux, and
-`$env:APPDATA\ctx\config.toml` on Windows. `CTX_HOME` overrides the containing
-directory. A manager's global fallback can be set with
-`ctx set docker <context> --global` (or another capable manager adapter).
-
-Resolution follows this order:
-
-1. Explicit CLI flags or tool-specific environment variables.
-2. The nearest `.ctx` file or central project mapping.
-3. Automatic Docker runtime detection on macOS.
-4. A configured global fallback.
-5. The underlying tool's own default.
-
-## Migrating from dctx
-
-Remove any old `eval "$(dctx hook zsh)"` or `eval "$(dctx hook bash)"` line
-from your shell startup file. The old hook may export `DOCKER_CONTEXT` and
-override ctx. Recreate project selections with `ctx set`; dctx configuration is
-not imported automatically.
-
-## Uninstall
-
-Remove the ctx-owned executables from `$HOME/.local/bin` on macOS and Linux, or
-`$env:LOCALAPPDATA\Programs\ctx\bin` on Windows. Configuration and installed
-adapters are stored under `$HOME/.config/ctx` on macOS and Linux, or
-`$env:APPDATA\ctx` on Windows, unless `CTX_HOME` was changed.
+- [Browser cookies and automation input](docs/browser-cookies.md)
+- [Browser profile and page management](docs/browser-management.md)
+- [Extension distribution](docs/extension-distribution.md)
+- [Build a CTX adapter](docs/adapter-authoring.md)
+- [Adapter API and packaging](docs/adapter-api.md)
+- [Cross-platform support](docs/cross-platform.md)
+- [System graph design](docs/adr-graph-runtime.md)
 
 ## License
 

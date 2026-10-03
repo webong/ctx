@@ -6,6 +6,10 @@ for the current operating system. It can be distributed as a platform-specific
 ctx installs adapters under `$CTX_HOME/adapters`; it never discovers or sources
 code from the current directory or arbitrary `PATH` entries.
 
+Start with [Build a CTX adapter](adapter-authoring.md) for required files,
+operation handlers, source builds, packaging, and installation. This page is
+the detailed API reference.
+
 ## Architecture and ownership
 
 Anything specific to a product, provider, browser, or native tool belongs in its
