@@ -296,3 +296,19 @@ See the [plugin contract](docs/adr-plugin-contract.md) and the
 ## License
 
 [MIT](LICENSE)
+
+### Plugin SDK authoring and tooling
+
+The [plugin SDK guide](docs/plugin-sdk.md) covers typed Go methods, a TypeScript
+host/guest SDK, instance leases, optional health/configuration/stream contracts,
+package manifests, dependency graphs and conformance tests. Runtime backends
+remain inside the reusable plugin library, including HashiCorp go-plugin.
+
+```sh
+go run ./examples/plugin-sdk --backend jsonline
+go run ./examples/plugin-typescript
+go run ./cmd/ctx-plugin inspect --root examples/plugin-package --entry main examples/plugin-package/plugin.json
+```
+
+Inspection validates metadata and content without starting plugins. CTX adapters
+retain their native bindings. Xallet and Cymonkey adoption is separate work.

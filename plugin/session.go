@@ -28,6 +28,10 @@ type Options struct {
 	Authorize func(context.Context, Request) error
 	// Timeout bounds handshake and calls without an earlier caller deadline.
 	Timeout time.Duration
+	// Observer receives metadata for admission and completed calls.
+	Observer Observer
+	// Requirements are checked before verification or connection.
+	Requirements []Requirement
 }
 
 type State string
@@ -47,6 +51,7 @@ type Session struct {
 	backend    Backend
 	authorize  func(context.Context, Request) error
 	timeout    time.Duration
+	observer   Observer
 	mu         sync.Mutex
 	state      State
 	next       uint64
@@ -60,7 +65,7 @@ type Session struct {
 // handshake. Nil policy callbacks fail closed. No global registry is used.
 func Open(ctx context.Context, selected Descriptor, opts Options) (*Session, error) {
 	selected = selected.Clone()
-	if err := selected.Validate(); err != nil {
+	if err := CheckRequirements(selected, opts.Requirements); err != nil {
 		return nil, err
 	}
 	if opts.Verify == nil || opts.Authorize == nil {
@@ -77,13 +82,18 @@ func Open(ctx context.Context, selected Descriptor, opts Options) (*Session, err
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if err := opts.Verify(ctx, selected.Clone()); err != nil {
+	start := time.Now()
+	verifyErr := opts.Verify(ctx, selected.Clone())
+	observe(ctx, opts.Observer, Event{Stage: "verify", Identity: selected.Identity}, start, verifyErr)
+	if err := verifyErr; err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrDenied, err)
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	start = time.Now()
 	backend, err := opts.Connect(ctx, selected.Clone())
+	observe(ctx, opts.Observer, Event{Stage: "connect", Identity: selected.Identity}, start, err)
 	if err != nil {
 		if backend != nil {
 			_ = backend.Close()
@@ -93,6 +103,7 @@ func Open(ctx context.Context, selected Descriptor, opts Options) (*Session, err
 	if backend == nil {
 		return nil, ErrInvalid
 	}
+	start = time.Now()
 	actual, err := backend.Handshake(ctx)
 	if err == nil {
 		err = ctx.Err()
@@ -100,12 +111,13 @@ func Open(ctx context.Context, selected Descriptor, opts Options) (*Session, err
 	if err == nil {
 		err = MatchHandshake(selected, actual)
 	}
+	observe(ctx, opts.Observer, Event{Stage: "handshake", Identity: selected.Identity}, start, err)
 	if err != nil {
 		return nil, errors.Join(err, backend.Close())
 	}
 	idle := make(chan struct{})
 	close(idle)
-	return &Session{descriptor: selected, backend: backend, authorize: opts.Authorize, timeout: opts.Timeout, state: StateReady, idle: idle}, nil
+	return &Session{descriptor: selected, backend: backend, authorize: opts.Authorize, timeout: opts.Timeout, observer: opts.Observer, state: StateReady, idle: idle}, nil
 }
 
 func (s *Session) Descriptor() Descriptor { return s.descriptor.Clone() }
@@ -114,7 +126,10 @@ func (s *Session) State() State           { s.mu.Lock(); defer s.mu.Unlock(); re
 // Call derives identity, surface, deadline, and a fresh correlation ID from
 // host state. A payload cannot expand the selected descriptor. Request IDs do
 // not supply idempotency, authorization, or automatic retries.
-func (s *Session) Call(ctx context.Context, contract ContractRef, operation string, payload json.RawMessage) (json.RawMessage, error) {
+func (s *Session) Call(ctx context.Context, contract ContractRef, operation string, payload json.RawMessage) (result json.RawMessage, callErr error) {
+	start := time.Now()
+	event := Event{Stage: "invoke", Identity: s.descriptor.Identity, Contract: contract, Operation: operation}
+	defer func() { observe(ctx, s.observer, event, start, callErr) }()
 	ctx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
 	if err := ctx.Err(); err != nil {
@@ -139,6 +154,7 @@ func (s *Session) Call(ctx context.Context, contract ContractRef, operation stri
 	s.active++
 	s.next++
 	id := strconv.FormatUint(s.next, 10)
+	event.RequestID = id
 	s.mu.Unlock()
 	defer func() {
 		s.mu.Lock()

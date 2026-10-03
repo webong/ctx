@@ -246,3 +246,19 @@ HashiCorp tests under `plugin/hashicorp/` launch real subprocesses over both
 RPC protocols with checksum verification and automatic TLS. They cover host
 admission, concurrent requests, structured errors, mismatch, cancellation, and
 cleanup. These tests require permission to bind local IPC sockets.
+
+## SDK layers and compatibility policy
+
+The additive SDK implementation is described in [Plugin SDK](plugin-sdk.md).
+It adds typed authoring, bounded schemas, configuration instances, optional health
+and pull-stream contracts, metadata observers, portable package preflight and
+conformance tooling. The existing v1 envelopes and native process ownership stay
+compatible. Protocol preference is resolved from reviewed metadata before
+opening a binding; no new hello fields are sent to v1 guests.
+
+The TypeScript SDK supplies both sides of the v1 JSON-line contract. Frozen
+fixtures and real Go/JavaScript examples cover interoperability. In-process,
+JSON-line and both HashiCorp RPC bindings run a common conformance suite.
+
+Scope: this SDK work is CTX-only. Xallet and Cymonkey migration is deferred;
+their repositories and pinned CTX dependencies are not changed by this work.

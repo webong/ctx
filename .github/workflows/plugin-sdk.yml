@@ -1,0 +1,32 @@
+name: Plugin SDK
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  sdk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: go test -race ./plugin/... ./cmd/ctx-plugin
+      - run: node --test plugin/typescript/test.mjs
+      - name: Check TypeScript declarations
+        run: npx --yes --package typescript@5.8.3 tsc --noEmit --strict --module NodeNext --moduleResolution NodeNext --target ES2022 plugin/typescript/typecheck.mts
+      - run: go run ./examples/plugin-sdk --backend jsonline
+      - run: go run ./examples/plugin-sdk --backend inprocess
+      - run: go run ./examples/plugin-typescript
+      - run: go build -o /tmp/ctx-plugin-example ./examples/plugin-typescript
+      - run: node examples/plugin-typescript/host.mjs /tmp/ctx-plugin-example
+      - run: go run ./cmd/ctx-plugin inspect --root examples/plugin-package --entry main examples/plugin-package/plugin.json

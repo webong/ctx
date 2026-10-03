@@ -133,3 +133,10 @@ func TestDirectoryDigestCompatibilityAndTampering(t *testing.T) {
 		t.Fatalf("symlink accepted: %v", err)
 	}
 }
+
+func TestRejectInvalidUTF8(t *testing.T) {
+	var raw json.RawMessage
+	if Decode([]byte{'"', 0xff, '"'}, &raw) == nil {
+		t.Fatal("invalid UTF-8 accepted")
+	}
+}

@@ -11,6 +11,7 @@ import (
 	"io"
 	"regexp"
 	"time"
+	"unicode/utf8"
 )
 
 const APIVersion = "ctx.plugin/v1"
@@ -289,6 +290,9 @@ func (r Response) Validate(requestID string) error {
 // Decode reads one bounded JSON value and rejects unknown fields and duplicate
 // object keys (including in payloads), keeping admission and dispatch unambiguous.
 func Decode(data []byte, target any) error {
+	if !utf8.Valid(data) {
+		return fmt.Errorf("%w: JSON must be UTF-8", ErrInvalid)
+	}
 	if len(data) > MaxFrameBytes {
 		return fmt.Errorf("%w: frame too large", ErrInvalid)
 	}
